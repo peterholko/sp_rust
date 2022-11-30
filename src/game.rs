@@ -6,6 +6,7 @@ use bevy::{
 
 use itertools::{Itertools, Update};
 use serde_json::{Number, Value};
+// use tungstenite::handshake::client::Response;
 
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::{
@@ -135,6 +136,7 @@ pub enum HeroClass {
 pub enum PlayerEvent {
     NewPlayer { player_id: i32 },
     Move { player_id: i32, x: i32, y: i32 },
+    InfoObj { player_id: i32, id: i32 },
 }
 
 #[derive(Clone, Debug)]
@@ -178,13 +180,6 @@ impl Plugin for GamePlugin {
             .add_system(event_system)
             .add_system(processed_event_system)
             .add_system(perception_system);
-        //.add_system(
-        //    clear_visibility_system
-        //        .before(visibility_system)
-        //        .with_run_criteria(run_if_visibility_changed),
-        //)
-        //.add_system(visibility_system.with_run_criteria(run_if_visibility_changed));
-        // .add_system(use_neighbour);
     }
 }
 
@@ -247,7 +242,7 @@ impl Game {
         let thread_pool = IoTaskPool::get();
 
         //Spawn the tokio runtime setup using a Compat with the clients and client to game channel
-        let task = thread_pool
+        thread_pool
             .spawn(Compat::new(network::tokio_setup(
                 client_to_game_sender,
                 clients.clone(),
@@ -279,30 +274,60 @@ fn message_system(
     mut obj_index: ResMut<ObjIndex>, //TODO consder moving elsewhere
     mut map_events: ResMut<HashMap<i32, MapEvent>>,
     map: Res<Map>,
-    query: Query<(Entity, &Id, &Position, &PlayerId), With<Hero>>,
+    hero_query: Query<
+        (
+            Entity,
+            &Id,
+            &Position,
+            &PlayerId,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+        ),
+        With<Hero>,
+    >,
+    query: Query<(
+        Entity,
+        &Id,
+        &Position,
+        &PlayerId,
+        &Name,
+        &Template,
+        &Class,
+        &Subclass,
+        &State,
+    )>,
 ) {
-    //Broadcast a message to each connected client on each Bevy System iteration.
-    /* for (id, client) in clients.lock().unwrap().iter() {
-        //println!("{:?}", client);
-        match client.sender.try_send("Broadcast message from Bevy System".to_string()) {
-            Ok(()) => println!("sent broadcast to {:?}", id),
-            Err(e) => println!("error to send to {:?} - {:?}", id, e)
-        }
-
-            //.unwrap();
-            //.expect("Could not send message");
-    } */
-
     //Attempts to receive a message from the channel without blocking.
     if let Ok(evt) = client_to_game_receiver.try_recv() {
         println!("{:?}", evt);
         let res = match evt {
             PlayerEvent::NewPlayer { player_id } => {
-                new_player(player_id, commands, map_event_id, map_events, obj_index, game_tick);  // TODO consider moving elsewhere
+                new_player(
+                    player_id,
+                    commands,
+                    map_event_id,
+                    map_events,
+                    obj_index,
+                    game_tick,
+                ); // TODO consider moving elsewhere
             }
             PlayerEvent::Move { player_id, x, y } => {
                 println!("looking for obj");
-                for (entity_id, obj_id, pos, obj_player_id) in query.iter() {
+                for (
+                    entity_id,
+                    obj_id,
+                    pos,
+                    obj_player_id,
+                    _name,
+                    _template,
+                    _class,
+                    _subclass,
+                    _state,
+                ) in hero_query.iter()
+                {
                     println!("Move for PlayerId: {:?}", player_id);
                     if player_id == obj_player_id.0 {
                         println!("found player: {:?}", player_id);
@@ -361,6 +386,45 @@ fn message_system(
                         map_events.insert(map_event_id.0.try_into().unwrap(), map_state_event);
 
                         map_event_id.0 = map_event_id.0 + 1;
+                    }
+                }
+            }
+            PlayerEvent::InfoObj { player_id, id } => {
+                println!(
+                    "PlayerEvent::InfoObj player_id: {:?} id: {:?}",
+                    player_id, id
+                );
+                for (
+                    _entity_id,
+                    obj_id,
+                    _pos,
+                    obj_player_id,
+                    name,
+                    template,
+                    class,
+                    subclass,
+                    state,
+                ) in query.iter()
+                {
+                    if obj_id.0 == id {
+                        let info_obj_packet: ResponsePacket = ResponsePacket::InfoObj {
+                            id: obj_id.0,
+                            name: name.0.to_owned(),
+                            template: template.0.to_owned(),
+                            class: class.0.to_owned(),
+                            subclass: subclass.0.to_owned(),
+                            state: state.0.to_owned(),
+                        };
+
+                        for (_client_id, client) in clients.lock().unwrap().iter() {
+                            println!("Player: {:?} == client: {:?}", player_id, client);
+                            if client.player_id == player_id {
+                                client
+                                    .sender
+                                    .try_send(serde_json::to_string(&info_obj_packet).unwrap())
+                                    .expect("Could not send message");
+                            }
+                        }
                     }
                 }
             }
@@ -788,418 +852,12 @@ fn perception_system(
     perception_updates.clear();
 }
 
-/* fn event_system(
-    game_tick: Res<GameTick>,
-    mut visibility_changed: ResMut<VisibilityChanged>,
-    mut game_events: ResMut<HashMap<i32, GameEvent>>,
-    clients: Res<Clients>,
-    mut query: Query<(&Id, &PlayerId, &mut Position, &mut State, &mut Viewshed)>,
-) {
-    println!("Game Tick {:?}", game_tick.0);
-
-    // local system variable might be faster than setting the resource on every move event
-    let mut processed_move = false;
-
-    let mut events_to_remove = Vec::new();
-
-    for (game_event_id, game_event) in game_events.iter_mut() {
-        println!("Processing {:?}", game_event);
-
-        if game_event.run_tick < game_tick.0 {
-            // Execute event
-            match &game_event.game_event_type {
-                GameEventType::NewObj { new_obj_id } => {
-                    // Loop through all entities viewsheds to check if they can see the
-                    for (id, player_id, mut pos, mut obj_state, mut viewshed) in query.iter_mut() {
-                        if viewshed.entities.contains(&id.0) {
-                            println!("{:?} can see {:?} state change to {:?}", id.0, game_event.obj_id, new_state);
-
-                            let change_event = network::ChangeEvents::ObjUpdate { event: "obj_update".to_string(), obj_id: game_event.obj_id, attr: "state".to_string(), value: new_state.clone()};
-
-                            let mut change_events = Vec::new();
-                            change_events.push(change_event);
-
-                            let changes_packet = ResponsePacket::Changes {
-                                events: change_events
-                            };
-
-                            for (_client_id, client) in clients.lock().unwrap().iter() {
-                                println!("Player: {:?} == client: {:?}", player_id, client);
-                                if client.player_id == player_id.0 {
-                                    client
-                                        .sender
-                                        .try_send(serde_json::to_string(&changes_packet).unwrap())
-                                        .expect("Could not send message");
-                                }
-                            }
-                        }
-
-                    }
-                },
-                GameEventType::MoveEvent { src_x, src_y, dst_x, dst_y} => {
-
-                    for (id, player_id, mut pos, mut obj_state, mut viewshed) in query.iter_mut() {
-
-                        // Update the entity's position
-                        if game_event.obj_id == id.0 {
-                            pos.x = *dst_x;
-                            pos.y = *dst_y;
-                            obj_state.0 = "none".to_string();
-
-                            events_to_remove.push(*game_event_id);
-
-                            // visibility_changed.0 = true;
-                        }
-
-                        // Check if the moving entity was visible by the observer and has moved out of range
-                        if viewshed.entities.contains(&game_event.obj_id) {
-                            let distance = Map::distance((pos.x, pos.y), (*dst_x, *dst_y));
-
-                            if viewshed.range < distance {
-                                // Remove entity as it is out of range
-                                println!("{:?} is no longer observing {:?}", id.0, game_event.obj_id);
-                                viewshed.entities.remove(&game_event.obj_id);
-                            }
-
-                        } else {
-                            // Check if the moving entity has entered the range of any observer
-                            let distance = Map::distance((pos.x, pos.y), (*dst_x, *dst_y));
-
-                            if viewshed.range >= distance {
-                                // Moved in range
-                                println!("{:?} is now observing {:?}", id.0, game_event.obj_id);
-                                viewshed.entities.insert(game_event.obj_id);
-
-
-                                let change_event = network::ChangeEvents::ObjMove { event: "obj_move".to_string(), obj_id: game_event.obj_id, src_x: *src_x, src_y: *src_y };
-
-                                let mut change_events = Vec::new();
-                                change_events.push(change_event);
-
-                                let changes_packet = ResponsePacket::Changes {
-                                    events: change_events
-                                };
-
-                                for (_client_id, client) in clients.lock().unwrap().iter() {
-                                    println!("Player: {:?} == client: {:?}", player_id, client);
-                                    if client.player_id == player_id.0 {
-                                        client
-                                            .sender
-                                            .try_send(serde_json::to_string(&changes_packet).unwrap())
-                                            .expect("Could not send message");
-                                    }
-                                }
-                            }
-                        }
-
-                    }
-
-                },
-                GameEventType::StateChangeEvent { new_state } => {
-                    for (id, player_id, mut pos, mut obj_state, mut viewshed) in query.iter_mut() {
-
-                        // Update the obj's state
-                        if game_event.obj_id == id.0 {
-                            obj_state.0 = new_state.clone();
-
-                            events_to_remove.push(*game_event_id);
-
-                            // visibility_changed.0 = true;
-                        }
-
-                        println!("StateChangeEvent viewshed of {:?}: {:?}", id, viewshed);
-                        // Check if entity with the state change is visible by the observer
-                        if viewshed.entities.contains(&id.0) {
-                            println!("{:?} can see {:?} state change to {:?}", id.0, game_event.obj_id, new_state);
-
-                            let change_event = network::ChangeEvents::ObjUpdate { event: "obj_update".to_string(), obj_id: game_event.obj_id, attr: "state".to_string(), value: new_state.clone()};
-
-                            let mut change_events = Vec::new();
-                            change_events.push(change_event);
-
-                            let changes_packet = ResponsePacket::Changes {
-                                events: change_events
-                            };
-
-                            for (_client_id, client) in clients.lock().unwrap().iter() {
-                                println!("Player: {:?} == client: {:?}", player_id, client);
-                                if client.player_id == player_id.0 {
-                                    client
-                                        .sender
-                                        .try_send(serde_json::to_string(&changes_packet).unwrap())
-                                        .expect("Could not send message");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for event_id in events_to_remove.iter() {
-        game_events.remove(event_id);
-    }
-
-    //let mut reader = events.get_reader();
-
-    /*for event in reader.iter(&events) {
-        println!("{:?}", event);
-        if game_tick.0 == event.run_at {
-            println!("Running event");
-
-            for (entity, mut pos, mut viewshed, player_id, id) in query.iter_mut() {
-                if id.0 == 1 {
-                    pos.x = event.x;
-                    pos.y = event.y;
-
-                    let tiles = Map::range((pos.x, pos.y), viewshed.range);
-                    viewshed.tiles = tiles;
-
-                    println!("viewshed: {:?}", viewshed);
-
-                    processed_move = true;
-
-                    /* let tiles = Map::get_neighbour_tiles(event.x, event.y, 2, map.clone());
-
-                    let res_packet = ResponsePacket::Perception{data: tiles};
-
-                    println!("{:?}", res_packet);
-
-                    for (id, client) in clients.lock().unwrap().iter() {
-                      // Need to lookup player_id <=> client_id
-                        if *id == 1 {
-                            client
-                                .sender
-                                .try_send(serde_json::to_string(&res_packet).unwrap())
-                                .expect("Could not send message");
-                        }
-                    } */
-                }
-            }
-        }
-    }*/
-} */
-
-/* fn visibility_system(
-    mut visibility_changed: ResMut<VisibilityChanged>,
-    map: Res<Map>,
-    clients: Res<Clients>,
-    mut set: ParamSet<(
-        Query<&Id, &PlayerId, &Position,
-        Query<&mut Health, With<Player>>,
-        &World,
-    )>
-) {
-    visibility_changed.0 = false;
-} */
-
-/*fn visibility_system(
-    mut visibility_changed: ResMut<VisibilityChanged>,
-    map: Res<Map>,
-    clients: Res<Clients>,
-    mut query: Query<(
-        &Id,
-        &PlayerId,
-        &Position,
-        &Name,
-        &Template,
-        &Class,
-        &Subclass,
-        &State,
-        &mut Viewshed,
-        &Misc,
-    )>,
-) {
-    println!("visibility_system");
-
-    let mut iter = query.iter_combinations_mut();
-
-    let mut perception_update: HashMap<i32, Vec<network::MapObj>> = HashMap::new();
-
-    while let Some(
-        [(id1, player1, pos1, name1, template1, class1, subclass1, state1, mut viewshed1, misc1), (id2, player2, pos2, name2, template2, class2, subclass2, state2, mut viewshed2, misc2)],
-    ) = iter.fetch_next()
-    {
-        println!(
-            "{:?} - {:?} distance: {:?}",
-            name1,
-            name2,
-            Map::distance((pos1.x, pos1.y), (pos2.x, pos2.y))
-        );
-
-        let distance = Map::distance((pos1.x, pos1.y), (pos2.x, pos2.y));
-
-        if viewshed1.range >= distance {
-            let visible_obj = network_obj(
-                id2.0,
-                player2.0,
-                pos2.x,
-                pos2.y,
-                name2.0.to_owned(),
-                template2.0.to_owned(),
-                class2.0.to_owned(),
-                subclass2.0.to_owned(),
-                state2.0.to_owned(),
-                viewshed2.range,
-                misc2.image.to_owned(),
-                misc2.hsl.to_owned(),
-                misc2.groups.to_owned(),
-            );
-
-            viewshed1.entities.insert(id1.0);
-
-            perception_update
-                .entry(player1.0)
-                .or_default()
-                .push(visible_obj);
-        }
-
-        if viewshed2.range >= distance {
-            let visible_obj = network_obj(
-                id2.0,
-                player2.0,
-                pos2.x,
-                pos2.y,
-                name2.0.to_owned(),
-                template2.0.to_owned(),
-                class2.0.to_owned(),
-                subclass2.0.to_owned(),
-                state2.0.to_owned(),
-                viewshed2.range,
-                misc2.image.to_owned(),
-                misc2.hsl.to_owned(),
-                misc2.groups.to_owned(),
-            );
-
-            viewshed2.entities.insert(id2.0);
-
-            perception_update
-                .entry(player2.0)
-                .or_default()
-                .push(visible_obj);
-        }
-
-        /*let mut visible_objs: Vec<network::MapObj> = Vec::new();
-
-        println!("id: {:?} player1: {:?} name: {:?} viewshed1: {:?}", id1, player1, name1);
-
-        for tile in viewshed1.tiles.iter() {
-
-            println!("viewshed1 tile: {:?}", tile);
-            let (x, y) = tile;
-            if (*x == pos2.x) && (*y == pos2.y) {
-
-
-                let network_visible_obj = network_obj(
-                    id2.0,
-                    player2.0,
-                    pos2.x,
-                    pos2.y,
-                    name2.0.to_owned(),
-                    template2.0.to_owned(),
-                    class2.0.to_owned(),
-                    subclass2.0.to_owned(),
-                    state2.0.to_owned(),
-                    viewshed2.range,
-                    misc2.image.to_owned(),
-                    misc2.hsl.to_owned(),
-                    misc2.groups.to_owned(),
-                );
-
-                println!("network_visible_obj: {:?}", network_visible_obj);
-
-                visible_objs.push(network_visible_obj);
-            }
-        }
-
-        // Send perception to client
-        let tiles = Map::pos_to_tiles(&viewshed1.tiles, &map); // Used for network obj
-
-        let perception_data = network::PerceptionData {
-            map: tiles,
-            objs: visible_objs,
-        };
-
-        let perception_packet = ResponsePacket::Perception {
-            data: perception_data,
-        };
-
-        for (id, client) in clients.lock().unwrap().iter() {
-              if *id == player1.0 {
-                  client
-                      .sender
-                      .try_send(serde_json::to_string(&perception_packet).unwrap())
-                      .expect("Could not send message");
-              }
-          }*/
-    }
-
-    for (id, player, pos, name, template, class, subclass, state, viewshed, misc) in query.iter() {
-        println!("{:?}'s viewshed entites: {:?}", name, viewshed.entities);
-
-        // Send perception to client
-        /*let tiles = Map::pos_to_tiles(&viewshed.tiles, &map); // Used for network obj
-
-        let perception_data = network::PerceptionData {
-            map: tiles,
-            objs: viewshed.entities.clone(), // TODO might not be efficient for large number of objects
-        };
-
-        let perception_packet = ResponsePacket::Perception {
-            data: perception_data,
-        };
-
-        for (_client_id, client) in clients.lock().unwrap().iter() {
-            println!("Player: {:?} == client: {:?}", player, client);
-              if client.player_id == player.0 {
-                  client
-                      .sender
-                      .try_send(serde_json::to_string(&perception_packet).unwrap())
-                      .expect("Could not send message");
-              }
-        }*/
-    }
-
-    for (player, visible_objs) in perception_update.iter() {
-        println!("player: {:?} visible_objs: {:?}", player, visible_objs);
-
-        // let tiles = Map::pos_to_tiles(&viewshed.tiles, &map); // Used for network obj
-
-        let perception_data = network::PerceptionData {
-            map: Vec::new(),
-            objs: visible_objs.iter().cloned().unique().collect()
-        };
-
-        let perception_packet = ResponsePacket::Perception {
-            data: perception_data,
-        };
-
-
-        for (_client_id, client) in clients.lock().unwrap().iter() {
-            println!("Player: {:?} == client: {:?}", player, client);
-            if client.player_id == *player {
-                client
-                    .sender
-                    .try_send(serde_json::to_string(&perception_packet).unwrap())
-                    .expect("Could not send message");
-            }
-        }
-    }
-
-    visibility_changed.0 = false;
-}*/
-
 //fn update_game_tick(mut game_tick: ResMut<GameTick>, query: Query<(Entity, &MapObj)>) {
 fn update_game_tick(
     mut game_tick: ResMut<GameTick>,
     query: Query<(Entity, &Id, &Name, &Position)>,
 ) {
     game_tick.0 = game_tick.0 + 1;
-
-    /*for (entity, id, name, pos) in query.iter() {
-        println!("id: {:?} name: {:?} name: {:?}", id, name, pos);
-    }*/
 }
 
 fn new_player(
@@ -1258,7 +916,7 @@ fn new_player(
     map_event_id.0 = map_event_id.0 + 1;
 
     // Increment obj index
-    obj_index.0 = obj_index.0 + 1; 
+    obj_index.0 = obj_index.0 + 1;
 
     let villager = Obj {
         id: Id(obj_index.0),
@@ -1282,8 +940,6 @@ fn new_player(
 
     let villager_entity_id = commands.spawn().insert_bundle(villager).id();
 
-
-
     // Insert state change event
     let new_obj_event = MapEventType::NewObjEvent;
 
@@ -1303,120 +959,7 @@ fn new_player(
     map_event_id.0 = map_event_id.0 + 1;
 
     // Increment obj index
-    obj_index.0 = obj_index.0 + 1; 
-
-    /*
-    let hero_tile_positions = Map::range((start_x, start_y), range);
-
-    let hero_tiles = Map::pos_to_tiles(&hero_tile_positions, &map); // Used for network obj
-
-    let network_hero = network_obj_from_bundle(&hero);
-
-    let villager2 = Obj {
-        id: Id(3),
-        player_id: PlayerId(player_id),
-        position: Position { x: 16, y: 34 },
-        name: Name("Villager 2".into()),
-        template: Template("Human Villager".into()),
-        class: Class("unit".into()),
-        subclass: Subclass("villager".into()),
-        state: State("none".into()),
-        viewshed: Viewshed {
-            entities: HashSet::new(),
-            range: 2,
-        },
-        misc: Misc {
-            image: "humanvillager2".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
-        },
-    };
-
-    commands.spawn().insert_bundle(villager2);
-
-    let villager3 = Obj {
-        id: Id(4),
-        player_id: PlayerId(player_id),
-        position: Position { x: 15, y: 35 },
-        name: Name("Villager 3".into()),
-        template: Template("Human Villager".into()),
-        class: Class("unit".into()),
-        subclass: Subclass("villager".into()),
-        state: State("none".into()),
-        viewshed: Viewshed {
-            entities: HashSet::new(),
-            range: 2,
-        },
-        misc: Misc {
-            image: "humanvillager3".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
-        },
-    };
-
-    // commands.spawn().insert_bundle(villager3);
-
-    let villager4 = Obj {
-        id: Id(5),
-        player_id: PlayerId(player_id),
-        position: Position { x: 15, y: 34 },
-        name: Name("Villager 4".into()),
-        template: Template("Human Villager".into()),
-        class: Class("unit".into()),
-        subclass: Subclass("villager".into()),
-        state: State("none".into()),
-        viewshed: Viewshed {
-            entities: HashSet::new(),
-            range: 2,
-        },
-        misc: Misc {
-            image: "humanvillager1".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
-        },
-    };
-
-    // commands.spawn().insert_bundle(villager4);
-
-    let tiles = hero_tiles;
-
-    let mut objs: Vec<network::MapObj> = Vec::new();
-    objs.push(network_hero);
-
-    let perception_data = network::PerceptionData {
-        map: tiles,
-        objs: objs,
-    };
-
-    let explored_map = ExploredMap {
-        player_id: player_id,
-        tiles: HashSet::new(),
-    };
-
-    let tiles2 = Map::get_neighbour_tiles(16, 36, 2, map.clone());
-
-    let perception = ResponsePacket::Perception {
-        data: perception_data,
-    };
-
-    let res_map = ResponsePacket::Map { data: tiles2 };
-
-    for (id, client) in clients.lock().unwrap().iter() {
-        // Need to lookup player_id <=> client_id
-        if *id == 1 {
-            client
-                .sender
-                .try_send(serde_json::to_string(&perception).unwrap())
-                //.try_send(tileset.get(&"warrior".to_string()).unwrap().to_string())
-                .expect("Could not send message");
-
-            client
-                .sender
-                .try_send(serde_json::to_string(&res_map).unwrap())
-                //.try_send(tileset.get(&"warrior".to_string()).unwrap().to_string())
-                .expect("Could not send message");
-        }
-    } */
+    obj_index.0 = obj_index.0 + 1;
 }
 
 fn network_obj_from_bundle(obj: &Obj) -> network::MapObj {

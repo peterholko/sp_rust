@@ -40,9 +40,11 @@ enum NetworkPacket {
     ImageDef { name: String },
     #[serde(rename = "move_unit")]
     Move { x: i32, y: i32 },
+    #[serde(rename = "info_unit")]
+    InfoObj { id: i32 },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "packet")]
 pub enum ResponsePacket {
     #[serde(rename = "select_class")]
@@ -59,7 +61,16 @@ pub enum ResponsePacket {
     },
     #[serde(rename = "stats")]
     Stats {
-        data: StatsData
+        data: StatsData,
+    },
+    #[serde(rename = "info_unit")]
+    InfoObj {
+        id: i32,
+        name: String,
+        class: String,
+        subclass: String, 
+        template: String,
+        state: String
     },
     #[serde(rename = "image_def")]
     ImageDef {
@@ -80,12 +91,13 @@ pub enum ResponsePacket {
         events: Vec<ChangeEvents>,
     },
     Ok,
+    None,
     Error {
         errmsg: String,
     },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct PerceptionData {
     pub map: Vec<MapTile>,
     pub objs: Vec<MapObj>,
@@ -94,12 +106,25 @@ pub struct PerceptionData {
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ChangeEvents {
-    ObjCreate{event: String, obj: MapObj},
-    ObjUpdate{event: String, obj_id: i32, attr: String, value: String},
-    ObjMove{event: String, obj: MapObj, src_x: i32, src_y: i32}
+    ObjCreate {
+        event: String,
+        obj: MapObj,
+    },
+    ObjUpdate {
+        event: String,
+        obj_id: i32,
+        attr: String,
+        value: String,
+    },
+    ObjMove {
+        event: String,
+        obj: MapObj,
+        src_x: i32,
+        src_y: i32,
+    },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct StatsData {
     id: i32,
     hp: i32,
@@ -108,7 +133,6 @@ pub struct StatsData {
     base_stamina: i32,
     effects: Vec<i32>,
 }
-
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Hash, PartialEq)]
 pub struct MapObj {
@@ -150,13 +174,6 @@ lazy_static! {
         tileset
     };
 }
-
-// Initialize tileset hashmap
-
-/* #[derive(Debug)]
-struct Perception {
-    data: Vec<MapTile>
-} */
 
 pub async fn tokio_setup(
     client_to_game_sender: CBSender<PlayerEvent>,
@@ -226,7 +243,7 @@ async fn handle_connection(
 
     //Client ID
     let client_id = num_clients + 1;
-    
+
     let mut player_id = -1;
 
     //Store the incremented client id and the game to client sender in the clients hashmap
@@ -238,7 +255,6 @@ async fn handle_connection(
             sender: game_to_client_sender,
         },
     );
-
 
     //This loop uses the tokio select! macro to receive messages from either the websocket receiver
     //or the game to client receiver
@@ -307,7 +323,7 @@ async fn handle_connection(
                                                         base_hp: 100,
                                                         stamina: 10000,
                                                         base_stamina: 10000,
-                                                        effects: Vec::new()                                                    
+                                                        effects: Vec::new()
                                                     }
                                                 }
                                             }
@@ -328,14 +344,19 @@ async fn handle_connection(
                                             NetworkPacket::Move{x, y} => {
                                                 handle_move(player_id, x, y, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoObj{id} => {
+                                                handle_info_obj(player_id, id, client_to_game_sender.clone())
+                                            }
                                             _ => ResponsePacket::Ok
                                         }
                                     },
                                     Err(_) => ResponsePacket::Error{errmsg: "Unknown packet".to_owned()}
                                 };
 
-                                let res = serde_json::to_string(&res_packet).unwrap();
-                                ws_sender.send(Message::Text(res)).await?;
+                                if res_packet != ResponsePacket::None {
+                                    let res = serde_json::to_string(&res_packet).unwrap();
+                                    ws_sender.send(Message::Text(res)).await?;
+                                }
                             }
                         } else if msg.is_close() {
                             println!("Message is closed for player: {:?}", player_id);
@@ -465,4 +486,17 @@ fn handle_move(
         .expect("Could not send message");
 
     ResponsePacket::Ok
+}
+
+fn handle_info_obj(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoObj { player_id: player_id, id: id })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
 }

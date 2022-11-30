@@ -19,12 +19,12 @@ mod game;
 mod map;
 mod network;
 
-const TIMESTEP_5_PER_SECOND: f64 = 30.0 / 60.0;
+const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
 pub fn setup() {
     App::new()
         .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
-            TIMESTEP_5_PER_SECOND,
+            TIMESTEP_10_PER_SECOND,
         )))
         .add_plugin(CorePlugin::default())
         .add_plugin(ScheduleRunnerPlugin::default())
