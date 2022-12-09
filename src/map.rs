@@ -1,8 +1,8 @@
-use bevy::prelude::*;
-use url::Position;
+use bevy::{ecs::query, prelude::*};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+use url::Position;
 
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +52,7 @@ pub struct TileInfo {
     pub layers: Vec<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Resource, Debug, Clone)]
 pub struct Map {
     pub width: i32,
     pub height: i32,
@@ -160,6 +160,24 @@ impl Map {
         }
 
         tiles
+    }
+
+    pub fn is_passable(x: i32, y: i32, map: &Map) -> bool {
+        let tile_index = y * WIDTH + x;
+        let tile_index_usize = tile_index as usize;
+        //let layers = map.base[tile_index_usize].layers.clone();
+        let tile_type = map.base[tile_index_usize].tile_type.clone();
+
+        //let n = Map::get_neighbour_tiles(16, 36, 1, map.clone());
+
+        let passable = match tile_type {
+            TileType::Ocean => false,
+            TileType::River => false,
+            TileType::Mountain => false,
+            _ => true,
+        };
+
+        return passable;
     }
 
     fn gid_to_tiletype(gid: u32) -> TileType {

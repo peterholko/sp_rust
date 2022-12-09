@@ -13,7 +13,7 @@ name = "siege_perilous"
 path = "src/lib.rs"
 
 [dependencies]
-bevy = { version = "0.8", default-features = false }
+bevy = { version = "0.9", default-features = false }
 crossbeam-channel = "0.5.1"
 tokio-tungstenite = "*"
 futures-util = { version = "0.3", default-features = false, features = ["async-await", "sink", "std"] }

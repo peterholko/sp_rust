@@ -40,8 +40,14 @@ enum NetworkPacket {
     ImageDef { name: String },
     #[serde(rename = "move_unit")]
     Move { x: i32, y: i32 },
+    #[serde(rename = "attack")]
+    Attack { attacktype: String, sourceid: i32, targetid: i32},
     #[serde(rename = "info_unit")]
     InfoObj { id: i32 },
+    #[serde(rename = "info_tile")]
+    InfoTile { x: i32, y: i32 },
+    #[serde(rename = "info_inventory")]
+    InfoInventory { id: i32 }
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -72,6 +78,26 @@ pub enum ResponsePacket {
         template: String,
         state: String
     },
+    #[serde(rename = "info_tile")]
+    InfoTile {
+        x: i32,
+        y: i32,
+        name: String,
+        mc: i32, 
+        def: i32,
+        unrevealed: String,
+        sanctuary: String,
+        passable: String,
+        wildness: String,
+        resources: String
+    },
+    #[serde(rename = "info_inventory")]
+    InfoInventory {
+        id: i32,
+        cap: i32,
+        tw: i32,
+        items: Vec<Item>
+    },
     #[serde(rename = "image_def")]
     ImageDef {
         name: String,
@@ -92,6 +118,7 @@ pub enum ResponsePacket {
     },
     Ok,
     None,
+    Pong,
     Error {
         errmsg: String,
     },
@@ -149,6 +176,18 @@ pub struct MapObj {
     pub vision: u32,
     pub hsl: Vec<i32>,
     pub groups: Vec<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, Hash, PartialEq)]
+pub struct Item {
+    id: i32,
+    name: String,
+    quantity: i32,
+    owner: i32,
+    class: String,
+    subclass: String,
+    weight: i32,
+    equip: bool
 }
 
 lazy_static! {
@@ -306,7 +345,6 @@ async fn handle_connection(
                             } else {
                                 println!("Authenticated packet: {:?}", msg.to_text().unwrap());
 
-
                                 let res_packet: ResponsePacket = match serde_json::from_str(msg.to_text().unwrap()) {
                                     Ok(packet) => {
                                         match packet {
@@ -344,16 +382,35 @@ async fn handle_connection(
                                             NetworkPacket::Move{x, y} => {
                                                 handle_move(player_id, x, y, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::Attack{attacktype, sourceid, targetid} => {
+                                                handle_attack(player_id, attacktype, sourceid, targetid, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::InfoObj{id} => {
                                                 handle_info_obj(player_id, id, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoTile{x, y} => {
+                                                handle_info_tile(player_id, x, y, client_to_game_sender.clone())
+                                            }    
+                                            NetworkPacket::InfoInventory{id} => {
+                                                handle_info_inventory(player_id, id, client_to_game_sender.clone())
+                                            }                                                                                       
                                             _ => ResponsePacket::Ok
                                         }
                                     },
-                                    Err(_) => ResponsePacket::Error{errmsg: "Unknown packet".to_owned()}
-                                };
+                                    Err(_) => {
+                                        let ping = r#"0"#;
 
-                                if res_packet != ResponsePacket::None {
+                                        if msg.to_text().unwrap() == ping {
+                                            ResponsePacket::Pong
+                                        } else {
+                                            ResponsePacket::Error{errmsg: "Unknown packet".to_owned()}
+                                        }
+                                    }
+                                };
+                                if res_packet == ResponsePacket::Pong {
+                                    ws_sender.send(Message::Text("1".to_string())).await?;
+                                }
+                                else if res_packet != ResponsePacket::None {
                                     let res = serde_json::to_string(&res_packet).unwrap();
                                     ws_sender.send(Message::Text(res)).await?;
                                 }
@@ -488,6 +545,25 @@ fn handle_move(
     ResponsePacket::Ok
 }
 
+fn handle_attack(
+    player_id: i32,
+    attacktype: String,
+    sourceid: i32,
+    targetid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Attack {
+            player_id: player_id,
+            attacktype: attacktype,
+            sourceid: sourceid,
+            targetid: targetid,
+        })
+        .expect("Could not send message");
+
+    ResponsePacket::Ok
+}
+
 fn handle_info_obj(
     player_id: i32,
     id: i32,
@@ -495,6 +571,33 @@ fn handle_info_obj(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::InfoObj { player_id: player_id, id: id })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_tile(
+    player_id: i32,
+    x: i32,
+    y: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoTile { player_id: player_id, x: x, y: y })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_inventory(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoInventory { player_id: player_id, id: id})
         .expect("Could not send message");
 
     // Response will come from game.rs

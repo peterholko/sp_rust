@@ -1,3 +1,4 @@
+use bevy::ecs::query::WorldQuery;
 use bevy::ecs::schedule::ShouldRun;
 use bevy::{
     prelude::*,
@@ -27,11 +28,37 @@ use crate::network::ResponsePacket;
 
 pub struct GamePlugin;
 
-pub type Clients = Arc<Mutex<HashMap<i32, Client>>>;
+//pub type Clients = Arc<Mutex<HashMap<i32, Client>>>;
 pub type Accounts = Arc<Mutex<HashMap<i32, Account>>>;
 
-#[derive(Debug, Default)]
+#[derive(Resource, Deref, DerefMut, Clone, Debug)]
+pub struct Clients(Arc<Mutex<HashMap<i32, Client>>>);
+
+#[derive(Resource, Deref, DerefMut)]
+struct NetworkReceiver(CBReceiver<PlayerEvent>);
+
+#[derive(Resource, Deref, DerefMut)]
+struct MapEvents(HashMap<i32, MapEvent>);
+
+#[derive(Resource, Deref, DerefMut)]
+struct ProcessedMapEvents(Vec<MapEvent>);
+
+#[derive(Resource, Deref, DerefMut, Debug, Default)]
 struct GameTick(i32);
+
+// Indexes for IDs
+#[derive(Resource, Clone, Debug)]
+struct Ids {
+    map_event: i32,
+    obj: i32,
+    item: i32,
+}
+
+#[derive(Resource, Deref, DerefMut, Debug)]
+struct PerceptionUpdates(HashSet<i32>);
+
+#[derive(Resource, Deref, DerefMut, Debug)]
+struct Items(Vec<Item>);
 
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -94,15 +121,6 @@ struct Misc {
     groups: Vec<i32>,
 }
 
-#[derive(Debug, Component)]
-struct MoveEvent;
-
-#[derive(Debug, Component)]
-struct StateChangeEvent;
-
-#[derive(Debug, Component)]
-struct UpdateViewshed;
-
 #[derive(Bundle)]
 struct Obj {
     id: Id,
@@ -117,8 +135,40 @@ struct Obj {
     misc: Misc,
 }
 
-#[derive(Debug, Default)]
-struct VisibilityChanged(bool);
+#[derive(Debug, Component)]
+pub struct ItemContainer {
+  slots: Vec<Option<Item>>,
+}
+
+#[derive(Debug)]
+struct Item {
+    id: i32,
+    owner: i32,
+    name: String,
+    quantity: i32,
+    class: String,
+    subclass: String,
+    image: String,
+    weight: i32,
+    equipped: bool,
+}
+
+#[derive(WorldQuery)]
+struct MapObjQuery {
+    entity: Entity,
+    // It is required that all reference lifetimes are explicitly annotated, just like in any
+    // struct. Each lifetime should be 'static.
+    id: &'static Id,
+    player_id: &'static PlayerId,
+    pos: &'static Position,
+    name: &'static Name,
+    template: &'static Template,
+    class: &'static Class,
+    subclass: &'static Subclass,
+    state: &'static State,
+    viewshed: &'static Viewshed,
+    misc: &'static Misc,
+}
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum HeroClass {
@@ -128,22 +178,49 @@ pub enum HeroClass {
     None,
 }
 
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum States {
+    None,
+    Dead,
+    Founded,
+    Progressing,
+    Moving,
+}
+
 // States
 // const NONE: String = String::from("none");
 // const MOVING: String = String::from("moving");
 
 #[derive(Clone, Debug)]
 pub enum PlayerEvent {
-    NewPlayer { player_id: i32 },
-    Move { player_id: i32, x: i32, y: i32 },
-    InfoObj { player_id: i32, id: i32 },
+    NewPlayer {
+        player_id: i32,
+    },
+    Move {
+        player_id: i32,
+        x: i32,
+        y: i32,
+    },
+    Attack {
+        player_id: i32,
+        attacktype: String,
+        sourceid: i32,
+        targetid: i32,
+    },
+    InfoObj {
+        player_id: i32,
+        id: i32,
+    },
+    InfoTile {
+        player_id: i32,
+        x: i32,
+        y: i32,
+    },
+    InfoInventory {
+        player_id: i32,
+        id: i32
+    }
 }
-
-#[derive(Clone, Debug)]
-struct MapEventId(i32);
-
-#[derive(Clone, Debug)]
-struct ObjIndex(i32);
 
 #[derive(Clone, Debug)]
 struct MapEvent {
@@ -179,7 +256,8 @@ impl Plugin for GamePlugin {
             .add_system(message_system)
             .add_system(event_system)
             .add_system(processed_event_system)
-            .add_system(perception_system);
+            .add_system(perception_system)
+            .add_system(print_items_system);
     }
 }
 
@@ -197,25 +275,27 @@ impl Game {
         println!("Bevy Setup System");
 
         // Initialize game tick
-        let game_tick = 0;
+        let game_tick: GameTick = GameTick(0);
 
-        // Initialize game event id
-        let map_event_id: MapEventId = MapEventId(0);
-
-        // Initialize obj id
-        let obj_index: ObjIndex = ObjIndex(0);
-
-        // Initialize run visibility
-        let visibility_changed = VisibilityChanged(false);
+        // Initialize indexes
+        let ids: Ids = Ids {
+            map_event: 0,
+            obj: 0,
+            item: 0,
+        };
 
         // Initialize game events vector
-        let map_events: HashMap<i32, MapEvent> = HashMap::new();
-        let processed_map_events: Vec<MapEvent> = Vec::new();
 
-        let perception_updates: HashSet<i32> = HashSet::new();
+        let map_events: MapEvents = MapEvents(HashMap::new());
+        let processed_map_events: ProcessedMapEvents = ProcessedMapEvents(Vec::new());
+
+        let perception_updates: PerceptionUpdates = PerceptionUpdates(HashSet::new());
+
+        let items = Items(Vec::new());
 
         //Initialize Arc Mutex Hashmap to store the client to game channel per connected client
-        let clients = Clients::new(Mutex::new(HashMap::new()));
+
+        let clients = Clients(Arc::new(Mutex::new(HashMap::new())));
         let accounts = Accounts::new(Mutex::new(HashMap::new()));
 
         //Add accounts
@@ -250,18 +330,17 @@ impl Game {
             )))
             .detach();
 
-        //commands.spawn().insert(NetworkHandler(task));
+        let network_receiver = NetworkReceiver(client_to_game_receiver);
 
         //Insert the clients and client to game channel into the Bevy resources
         commands.insert_resource(clients);
-        commands.insert_resource(client_to_game_receiver);
+        commands.insert_resource(network_receiver);
         commands.insert_resource(game_tick);
-        commands.insert_resource(visibility_changed);
         commands.insert_resource(map_events);
         commands.insert_resource(processed_map_events);
         commands.insert_resource(perception_updates);
-        commands.insert_resource(map_event_id);
-        commands.insert_resource(obj_index);
+        commands.insert_resource(ids);
+        commands.insert_resource(items);
     }
 }
 
@@ -269,11 +348,11 @@ fn message_system(
     commands: Commands,
     game_tick: ResMut<GameTick>,
     clients: Res<Clients>,
-    client_to_game_receiver: Res<CBReceiver<PlayerEvent>>,
-    mut map_event_id: ResMut<MapEventId>,
-    mut obj_index: ResMut<ObjIndex>, //TODO consder moving elsewhere
-    mut map_events: ResMut<HashMap<i32, MapEvent>>,
+    client_to_game_receiver: Res<NetworkReceiver>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
     map: Res<Map>,
+    items: Res<Items>,
     hero_query: Query<
         (
             Entity,
@@ -288,31 +367,14 @@ fn message_system(
         ),
         With<Hero>,
     >,
-    query: Query<(
-        Entity,
-        &Id,
-        &Position,
-        &PlayerId,
-        &Name,
-        &Template,
-        &Class,
-        &Subclass,
-        &State,
-    )>,
+    query: Query<MapObjQuery>,
 ) {
     //Attempts to receive a message from the channel without blocking.
     if let Ok(evt) = client_to_game_receiver.try_recv() {
         println!("{:?}", evt);
-        let res = match evt {
+        let _res = match evt {
             PlayerEvent::NewPlayer { player_id } => {
-                new_player(
-                    player_id,
-                    commands,
-                    map_event_id,
-                    map_events,
-                    obj_index,
-                    game_tick,
-                ); // TODO consider moving elsewhere
+                new_player(player_id, commands, ids, map_events, game_tick);
             }
             PlayerEvent::Move { player_id, x, y } => {
                 println!("looking for obj");
@@ -328,105 +390,126 @@ fn message_system(
                     _state,
                 ) in hero_query.iter()
                 {
-                    println!("Move for PlayerId: {:?}", player_id);
-                    if player_id == obj_player_id.0 {
-                        println!("found player: {:?}", player_id);
-
-                        // Insert state change event
-                        let state_change_event = MapEventType::StateChangeEvent {
-                            new_state: "moving".to_string(),
-                        };
-                        let map_state_event = MapEvent {
-                            event_id: map_event_id.0,
-                            entity_id: entity_id,
-                            obj_id: obj_id.0,
-                            player_id: player_id,
-                            pos_x: pos.x,
-                            pos_y: pos.y,
-                            run_tick: game_tick.0,
-                            map_event_type: state_change_event,
-                        };
-
-                        map_events.insert(map_event_id.0.try_into().unwrap(), map_state_event);
-
-                        map_event_id.0 = map_event_id.0 + 1;
-
-                        // Insert move event
-                        let move_event = MapEventType::MoveEvent { dst_x: x, dst_y: y };
-                        let map_move_event = MapEvent {
-                            event_id: map_event_id.0,
-                            entity_id: entity_id,
-                            obj_id: obj_id.0,
-                            player_id: player_id,
-                            pos_x: pos.x,
-                            pos_y: pos.y,
-                            run_tick: game_tick.0 + 4,
-                            map_event_type: move_event,
-                        };
-
-                        map_events.insert(map_event_id.0.try_into().unwrap(), map_move_event);
-
-                        map_event_id.0 = map_event_id.0 + 1;
-
-                        // Insert state change event
-                        let state_change_event = MapEventType::StateChangeEvent {
-                            new_state: "none".to_string(),
-                        };
-                        let map_state_event = MapEvent {
-                            event_id: map_event_id.0,
-                            entity_id: entity_id,
-                            obj_id: obj_id.0,
-                            player_id: player_id,
-                            pos_x: pos.x,
-                            pos_y: pos.y,
-                            run_tick: game_tick.0 + 4,
-                            map_event_type: state_change_event,
-                        };
-
-                        map_events.insert(map_event_id.0.try_into().unwrap(), map_state_event);
-
-                        map_event_id.0 = map_event_id.0 + 1;
+                    // Check find hero from Move Event player
+                    if player_id != obj_player_id.0 {
+                        continue;
                     }
+
+                    if !Map::is_passable(x, y, &map) {
+                        println!("Position is not passable");
+                        let error = ResponsePacket::Error {
+                            errmsg: "Tile is not passable.".to_owned(),
+                        };
+                        send_to_client(player_id, error, &clients);
+                        return;
+                    };
+
+                    if !is_pos_empty(player_id, x, y, &query) {
+                        println!("Position is not empty");
+                        let error = ResponsePacket::Error {
+                            errmsg: "Tile is occupied.".to_owned(),
+                        };
+                        send_to_client(player_id, error, &clients);
+                        return;
+                    }
+
+                    // Add State Change Event to Moving
+                    let state_change_event = MapEventType::StateChangeEvent {
+                        new_state: "moving".to_string(),
+                    };
+
+                    map_events.new(
+                        ids.new_map_event_id(),
+                        entity_id,
+                        obj_id,
+                        obj_player_id,
+                        pos,
+                        game_tick.0,
+                        state_change_event,
+                    );
+
+                    // Add Move Event
+                    let move_event = MapEventType::MoveEvent { dst_x: x, dst_y: y };
+
+                    map_events.new(
+                        ids.new_map_event_id(),
+                        entity_id,
+                        obj_id,
+                        obj_player_id,
+                        pos,
+                        game_tick.0 + 4, // in the future
+                        move_event,
+                    );
+
+                    // Add State Change Event back to None
+                    let state_change_event = MapEventType::StateChangeEvent {
+                        new_state: "none".to_string(),
+                    };
+
+                    map_events.new(
+                        ids.new_map_event_id(),
+                        entity_id,
+                        obj_id,
+                        obj_player_id,
+                        pos,
+                        game_tick.0 + 4, // in the future
+                        state_change_event,
+                    );
                 }
+            }
+            PlayerEvent::Attack {
+                player_id,
+                attacktype: String,
+                sourceid,
+                targetid,
+            } => {
+                println!("PlayerEvent::Attack");
             }
             PlayerEvent::InfoObj { player_id, id } => {
                 println!(
                     "PlayerEvent::InfoObj player_id: {:?} id: {:?}",
                     player_id, id
                 );
-                for (
-                    _entity_id,
-                    obj_id,
-                    _pos,
-                    obj_player_id,
-                    name,
-                    template,
-                    class,
-                    subclass,
-                    state,
-                ) in query.iter()
-                {
-                    if obj_id.0 == id {
+
+                for q in &query {
+                    if q.id.0 == id {
                         let info_obj_packet: ResponsePacket = ResponsePacket::InfoObj {
-                            id: obj_id.0,
-                            name: name.0.to_owned(),
-                            template: template.0.to_owned(),
-                            class: class.0.to_owned(),
-                            subclass: subclass.0.to_owned(),
-                            state: state.0.to_owned(),
+                            id: q.id.0,
+                            name: q.name.0.to_owned(),
+                            template: q.template.0.to_owned(),
+                            class: q.class.0.to_owned(),
+                            subclass: q.subclass.0.to_owned(),
+                            state: q.state.0.to_owned(),
                         };
 
-                        for (_client_id, client) in clients.lock().unwrap().iter() {
-                            println!("Player: {:?} == client: {:?}", player_id, client);
-                            if client.player_id == player_id {
-                                client
-                                    .sender
-                                    .try_send(serde_json::to_string(&info_obj_packet).unwrap())
-                                    .expect("Could not send message");
-                            }
-                        }
+                        send_to_client(player_id, info_obj_packet, &clients);
                     }
                 }
+            }
+            PlayerEvent::InfoTile { player_id, x, y } => {
+                println!("PlayerEvent::InfoTile x: {:?} y: {:?}", x, y);
+
+                let info_tile_packet: ResponsePacket = ResponsePacket::InfoTile {
+                    x: x,
+                    y: y,
+                    name: "Tile Name".to_owned(),
+                    mc: 2,
+                    def: 2,
+                    unrevealed: "true".to_owned(),
+                    sanctuary: "true".to_owned(),
+                    passable: "true".to_owned(),
+                    wildness: "high".to_owned(),
+                    resources: "none".to_owned(),
+                };
+
+                send_to_client(player_id, info_tile_packet, &clients);
+            }
+            PlayerEvent::InfoInventory { player_id, id } => {
+                println!("PlayerEvent::InfoInventory id: {:?}", id);
+
+
+                
+                let info_inventory_packet: ResponsePacket = ResponsePacket::InfoInventory { id: id, cap: 100, tw: 100, items: () };
             }
         };
     }
@@ -437,9 +520,9 @@ fn event_system(
     game_tick: Res<GameTick>,
     clients: Res<Clients>,
     map: Res<Map>,
-    mut map_events: ResMut<HashMap<i32, MapEvent>>,
-    mut processed_map_events: ResMut<Vec<MapEvent>>,
-    mut perception_updates: ResMut<HashSet<i32>>,
+    mut map_events: ResMut<MapEvents>,
+    mut processed_map_events: ResMut<ProcessedMapEvents>,
+    mut perception_updates: ResMut<PerceptionUpdates>,
     mut set: ParamSet<(
         Query<(&Id, &PlayerId, &mut Position, &mut State, &Viewshed)>, // p0 mutable for the event processing
         Query<(
@@ -519,15 +602,7 @@ fn event_system(
                             // TODO reconsider sending map packet here
                             let map_packet = ResponsePacket::Map { data: tiles };
 
-                            for (_client_id, client) in clients.lock().unwrap().iter() {
-                                println!("Player: {:?} == client: {:?}", player_id, client);
-                                if client.player_id == player_id.0 {
-                                    client
-                                        .sender
-                                        .try_send(serde_json::to_string(&map_packet).unwrap())
-                                        .expect("Could not send message");
-                                }
-                            }
+                            send_to_client(player_id.0, map_packet, &clients);
                         }
                     }
 
@@ -559,7 +634,7 @@ fn event_system(
 
 fn processed_event_system(
     clients: Res<Clients>,
-    mut processed_map_events: ResMut<Vec<MapEvent>>,
+    mut processed_map_events: ResMut<ProcessedMapEvents>,
     // query: Query<(&Id, &PlayerId, &Position, &State, &Viewshed)>,
     mut set: ParamSet<(
         Query<(
@@ -713,7 +788,7 @@ fn processed_event_system(
 fn perception_system(
     map: Res<Map>,
     clients: Res<Clients>,
-    mut perception_updates: ResMut<HashSet<i32>>,
+    mut perception_updates: ResMut<PerceptionUpdates>,
     query: Query<(
         &Id,
         &PlayerId,
@@ -860,20 +935,31 @@ fn update_game_tick(
     game_tick.0 = game_tick.0 + 1;
 }
 
+fn print_items_system(
+    query: Query<(Entity, &Id, &Name, &Position, &ItemContainer)>,
+) {
+    for (e, id, name, pos, items) in query.iter() {
+        println!("id: {:?} name: {:?} items: {:?}", id, name, items.slots);
+    }
+}
+
+
 fn new_player(
     player_id: i32,
     mut commands: Commands,
-    mut map_event_id: ResMut<MapEventId>,
-    mut map_events: ResMut<HashMap<i32, MapEvent>>,
-    mut obj_index: ResMut<ObjIndex>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
     game_tick: ResMut<GameTick>,
 ) {
     let start_x = 16;
     let start_y = 36;
     let range = 2;
 
+    // Create Hero Obj
+    let hero_id = ids.new_obj_id();
+
     let hero = Obj {
-        id: Id(obj_index.0),
+        id: Id(hero_id),
         player_id: PlayerId(player_id),
         position: Position {
             x: start_x,
@@ -895,15 +981,29 @@ fn new_player(
         },
     };
 
-    let hero_entity_id = commands.spawn().insert_bundle(hero).insert(Hero).id();
+    // Create hero items
+    let berries = Item::new(ids.new_item_id(), hero_id, "Honeybell Berries".to_string(), 25);
+    let water = Item::new(ids.new_item_id(), hero_id, "Spring Water".to_string(), 25);
+
+    let hero_items = ItemContainer {
+        slots: vec![Some(berries), Some(water)]
+    };
+
+    // Spawn hero
+    let hero_entity_id = commands.spawn((
+        hero,
+        hero_items,
+        Hero
+    )).id();
 
     // Insert new obj event
     let new_obj_event = MapEventType::NewObjEvent;
+    let map_event_id = ids.new_map_event_id();
 
     let map_state_event = MapEvent {
-        event_id: map_event_id.0,
+        event_id: map_event_id,
         entity_id: hero_entity_id,
-        obj_id: obj_index.0,
+        obj_id: hero_id,
         player_id: player_id,
         pos_x: start_x,
         pos_y: start_y,
@@ -911,15 +1011,14 @@ fn new_player(
         map_event_type: new_obj_event,
     };
 
-    map_events.insert(map_event_id.0.try_into().unwrap(), map_state_event);
+    map_events.insert(map_event_id, map_state_event);
 
-    map_event_id.0 = map_event_id.0 + 1;
+    // Villager obj
 
-    // Increment obj index
-    obj_index.0 = obj_index.0 + 1;
+    let villager_id = ids.new_obj_id();
 
     let villager = Obj {
-        id: Id(obj_index.0),
+        id: Id(villager_id),
         player_id: PlayerId(player_id),
         position: Position { x: 16, y: 35 },
         name: Name("Villager 1".into()),
@@ -938,15 +1037,16 @@ fn new_player(
         },
     };
 
-    let villager_entity_id = commands.spawn().insert_bundle(villager).id();
+    let villager_entity_id = commands.spawn(villager).id();
 
     // Insert state change event
     let new_obj_event = MapEventType::NewObjEvent;
+    let map_event_id = ids.new_map_event_id();
 
     let map_state_event = MapEvent {
-        event_id: map_event_id.0,
+        event_id: map_event_id,
         entity_id: villager_entity_id,
-        obj_id: obj_index.0,
+        obj_id: villager_id,
         player_id: player_id,
         pos_x: 16,
         pos_y: 35,
@@ -954,32 +1054,9 @@ fn new_player(
         map_event_type: new_obj_event,
     };
 
-    map_events.insert(map_event_id.0.try_into().unwrap(), map_state_event);
+    map_events.insert(map_event_id, map_state_event);
 
-    map_event_id.0 = map_event_id.0 + 1;
-
-    // Increment obj index
-    obj_index.0 = obj_index.0 + 1;
-}
-
-fn network_obj_from_bundle(obj: &Obj) -> network::MapObj {
-    let network_obj = network::MapObj {
-        id: obj.id.0,
-        player: obj.player_id.0,
-        x: obj.position.x,
-        y: obj.position.y,
-        name: obj.name.0.clone(),
-        template: obj.template.0.clone(),
-        class: obj.class.0.clone(),
-        subclass: obj.subclass.0.clone(),
-        state: obj.state.0.clone(),
-        vision: obj.viewshed.range,
-        image: obj.misc.image.clone(),
-        hsl: Vec::new(),
-        groups: Vec::new(),
-    };
-
-    network_obj
+    //create_item(commands, heroId, "Honeybell Berries".to_owned(), "Food".to_owned(), "Berry".to_owned(), "honeybellberries".to_owned(), 5, 10);
 }
 
 fn network_obj(
@@ -1016,16 +1093,118 @@ fn network_obj(
     network_obj
 }
 
-fn run_if_visibility_changed(visibility_changed: Res<VisibilityChanged>) -> ShouldRun {
-    if visibility_changed.0 {
-        ShouldRun::Yes
-    } else {
-        ShouldRun::No
-    }
-}
-
 fn dedup<T: Eq + Hash + Copy>(v: &mut Vec<T>) {
     // note the Copy constraint
     let mut uniques = HashSet::new();
     v.retain(|e| uniques.insert(*e));
+}
+
+fn is_pos_empty(player_id: i32, x: i32, y: i32, query: &Query<MapObjQuery>) -> bool {
+    let mut objs = Vec::new();
+
+    for q in query {
+        let is_blocking = is_blocking_state(&q.state.0);
+
+        if player_id != q.player_id.0 && x == q.pos.x && y == q.pos.y && is_blocking {
+            objs.push(q.entity);
+        }
+    }
+
+    return objs.len() == 0;
+}
+
+fn from_string(state: &str) -> States {
+    match state {
+        "Dead" => States::Dead,
+        "Founded" => States::Founded,
+        "Progressing" => States::Progressing,
+        "Moving" => States::Moving,
+        _ => States::None,
+    }
+}
+
+fn is_blocking_state(state_str: &str) -> bool {
+    let state = from_string(state_str);
+
+    let result = match state {
+        States::Dead => false,
+        States::Founded => false,
+        States::Progressing => false,
+        _ => true,
+    };
+
+    result
+}
+
+fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clients>) {
+    for (_client_id, client) in clients.lock().unwrap().iter() {
+        println!("Player: {:?} == client: {:?}", player_id, client);
+        if client.player_id == player_id {
+            client
+                .sender
+                .try_send(serde_json::to_string(&packet).unwrap())
+                .expect("Could not send message");
+        }
+    }
+}
+
+impl Ids {
+    pub fn new_map_event_id(&mut self) -> i32 {
+        self.map_event = self.map_event + 1;
+        self.map_event
+    }
+
+    pub fn new_obj_id(&mut self) -> i32 {
+        self.obj = self.obj + 1;
+        self.obj
+    }
+
+    pub fn new_item_id(&mut self) -> i32 {
+        self.item = self.item + 1;
+        self.item
+    }
+}
+
+impl MapEvents {
+    pub fn new(
+        &mut self,
+        map_event_id: i32,
+        entity_id: Entity,
+        obj_id: &Id,
+        player_id: &PlayerId,
+        pos: &Position,
+        game_tick: i32,
+        map_event_type: MapEventType,
+    ) {
+        let map_state_event = MapEvent {
+            event_id: map_event_id,
+            entity_id: entity_id,
+            obj_id: obj_id.0,
+            player_id: player_id.0,
+            pos_x: pos.x,
+            pos_y: pos.y,
+            run_tick: game_tick,
+            map_event_type: map_event_type,
+        };
+
+        //self.insert(map_event_id, map_state_event);
+        self.insert(map_event_id, map_state_event);
+    }
+}
+
+impl Item {
+    pub fn new(id: i32, owner: i32, name: String, quantity: i32)-> Item {
+
+        Item {
+            id: id,
+            owner: owner,
+            name: name,
+            quantity: quantity,
+            class: "Food".to_string(),
+            subclass: "Berries".to_string(),
+            image: "berries".to_string(),
+            weight: 1,
+            equipped: false
+        }
+    }
 }
