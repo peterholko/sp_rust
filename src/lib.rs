@@ -12,12 +12,17 @@ use bevy::{
     prelude::*,
     utils::Duration,
 };
+use bevy::log::LogPlugin;
 
 use game::GamePlugin;
 
 mod game;
 mod map;
+mod ai;
 mod network;
+mod templates;
+mod item;
+mod structure;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
@@ -28,6 +33,10 @@ pub fn setup() {
         )))
         .add_plugin(CorePlugin::default())
         .add_plugin(ScheduleRunnerPlugin::default())
+        .add_plugin(LogPlugin {
+            filter: "big_brain=debug,thirst=debug".into(),
+            level: bevy::log::Level::INFO,
+        })        
         .add_plugin(GamePlugin)
         .run();
 }

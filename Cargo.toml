@@ -25,10 +25,13 @@ env_logger = "0.7"
 async-compat = "0.2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 tiled = "0.9.3"
 glob = "0.3.0"
 lazy_static = "1.4.0"
 itertools = "0.10.5"
+big-brain = "0.15.0"
+pathfinding = "4.1.1"
 
 
 [dev-dependencies]

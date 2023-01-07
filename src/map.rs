@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use tiled::{parse, LayerData};
 
+use pathfinding::prelude::astar;
+
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
@@ -66,6 +68,26 @@ pub struct MapTile {
     pub t: Vec<u32>,
 }
 
+// TODO move to another module
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MapPos(pub i32, pub i32);
+
+impl MapPos {
+  fn distance(&self, other: &MapPos) -> u32 {
+    // (self.0.abs_diff(other.0) + self.1.abs_diff(other.1)) as u32
+    Map::distance((self.0, self.1), (other.0, other.1))
+  }
+
+  fn successors(&self, map: &Map) -> Vec<(MapPos, u32)> {
+    let &MapPos(x, y) = self;
+    let s = Map::get_neighbour_tiles(x, y, map);
+
+    println!("s: {:?}", s);
+
+    s
+  }
+}
+
 impl Map {
     pub fn load_map() -> Map {
         let mut map = Map {
@@ -116,7 +138,16 @@ impl Map {
         map
     }
 
-    pub fn get_neighbour_tiles(center_x: i32, center_y: i32, r: u32, map: Map) -> Vec<MapTile> {
+    pub fn find_path(src_x: i32, src_y: i32, dst_x: i32, dst_y: i32, map: &Map) -> Option<(Vec<MapPos>, u32)> {
+
+        let goal: MapPos = MapPos(dst_x, dst_y);
+        let result = astar(&MapPos(src_x, src_y), |p| p.successors(&map), |p| p.distance(&goal),
+                           |p| *p == goal);
+     
+        return result;
+    }
+
+    pub fn get_tiles_by_range(center_x: i32, center_y: i32, r: u32, map: Map) -> Vec<MapTile> {
         let mut tiles = Vec::new();
         let neighbours = Map::range((center_x, center_y), r);
 
@@ -178,6 +209,22 @@ impl Map {
         };
 
         return passable;
+    }
+
+    pub fn movement_cost(tile_type: TileType) -> i32 {
+        let movement_cost = match tile_type {
+            TileType::Mountain => 5,
+            TileType::HillsPlains => 3,
+            TileType::HillsGrasslands => 3,
+            TileType::HillsSnow => 3,
+            TileType::HillsDesert => 3,
+            TileType::DeciduousForest => 3,
+            TileType::River => 6,
+            _ => 1
+        };
+
+        println!("tile_type: {:?} mc: {:?}", tile_type, movement_cost);
+        return movement_cost;
     }
 
     fn gid_to_tiletype(gid: u32) -> TileType {
@@ -272,6 +319,44 @@ impl Map {
         result
     }
 
+    pub fn get_neighbour_tiles(origin_x: i32, origin_y: i32, map: &Map) -> Vec<(MapPos, u32)>{
+
+        let neighbours_table: Vec<(i32, i32, i32)> = vec![
+            (1, -1, 0),
+            (1, 0, -1),
+            (0, 1, -1),
+            (-1, 1, 0),
+            (-1, 0, 1),
+            (0, -1, 1),
+        ];
+
+        let mut result: Vec<(MapPos, u32)> = Vec::new();
+
+        let (x, y, z) = Map::odd_q_to_cube((origin_x, origin_y));
+
+        for (nx, ny, nz) in neighbours_table {
+            let neighbour_cube = (x + nx, y + ny, z + nz);
+            let neighbour = Map::cube_to_odd_q(neighbour_cube);
+            let neighbour_x = neighbour.0;
+            let neighbour_y = neighbour.1;
+
+            //Reminder tile_index = y * width + x
+            let tile_index = neighbour_y * WIDTH + neighbour_x;
+            let tile_index_usize = tile_index as usize;
+            let tile_type = map.base[tile_index_usize].tile_type.clone();
+
+            let movement_cost = Map::movement_cost(tile_type) as u32;
+            println!("movement_cost: {:?}", movement_cost);
+
+            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map){
+                result.push((MapPos(neighbour_x, neighbour_y), movement_cost));
+            }
+        }
+
+        return result;
+
+    }
+
     fn neighbours((q, r): (i32, i32)) -> Vec<(i32, i32)> {
         let neighbours_table: Vec<(i32, i32, i32)> = vec![
             (1, -1, 0),
@@ -318,10 +403,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_neighbour_tiles() {
+    fn test_get_tiles_by_range() {
         let map: Map = Map::load_map();
 
-        let mut tiles = Map::get_neighbour_tiles(16, 36, 2, map);
+        let mut tiles = Map::get_tiles_by_range(16, 36, 2, map);
 
         let test_tiles = r#"[{"t":[13],"x":17,"y":34},{"t":[1],"x":16,"y":37},{"t":[1],"x":16,"y":35},{"t":[13],"x":18,"y":36},{"t":[5],"x":15,"y":36},{"t":[1],"x":17,"y":37},{"t":[1],"x":15,"y":34},{"t":[5],"x":14,"y":37},{"t":[13],"x":17,"y":35},{"t":[1],"x":16,"y":38},{"t":[1],"x":14,"y":35},{"t":[1],"x":16,"y":36},{"t":[1],"x":18,"y":37},{"t":[13],"x":16,"y":34},{"t":[5],"x":15,"y":37},{"t":[1],"x":18,"y":35},{"t":[13],"x":15,"y":35},{"t":[1],"x":17,"y":36},{"t":[13],"x":14,"y":36}]"#;
 

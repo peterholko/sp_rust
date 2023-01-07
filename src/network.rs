@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::{Account, Accounts, Client, Clients, HeroClass, PlayerEvent};
 use crate::map::MapTile;
+use crate::templates::ResReq;
 
 use std::path::Path;
 
@@ -42,12 +43,36 @@ enum NetworkPacket {
     Move { x: i32, y: i32 },
     #[serde(rename = "attack")]
     Attack { attacktype: String, sourceid: i32, targetid: i32},
+    #[serde(rename = "combo")]
+    Combo { sourceid: i32, combotype: String},
     #[serde(rename = "info_unit")]
     InfoObj { id: i32 },
+    #[serde(rename = "info_skills")]
+    InfoSkills { id: i32 },
     #[serde(rename = "info_tile")]
     InfoTile { x: i32, y: i32 },
     #[serde(rename = "info_inventory")]
-    InfoInventory { id: i32 }
+    InfoInventory { id: i32 },
+    #[serde(rename = "info_item")]
+    InfoItem { id: i32 },
+    #[serde(rename = "info_item_by_name")]
+    InfoItemByName { name: String },
+    #[serde(rename = "info_item_transfer")]
+    InfoItemTransfer { sourceid: i32, targetid: i32 },
+    #[serde(rename = "item_transfer")]
+    ItemTransfer { targetid: i32, item: i32 },
+    #[serde(rename = "item_split")]
+    ItemSplit { item: i32, quantity: i32 },
+    #[serde(rename = "gather")]
+    Gather {sourceid: i32, restype: String},
+    #[serde(rename = "order_follow")]
+    OrderFollow {sourceid: i32},
+    #[serde(rename = "structure_list")]
+    StructureList {},
+    #[serde(rename = "create_foundation")]
+    CreateFoundation {sourceid: i32, structure: String},
+    #[serde(rename = "build")]
+    Build {sourceid: i32, structureid: i32}
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -98,6 +123,44 @@ pub enum ResponsePacket {
         tw: i32,
         items: Vec<Item>
     },
+    #[serde(rename = "info_item")]
+    InfoItem {
+        id: i32,
+        owner: i32,
+        name: String,
+        quantity: i32,
+        class: String,
+        subclass: String,
+        image: String,
+        weight: f32,
+        equipped: bool,
+    },
+    #[serde(rename = "info_item_transfer")]
+    InfoItemTransfer {
+        sourceid: i32,
+        sourceitems: Inventory,
+        targetid: i32,
+        targetitems: Inventory,
+        reqitems: Vec<ResReq>,
+    },    
+    #[serde(rename = "item_transfer")]
+    ItemTransfer {
+        result: String,
+        sourceid: i32,
+        sourceitems: Inventory,
+        targetid: i32,
+        targetitems: Inventory,
+        reqitems: Vec<ResReq>,
+    },  
+    #[serde(rename = "item_split")]
+    ItemSplit {
+        result: String,
+        owner: i32
+    },
+    #[serde(rename = "structure_list")]
+    StructureList {
+        result: Vec<Structure>
+    },
     #[serde(rename = "image_def")]
     ImageDef {
         name: String,
@@ -115,7 +178,7 @@ pub enum ResponsePacket {
     #[serde(rename = "changes")]
     Changes {
         events: Vec<ChangeEvents>,
-    },
+    },    
     Ok,
     None,
     Pong,
@@ -178,16 +241,38 @@ pub struct MapObj {
     pub groups: Vec<i32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Inventory {
+    pub id: i32,
+    pub cap: i32,
+    pub tw: i32,
+    pub items: Vec<Item>
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Item {
-    id: i32,
-    name: String,
-    quantity: i32,
-    owner: i32,
-    class: String,
-    subclass: String,
-    weight: i32,
-    equip: bool
+    pub id: i32,
+    pub name: String,
+    pub quantity: i32,
+    pub owner: i32,
+    pub class: String,
+    pub subclass: String,
+    pub image: String,
+    pub weight: f32,
+    pub equipped: bool
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Structure {
+    pub name: String,
+    pub image: String,
+    pub class: String,
+    pub subclass: String,
+    pub template: String,
+    pub base_hp: i32,
+    pub base_def: i32,
+    pub build_time: i32,
+    pub req: Vec<ResReq>
 }
 
 lazy_static! {
@@ -219,7 +304,7 @@ pub async fn tokio_setup(
     clients: Clients,
     accounts: Accounts,
 ) {
-    env_logger::init();
+    // env_logger::init();
 
     let addr = "127.0.0.1:9002";
     let listener = TcpListener::bind(&addr).await.expect("Can't listen");
@@ -385,15 +470,51 @@ async fn handle_connection(
                                             NetworkPacket::Attack{attacktype, sourceid, targetid} => {
                                                 handle_attack(player_id, attacktype, sourceid, targetid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::Combo{sourceid, combotype} => {
+                                                handle_combo(player_id, sourceid, combotype, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::InfoObj{id} => {
                                                 handle_info_obj(player_id, id, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::InfoSkills{id} => {
+                                                handle_info_skills(player_id, id, client_to_game_sender.clone())
                                             }
                                             NetworkPacket::InfoTile{x, y} => {
                                                 handle_info_tile(player_id, x, y, client_to_game_sender.clone())
                                             }    
                                             NetworkPacket::InfoInventory{id} => {
                                                 handle_info_inventory(player_id, id, client_to_game_sender.clone())
-                                            }                                                                                       
+                                            }
+                                            NetworkPacket::InfoItem{id} => {
+                                                handle_info_item(player_id, id, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::InfoItemByName{name} => {
+                                                handle_info_item_by_name(player_id, name, client_to_game_sender.clone())
+                                            }     
+                                            NetworkPacket::InfoItemTransfer{sourceid, targetid} => {
+                                                handle_info_item_transfer(player_id, sourceid, targetid, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::ItemTransfer{targetid, item} => {
+                                                handle_item_transfer(player_id, targetid, item, client_to_game_sender.clone())
+                                            }     
+                                            NetworkPacket::ItemSplit{item, quantity} => {
+                                                handle_item_split(player_id, item, quantity, client_to_game_sender.clone())
+                                            }                                                                                      
+                                            NetworkPacket::Gather{sourceid, restype} => {
+                                                handle_gather(player_id, sourceid, restype, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::OrderFollow{sourceid} => {
+                                                handle_order_follow(player_id, sourceid, client_to_game_sender.clone())
+                                            }   
+                                            NetworkPacket::StructureList{} => {
+                                                handle_structure_list(player_id, client_to_game_sender.clone())
+                                            }                                                                                                                                                                      
+                                            NetworkPacket::CreateFoundation{sourceid, structure} => {
+                                                handle_create_foundation(player_id, sourceid, structure, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::Build{sourceid, structureid} => {
+                                                handle_build(player_id, sourceid, structureid, client_to_game_sender.clone())
+                                            }                                            
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -563,6 +684,22 @@ fn handle_attack(
 
     ResponsePacket::Ok
 }
+fn handle_combo(
+    player_id: i32,
+    sourceid: i32,
+    combotype: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Combo {
+            player_id: player_id,
+            source_id: sourceid,
+            combo_type: combotype
+        })
+        .expect("Could not send message");
+
+    ResponsePacket::Ok
+}
 
 fn handle_info_obj(
     player_id: i32,
@@ -571,6 +708,19 @@ fn handle_info_obj(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::InfoObj { player_id: player_id, id: id })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_skills(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoSkills { player_id: player_id, id: id })
         .expect("Could not send message");
 
     // Response will come from game.rs
@@ -602,4 +752,139 @@ fn handle_info_inventory(
 
     // Response will come from game.rs
     ResponsePacket::None
+}
+
+fn handle_info_item(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoItem { player_id: player_id, id: id})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_item_by_name(
+    player_id: i32,
+    name: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoItemByName { player_id: player_id, name: name})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_item_transfer(
+    player_id: i32,
+    sourceid: i32,
+    targetid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoItemTransfer { player_id: player_id, sourceid: sourceid, targetid: targetid})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_item_transfer(
+    player_id: i32,
+    targetid: i32,
+    item: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::ItemTransfer { player_id: player_id, target_id: targetid, item_id: item})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_item_split(
+    player_id: i32,
+    item: i32,
+    quantity: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::ItemSplit { player_id: player_id, item_id: item, quantity: quantity})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_gather(
+    player_id: i32,
+    sourceid: i32,
+    restype: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Gather { player_id: player_id, sourceid: sourceid, restype: restype})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_follow(
+    player_id: i32,
+    sourceid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderFollow { player_id: player_id, sourceid: sourceid})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_structure_list(
+    player_id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::StructureList { player_id: player_id})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_create_foundation(
+    player_id: i32,
+    sourceid: i32,
+    structure: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::CreateFoundation { player_id: player_id, source_id: sourceid, structure_name: structure})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_build(
+    player_id: i32,
+    sourceid: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Build { player_id: player_id, source_id: sourceid, structure_id: structureid})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
 }
