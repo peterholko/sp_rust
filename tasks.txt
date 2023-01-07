@@ -1,0 +1,11 @@
+#### Jan 5, 2022 ####
+
+** Complete structure construction
+
+#### Dec 14, 2022 ####
+
+** A* star pathfinding (completed)
+*** Utility AI + Orders (50% completed)
+
+
+

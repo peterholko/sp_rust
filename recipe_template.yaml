@@ -1,0 +1,130 @@
+# recipe_template.yaml
+
+##################
+##### RECIPE #####
+##################
+
+- name: Copper Training Axe
+  image: trainingaxe
+  structure: Blacksmith
+  class: Weapon
+  subclass: Axe
+  tier: 1
+  slot: Main Hand
+  damage: 10
+  speed: 5
+  stamina_req: 10
+  skill_req: 0
+  weight: 10
+  req: 
+    - type: Copper Ingot
+      quantity: 1
+    - type: Maple Timber
+      quantity: 1
+
+- name: Copper Broad Axe
+  image: broadaxe
+  structure: Blacksmith
+  class: Weapon
+  subclass: Axe
+  tier: 1
+  slot: Main Hand
+  damage: 30
+  speed: 4.5
+  stamina_req: 12
+  skill_req: 10
+  weight: 10
+  req: 
+    - type: Copper Ingot
+      quantity: 40
+    - type: Maple Timber
+      quantity: 15
+
+- name: Copper Heavy Axe
+  image: heavyaxe
+  structure: Blacksmith
+  class: Weapon
+  subclass: Axe
+  tier: 1
+  slot: Main Hand
+  damage: 35
+  speed: 4.5
+  stamina_req: 12
+  skill_req: 25
+  weight: 10
+  req: 
+    - type: Copper Ingot
+      quantity: 75
+    - type: Maple Timber
+      quantity: 25
+
+- name: Copper Training Sword
+  image: sword
+  structure: Blacksmith
+  class: Weapon
+  subclass: Sword
+  tier: 1
+  slot: Main Hand
+  damage: 5
+  speed: 4.5
+  stamina_req: 12
+  skill_req: 0
+  weight: 10
+  req: 
+    - type: Copper Ingot
+      quantity: 75
+    - type: Maple Timber
+      quantity: 25
+ 
+- name: Copper Training Club
+  image: club
+  structure: Blacksmith
+  class: Weapon
+  subclass: Hammer
+  slot: Main Hand
+  damage: 5
+  speed: 4.5
+  stamina_req: 12
+  skill_req: 0
+  weight: 10
+  req: 
+    - type: Copper Ingot
+      quantity: 75
+    - type: Maple Timber
+      quantity: 25
+
+      
+
+##################
+##### TOOLS #####
+##################
+
+- name: Training Pick Axe
+  image: pickaxe
+  structure: Crafting Tent
+  class: Gathering
+  subclass: Pick Axe
+  slot: Main Hand
+  weight: 10
+  req: 
+    - type: Ingot
+      quantity: 2
+    - type: Wood
+      quantity: 2
+
+##################
+##### BOWS #####
+##################
+
+- name: Training Bow
+  image: bow
+  structure: Carpenter
+  class: Weapon
+  subclass: Bow
+  slot: Main Hand
+  weight: 10
+  req:
+    - type: Timber
+      quantity: 5
+
+
