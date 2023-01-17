@@ -92,7 +92,7 @@ impl Item {
         return owner_items;
     }
 
-    pub fn get_packet(item_id: i32, items: ResMut<Items>) -> Option<network::Item> {
+    pub fn get_packet(item_id: i32, items: &ResMut<Items>) -> Option<network::Item> {
         for item in items.iter() {
             if item.id == item_id {
                 return Some(network::Item {
@@ -112,7 +112,7 @@ impl Item {
         return None;
     }
 
-    pub fn get_by_name_packet(item_name: String, items: ResMut<Items>) -> Option<network::Item> {
+    pub fn get_by_name_packet(item_name: String, items: &ResMut<Items>) -> Option<network::Item> {
         for item in items.iter() {
             if item.name == item_name {
                 return Some(network::Item {
@@ -224,7 +224,7 @@ impl Item {
     }
 
     fn can_merge(item_class: String) -> bool {
-        match (item_class.as_str()) {
+        match item_class.as_str() {
             WEAPON => false,
             ARMOR => false,
             _ => true,

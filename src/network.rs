@@ -1,3 +1,4 @@
+use bevy::prelude::Resource;
 use crossbeam_channel::Sender as CBSender;
 
 use std::{
@@ -16,7 +17,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Error};
 
 use serde::{Deserialize, Serialize};
 
-use crate::game::{Account, Accounts, Client, Clients, HeroClass, PlayerEvent};
+use crate::game::{Account, Accounts, Client, Clients, HeroClassList, PlayerEvent};
 use crate::map::MapTile;
 use crate::templates::ResReq;
 
@@ -72,7 +73,11 @@ enum NetworkPacket {
     #[serde(rename = "create_foundation")]
     CreateFoundation {sourceid: i32, structure: String},
     #[serde(rename = "build")]
-    Build {sourceid: i32, structureid: i32}
+    Build {sourceid: i32, structureid: i32},
+    #[serde(rename = "survey")]
+    Survey {sourceid: i32},
+    #[serde(rename = "explore")]
+    Explore {}
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -109,12 +114,12 @@ pub enum ResponsePacket {
         y: i32,
         name: String,
         mc: i32, 
-        def: i32,
-        unrevealed: String,
+        def: f32,
+        unrevealed: i32,
         sanctuary: String,
-        passable: String,
+        passable: bool,
         wildness: String,
-        resources: String
+        resources: Vec<TileResource>
     },
     #[serde(rename = "info_inventory")]
     InfoInventory {
@@ -179,6 +184,14 @@ pub enum ResponsePacket {
     Changes {
         events: Vec<ChangeEvents>,
     },    
+    #[serde(rename = "create_foundation")]
+    CreateFoundation {
+        result: String
+    },
+    #[serde(rename = "build")]
+    Build {
+        build_time: i32
+    },
     Ok,
     None,
     Pong,
@@ -273,6 +286,12 @@ pub struct Structure {
     pub base_def: i32,
     pub build_time: i32,
     pub req: Vec<ResReq>
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct TileResource {
+    pub name: String,
+    pub quantity: i32
 }
 
 lazy_static! {
@@ -514,16 +533,23 @@ async fn handle_connection(
                                             }
                                             NetworkPacket::Build{sourceid, structureid} => {
                                                 handle_build(player_id, sourceid, structureid, client_to_game_sender.clone())
-                                            }                                            
+                                            }    
+                                            NetworkPacket::Survey{sourceid} => {
+                                                handle_survey(player_id, sourceid, client_to_game_sender.clone())
+                                            }                                                                                       
+                                            NetworkPacket::Explore{} => {
+                                                handle_explore(player_id, client_to_game_sender.clone())
+                                            }                                                                                       
                                             _ => ResponsePacket::Ok
                                         }
                                     },
-                                    Err(_) => {
+                                    Err(packet) => {
                                         let ping = r#"0"#;
 
                                         if msg.to_text().unwrap() == ping {
                                             ResponsePacket::Pong
                                         } else {
+                                            println!("Error packet: {:?}", packet);
                                             ResponsePacket::Error{errmsg: "Unknown packet".to_owned()}
                                         }
                                     }
@@ -561,7 +587,7 @@ fn handle_login(username: String, password: String, accounts: Accounts) -> (i32,
     let mut found_account = false;
     let mut password_match = false;
     let mut player_id: i32 = -1;
-    let mut account_class = HeroClass::None;
+    let mut account_class = HeroClassList::None;
 
     let accounts = accounts.lock().unwrap();
 
@@ -580,7 +606,7 @@ fn handle_login(username: String, password: String, accounts: Accounts) -> (i32,
     println!("found_account: {:?}", found_account);
 
     let ret = if found_account && password_match {
-        if account_class == HeroClass::None {
+        if account_class == HeroClassList::None {
             (
                 player_id,
                 ResponsePacket::SelectClass {
@@ -622,12 +648,12 @@ fn handle_selected_class(
     println!("{:?}", accounts);
     let mut account = accounts.get_mut(&player_id).unwrap();
 
-    if account.class == HeroClass::None {
+    if account.class == HeroClassList::None {
         let selected_class = match classname.as_str() {
-            "warrior" => HeroClass::Warrior,
-            "ranger" => HeroClass::Ranger,
-            "mage" => HeroClass::Mage,
-            _ => HeroClass::None,
+            "warrior" => HeroClassList::Warrior,
+            "ranger" => HeroClassList::Ranger,
+            "mage" => HeroClassList::Mage,
+            _ => HeroClassList::None,
         };
 
         account.class = selected_class;
@@ -787,7 +813,7 @@ fn handle_info_item_transfer(
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
     client_to_game_sender
-        .send(PlayerEvent::InfoItemTransfer { player_id: player_id, sourceid: sourceid, targetid: targetid})
+        .send(PlayerEvent::InfoItemTransfer { player_id: player_id, source_id: sourceid, target_id: targetid})
         .expect("Could not send message");
 
     // Response will come from game.rs
@@ -829,7 +855,7 @@ fn handle_gather(
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
     client_to_game_sender
-        .send(PlayerEvent::Gather { player_id: player_id, sourceid: sourceid, restype: restype})
+        .send(PlayerEvent::Gather { player_id: player_id, source_id: sourceid, res_type: restype})
         .expect("Could not send message");
 
     // Response will come from game.rs
@@ -842,7 +868,7 @@ fn handle_order_follow(
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
     client_to_game_sender
-        .send(PlayerEvent::OrderFollow { player_id: player_id, sourceid: sourceid})
+        .send(PlayerEvent::OrderFollow { player_id: player_id, source_id: sourceid})
         .expect("Could not send message");
 
     // Response will come from game.rs
@@ -872,7 +898,7 @@ fn handle_create_foundation(
         .expect("Could not send message");
 
     // Response will come from game.rs
-    ResponsePacket::Ok
+    ResponsePacket::None
 }
 
 fn handle_build(
@@ -883,6 +909,31 @@ fn handle_build(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::Build { player_id: player_id, source_id: sourceid, structure_id: structureid})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_survey(
+    player_id: i32,
+    sourceid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Survey { player_id: player_id, source_id: sourceid})
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_explore(
+    player_id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Explore { player_id: player_id})
         .expect("Could not send message");
 
     // Response will come from game.rs

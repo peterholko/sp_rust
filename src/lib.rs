@@ -23,6 +23,8 @@ mod network;
 mod templates;
 mod item;
 mod structure;
+mod resource;
+mod skill;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
@@ -34,8 +36,8 @@ pub fn setup() {
         .add_plugin(CorePlugin::default())
         .add_plugin(ScheduleRunnerPlugin::default())
         .add_plugin(LogPlugin {
-            filter: "big_brain=debug,thirst=debug".into(),
-            level: bevy::log::Level::INFO,
+            level: bevy::log::Level::DEBUG,
+            filter: "big_brain=warn,siege_perilous::ai=info,siege_perilious::game=debug".into(),
         })        
         .add_plugin(GamePlugin)
         .run();

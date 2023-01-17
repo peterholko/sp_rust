@@ -82,27 +82,27 @@ pub struct ItemTemplate {
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
-pub struct ResTemplates(Vec<ResTemplate>);
+pub struct ResTemplates(HashMap<String, ResTemplate>);
 
-#[derive(Debug, Resource, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Resource, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResTemplate {
-    name: String,
+    pub name: String,
     #[serde(rename = "type")]
-    res_type: String,
-    terrain: Vec<String>,
-    quantity_rate: Vec<i32>,
-    quantity: Vec<i32>,
-    skill_req: i32,
+    pub res_type: String,
+    pub terrain: Vec<String>,
+    pub quantity_rate: Vec<i32>,
+    pub quantity: Vec<i32>,
+    pub skill_req: i32,
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
-pub struct SkillTemplates(Vec<SkillTemplate>);
+pub struct SkillTemplates(HashMap<String, SkillTemplate>);
 
-#[derive(Debug, Resource, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Resource, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SkillTemplate {
-    name: String,
-    class: String,
-    xp: Vec<i32>,
+    pub name: String,
+    pub class: String,
+    pub xp: Vec<i32>,
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -143,14 +143,22 @@ impl Plugin for TemplatesPlugin {
 
         // Load res template data
         let res_template_file = fs::File::open("res_template.yaml").expect("Could not open file.");
-        let res_templates: Vec<ResTemplate> =
+        let res_templates_vec: Vec<ResTemplate> =
             serde_yaml::from_reader(res_template_file).expect("Could not read values.");
+
+        // Convert vector to hashmap for faster access of individual skill
+        let res_templates: HashMap<_, _> =
+            res_templates_vec.iter().map(|x| (x.name.clone(), x.clone())).collect();
 
         // Load skill template data
         let skill_template_file =
             fs::File::open("skill_template.yaml").expect("Could not open file.");
-        let skill_templates: Vec<SkillTemplate> =
+        let skill_templates_vec: Vec<SkillTemplate> =
             serde_yaml::from_reader(skill_template_file).expect("Could not read values.");
+
+        // Convert vector to hashmap for faster access of individual skill
+        let skill_templates: HashMap<_, _> =
+            skill_templates_vec.iter().map(|x| (x.name.clone(), x.clone())).collect();
 
         // Load skill template data
         let recipe_template_file =

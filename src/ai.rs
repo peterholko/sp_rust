@@ -101,7 +101,7 @@ pub fn process_order_system(
                             }
                         }
                     } else {
-                        debug!("No order to execute");
+                        trace!("No order to execute");
                     }
                 }
                 ActionState::Executing => {
@@ -298,7 +298,7 @@ pub fn morale_scorer_system(
 
             if morale.morale >= 80.0 {
                 span.span().in_scope(|| {
-                    debug!("Morale above threshold! Score: {}", morale.morale / 100.0)
+                    trace!("Morale above threshold! Score: {}", morale.morale / 100.0)
                 });
             }
         }

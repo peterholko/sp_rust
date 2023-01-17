@@ -27,8 +27,10 @@ use crate::item::{Item, ItemPlugin, Items};
 use crate::map::{Map, MapPlugin, MapTile};
 use crate::network;
 use crate::network::ResponsePacket;
+use crate::resource::{Resource, ResourcePlugin, Resources};
+use crate::skill::{Skill, SkillPlugin, Skills};
 use crate::structure::Structure;
-use crate::templates::{ItemTemplates, ObjTemplates, Templates, TemplatesPlugin};
+use crate::templates::{Templates, TemplatesPlugin};
 
 pub struct GamePlugin;
 
@@ -40,6 +42,9 @@ pub struct Clients(Arc<Mutex<HashMap<i32, Client>>>);
 
 #[derive(Resource, Deref, DerefMut)]
 struct NetworkReceiver(CBReceiver<PlayerEvent>);
+
+#[derive(Resource, Deref, DerefMut)]
+pub struct Events(pub Vec<PlayerEvent>);
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct MapEvents(pub HashMap<i32, MapEvent>);
@@ -73,13 +78,13 @@ pub struct Account {
     pub player_id: i32,
     pub username: String,
     pub password: String,
-    pub class: HeroClass,
+    pub class: HeroClassList,
 }
 
 #[derive(Debug, Component, Clone)]
 pub struct Id(pub i32);
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Position {
     pub x: i32,
     pub y: i32,
@@ -103,7 +108,7 @@ struct Class(String);
 #[derive(Debug, Component)]
 struct Subclass(String);
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
 pub struct State(pub String);
 
 #[derive(Debug, Component, Clone)]
@@ -113,7 +118,13 @@ struct Viewshed {
 }
 
 #[derive(Debug, Component)]
-pub struct Hero;
+pub struct SubclassHero; //Subclass Hero
+
+#[derive(Debug, Component)]
+pub struct SubclassVillager; //Subclass Villager
+
+#[derive(Debug, Component)]
+pub struct ClassStructure; //Class Structure
 
 #[derive(Debug, Component)]
 pub struct AI;
@@ -123,6 +134,15 @@ struct Misc {
     image: String,
     hsl: Vec<i32>,
     groups: Vec<i32>,
+}
+
+#[derive(Debug, Component)]
+struct StructureAttrs {
+    start_time: i32,
+    end_time: i32,
+    build_time: i32,
+    builder: i32,
+    progress: i32,
 }
 
 #[derive(Debug, Component)]
@@ -165,7 +185,7 @@ struct MapObjQuery {
 }
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum HeroClass {
+pub enum HeroClassList {
     Warrior,
     Ranger,
     Mage,
@@ -178,8 +198,9 @@ const MOVING: &str = "moving";
 const DEAD: &str = "dead";
 const FOUNDED: &str = "founded";
 const PROGRESSING: &str = "progressing";
+const BUILDING: &str = "building";
 
-#[derive(Clone, Debug)]
+#[derive(Resource, Clone, Debug)]
 pub enum PlayerEvent {
     NewPlayer {
         player_id: i32,
@@ -198,12 +219,12 @@ pub enum PlayerEvent {
     Combo {
         player_id: i32,
         source_id: i32,
-        combo_type: String
+        combo_type: String,
     },
     Gather {
         player_id: i32,
-        sourceid: i32,
-        restype: String,
+        source_id: i32,
+        res_type: String,
     },
     InfoObj {
         player_id: i32,
@@ -232,8 +253,8 @@ pub enum PlayerEvent {
     },
     InfoItemTransfer {
         player_id: i32,
-        sourceid: i32,
-        targetid: i32,
+        source_id: i32,
+        target_id: i32,
     },
     ItemTransfer {
         player_id: i32,
@@ -247,7 +268,7 @@ pub enum PlayerEvent {
     },
     OrderFollow {
         player_id: i32,
-        sourceid: i32,
+        source_id: i32,
     },
     StructureList {
         player_id: i32,
@@ -261,6 +282,13 @@ pub enum PlayerEvent {
         player_id: i32,
         source_id: i32,
         structure_id: i32,
+    },
+    Survey {
+        player_id: i32,
+        source_id: i32,
+    },
+    Explore {
+        player_id: i32,
     },
 }
 
@@ -278,10 +306,11 @@ pub struct MapEvent {
 
 #[derive(Clone, Debug)]
 pub enum MapEventType {
-    NewObjEvent,
+    NewObjEvent { new_player: bool },
     StateChangeEvent { new_state: String },
     MoveEvent { dst_x: i32, dst_y: i32 },
     GatherEvent { res_type: String },
+    ExploreEvent,
 }
 
 #[derive(Clone, Debug)]
@@ -290,17 +319,44 @@ struct ExploredMap {
     tiles: HashSet<i32>,
 }
 
+// Used as temporary obj storage for system
+pub struct TmpObj {
+    pub entity: Entity,
+    pub obj_id: i32,
+    pub player_id: i32,
+    pub pos: Position,
+    pub state: State,
+}
+
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(MapPlugin)
             .add_plugin(AIPlugin)
             .add_plugin(TemplatesPlugin)
             .add_plugin(ItemPlugin)
+            .add_plugin(ResourcePlugin)
+            .add_plugin(SkillPlugin)
             .init_resource::<GameTick>()
             .add_startup_system(Game::setup)
             .add_system_to_stage(CoreStage::PreUpdate, update_game_tick)
-            .add_system(message_system)
-            .add_system(event_system)
+            .add_system(new_player_system)
+            .add_system(move_system)
+            .add_system(gather_system)
+            .add_system(info_obj_system)
+            .add_system(info_tile_system)
+            .add_system(info_item_system)
+            .add_system(item_split_system)
+            .add_system(order_follow_system)
+            .add_system(structure_list_system)
+            .add_system(create_foundation_system)
+            .add_system(build_system)
+            .add_system(explore_system)
+            .add_system(new_obj_event_system)
+            .add_system(move_event_system)
+            .add_system(state_change_event_system)
+            .add_system(gather_event_system)
+            .add_system(explore_event_system)
+            .add_system(message_broker_system)
             .add_system(processed_event_system)
             .add_system(perception_system);
         // .add_system(task_move_to_target_system);
@@ -330,7 +386,10 @@ impl Game {
             item: 0,
         };
 
-        // Initialize game events vector
+        // Initialize events
+        let events: Events = Events(Vec::new());
+
+        // Initialize map events vector
         let map_events: MapEvents = MapEvents(HashMap::new());
         let processed_map_events: ProcessedMapEvents = ProcessedMapEvents(Vec::new());
 
@@ -346,14 +405,14 @@ impl Game {
             player_id: 1,
             username: "peter".to_string(),
             password: "123123".to_string(),
-            class: HeroClass::None,
+            class: HeroClassList::None,
         };
 
         let account2 = Account {
             player_id: 2,
             username: "joe".to_string(),
             password: "123123".to_string(),
-            class: HeroClass::None,
+            class: HeroClassList::None,
         };
 
         accounts.lock().unwrap().insert(1, account);
@@ -379,6 +438,7 @@ impl Game {
         commands.insert_resource(clients);
         commands.insert_resource(network_receiver);
         commands.insert_resource(game_tick);
+        commands.insert_resource(events);
         commands.insert_resource(map_events);
         commands.insert_resource(processed_map_events);
         commands.insert_resource(perception_updates);
@@ -386,16 +446,222 @@ impl Game {
     }
 }
 
-fn message_system(
+fn message_broker_system(
+    client_to_game_receiver: Res<NetworkReceiver>,
+    mut events: ResMut<Events>,
+    /*mut new_player_events: EventWriter<NewPlayerEvent>,
+    mut move_events: EventWriter<MoveEvent>,
+    mut gather_events: EventWriter<GatherEvent>,
+    mut info_obj_events: EventWriter<InfoObjEvent>,
+    mut info_tile_events: EventWriter<InfoTileEvent>,
+    mut info_inventory_events: EventWriter<InfoInventoryEvent>,
+    mut info_item_events: EventWriter<InfoItemEvent>,
+    mut info_item_by_name_events: EventWriter<InfoItemByNameEvent>,
+    mut info_item_transfer_events: EventWriter<InfoItemTransferEvent>,
+    mut item_transfer_events: EventWriter<ItemTransferEvent>,
+    mut item_split_events: EventWriter<ItemSplitEvent>,
+    mut order_follow_events: EventWriter<OrderFollowEvent>,
+    mut structure_list_events: EventWriter<StructureListEvent>,
+    mut create_foundation_events: EventWriter<CreateFoundationEvent>,*/
+) {
+    if let Ok(evt) = client_to_game_receiver.try_recv() {
+        println!("{:?}", evt);
+
+        events.push(evt.clone());
+
+        /*let _res = match evt {
+            PlayerEvent::NewPlayer { player_id } => {
+                new_player_events.send(NewPlayerEvent {
+                    player_id: player_id,
+                });
+            }
+            PlayerEvent::Move { player_id, x, y } => {
+                move_events.send(MoveEvent {
+                    player_id: player_id,
+                    pos: Position { x: x, y: y },
+                });
+            }
+            PlayerEvent::Attack {
+                player_id,
+                attacktype: String,
+                sourceid,
+                targetid,
+            } => {}
+            PlayerEvent::Combo {
+                player_id,
+                source_id,
+                combo_type,
+            } => {
+                debug!("PlayerEvent::Combo");
+            }
+            PlayerEvent::Gather {
+                player_id,
+                source_id,
+                res_type,
+            } => {
+                debug!("PlayerEvent::Gather");
+                gather_events.send(GatherEvent {
+                    player_id: player_id,
+                    source_id: source_id,
+                    res_type: res_type,
+                })
+            }
+            PlayerEvent::InfoObj { player_id, id } => {
+                info_obj_events.send(InfoObjEvent {
+                    player_id: player_id,
+                    id: id,
+                });
+            }
+            PlayerEvent::InfoSkills { player_id, id } => {}
+            PlayerEvent::InfoTile { player_id, x, y } => {
+                info_tile_events.send(InfoTileEvent {
+                    player_id: player_id,
+                    x: x,
+                    y: y,
+                });
+            }
+            PlayerEvent::InfoInventory { player_id, id } => {
+                info_inventory_events.send(InfoInventoryEvent {
+                    player_id: player_id,
+                    id: id,
+                });
+            }
+            PlayerEvent::InfoItem { player_id, id } => {
+                info_item_events.send(InfoItemEvent {
+                    player_id: player_id,
+                    id: id,
+                });
+            }
+            PlayerEvent::InfoItemByName { player_id, name } => {
+                info_item_by_name_events.send(InfoItemByNameEvent {
+                    player_id: player_id,
+                    name: name,
+                });
+            }
+            PlayerEvent::InfoItemTransfer {
+                player_id,
+                source_id,
+                target_id,
+            } => {
+                info_item_transfer_events.send(InfoItemTransferEvent {
+                    player_id: player_id,
+                    source_id: source_id,
+                    target_id: target_id,
+                });
+            }
+            PlayerEvent::ItemTransfer {
+                player_id,
+                target_id,
+                item_id,
+            } => {
+                item_transfer_events.send(ItemTransferEvent {
+                    player_id: player_id,
+                    target_id: target_id,
+                    item_id: item_id,
+                });
+            }
+            PlayerEvent::ItemSplit {
+                player_id,
+                item_id,
+                quantity,
+            } => {
+                item_split_events.send(ItemSplitEvent {
+                    player_id: player_id,
+                    item_id: item_id,
+                    quantity: quantity,
+                });
+            }
+            PlayerEvent::OrderFollow {
+                player_id,
+                source_id,
+            } => {
+                order_follow_events.send(OrderFollowEvent {
+                    player_id: player_id,
+                    source_id: source_id,
+                });
+            }
+            PlayerEvent::StructureList { player_id } => {
+                structure_list_events.send(StructureListEvent {
+                    player_id: player_id,
+                });
+            }
+            PlayerEvent::CreateFoundation {
+                player_id,
+                source_id,
+                structure_name,
+            } => {
+                create_foundation_events.send(CreateFoundationEvent {
+                    player_id: player_id,
+                    source_id: source_id,
+                    structure_name: structure_name,
+                });
+            }
+            PlayerEvent::Build {
+                player_id,
+                source_id,
+                structure_id,
+            } => {
+                /*build_events.send(BuildEvent {
+                    player_id: player_id,
+                    source_id: source_id,
+                    structure_id: structure_id,
+                });*/
+            }
+            PlayerEvent::Explore { player_id } => {
+                /*explore_events.send(ExploreEvent {
+                    player_id: player_id,
+                }); */
+            }
+            PlayerEvent::Survey {
+                player_id,
+                source_id,
+            } => {}
+        }; */
+    }
+}
+
+fn new_player_system(
+    mut events: ResMut<Events>,
     mut commands: Commands,
     game_tick: ResMut<GameTick>,
-    clients: Res<Clients>,
-    client_to_game_receiver: Res<NetworkReceiver>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
-    map: Res<Map>,
     mut items: ResMut<Items>,
     templates: Res<Templates>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::NewPlayer { player_id } => {
+                new_player(
+                    *player_id,
+                    &mut commands,
+                    &mut ids,
+                    &mut map_events,
+                    &mut items,
+                    &templates,
+                    &game_tick,
+                );
+
+                events_to_remove.push(index);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn move_system(
+    mut events: ResMut<Events>,
+    game_tick: ResMut<GameTick>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    mut map_events: ResMut<MapEvents>,
+    map: Res<Map>,
     hero_query: Query<
         (
             Entity,
@@ -408,21 +674,18 @@ fn message_system(
             &Subclass,
             &State,
         ),
-        With<Hero>,
+        With<SubclassHero>,
     >,
     query: Query<MapObjQuery>,
 ) {
-    //Attempts to receive a message from the channel without blocking.
-    if let Ok(evt) = client_to_game_receiver.try_recv() {
-        println!("{:?}", evt);
-        let _res = match evt {
-            PlayerEvent::NewPlayer { player_id } => {
-                new_player(
-                    player_id, commands, ids, map_events, items, templates, game_tick,
-                );
-            }
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::Move { player_id, x, y } => {
-                println!("looking for obj");
+                debug!("Move Event: {:?}", event);
+                let player_id = player_id;
+
                 for (
                     entity_id,
                     obj_id,
@@ -436,25 +699,25 @@ fn message_system(
                 ) in hero_query.iter()
                 {
                     // Check find hero from Move Event player
-                    if player_id != obj_player_id.0 {
+                    if *player_id != obj_player_id.0 {
                         continue;
                     }
 
-                    if !Map::is_passable(x, y, &map) {
+                    if !Map::is_passable(*x, *y, &map) {
                         println!("Position is not passable");
                         let error = ResponsePacket::Error {
                             errmsg: "Tile is not passable.".to_owned(),
                         };
-                        send_to_client(player_id, error, &clients);
+                        send_to_client(*player_id, error, &clients);
                         return;
                     };
 
-                    if !is_pos_empty(player_id, x, y, &query) {
+                    if !is_pos_empty(*player_id, *x, *y, &query) {
                         println!("Position is not empty");
                         let error = ResponsePacket::Error {
                             errmsg: "Tile is occupied.".to_owned(),
                         };
-                        send_to_client(player_id, error, &clients);
+                        send_to_client(*player_id, error, &clients);
                         return;
                     }
 
@@ -474,7 +737,10 @@ fn message_system(
                     );
 
                     // Add Move Event
-                    let move_event = MapEventType::MoveEvent { dst_x: x, dst_y: y };
+                    let move_event = MapEventType::MoveEvent {
+                        dst_x: *x,
+                        dst_y: *y,
+                    };
 
                     map_events.new(
                         ids.new_map_event_id(),
@@ -486,28 +752,49 @@ fn message_system(
                         move_event,
                     );
                 }
+
+                events_to_remove.push(index);
             }
-            PlayerEvent::Attack {
-                player_id,
-                attacktype: String,
-                sourceid,
-                targetid,
-            } => {
-                println!("PlayerEvent::Attack");
-            }
-            PlayerEvent::Combo {
-                player_id,
-                source_id,
-                combo_type 
-            } => {
-                println!("PlayerEvent::Combo");
-            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn gather_system(
+    mut events: ResMut<Events>,
+    game_tick: ResMut<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
+    mut skills: ResMut<Skills>,
+    hero_query: Query<
+        (
+            Entity,
+            &Id,
+            &Position,
+            &PlayerId,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+        ),
+        With<SubclassHero>,
+    >,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::Gather {
                 player_id,
-                sourceid,
-                restype,
+                source_id,
+                res_type,
             } => {
-                println!("PlayerEvent::Gather");
+                debug!("PlayerEvent::Gather");
 
                 for (
                     entity_id,
@@ -522,13 +809,21 @@ fn message_system(
                 ) in hero_query.iter()
                 {
                     // Check find hero from Gather event
-                    if player_id != obj_player_id.0 {
+                    if *player_id != obj_player_id.0 {
                         continue;
                     }
 
                     let gather_event = MapEventType::GatherEvent {
-                        res_type: restype.clone(),
+                        res_type: res_type.clone(),
                     };
+
+                    /*Skill::update(
+                        obj_id.0,
+                        "Mining".to_string(),
+                        100,
+                        &templates.skill_templates,
+                        &mut skills,
+                    );*/
 
                     map_events.new(
                         ids.new_map_event_id(),
@@ -539,16 +834,29 @@ fn message_system(
                         game_tick.0 + 8, // in the future
                         gather_event,
                     );
-                }
-            }
-            PlayerEvent::InfoObj { player_id, id } => {
-                println!(
-                    "PlayerEvent::InfoObj player_id: {:?} id: {:?}",
-                    player_id, id
-                );
 
+                    debug!("Skills: {:?}", skills);
+                }
+
+                events_to_remove.push(index);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn info_obj_system(mut events: ResMut<Events>, clients: Res<Clients>, query: Query<MapObjQuery>) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::InfoObj { player_id, id } => {
                 for q in &query {
-                    if q.id.0 == id {
+                    if q.id.0 == *id {
                         let info_obj_packet: ResponsePacket = ResponsePacket::InfoObj {
                             id: q.id.0,
                             name: q.name.0.to_owned(),
@@ -558,47 +866,88 @@ fn message_system(
                             state: q.state.0.to_owned(),
                         };
 
-                        send_to_client(player_id, info_obj_packet, &clients);
+                        send_to_client(*player_id, info_obj_packet, &clients);
                     }
                 }
+
+                events_to_remove.push(index);
             }
-            PlayerEvent::InfoSkills { player_id, id } => {}
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn info_tile_system(
+    mut events: ResMut<Events>,
+    clients: Res<Clients>,
+    map: Res<Map>,
+    resources: Res<Resources>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::InfoTile { player_id, x, y } => {
-                println!("PlayerEvent::InfoTile x: {:?} y: {:?}", x, y);
+                debug!("PlayerEvent::InfoTile x: {:?} y: {:?}", *x, *y);
+
+                let tile_type = Map::tile_type(*x, *y, &map);
 
                 let info_tile_packet: ResponsePacket = ResponsePacket::InfoTile {
-                    x: x,
-                    y: y,
-                    name: "Tile Name".to_owned(),
-                    mc: 2,
-                    def: 2,
-                    unrevealed: "true".to_owned(),
+                    x: *x,
+                    y: *y,
+                    name: Map::tile_name(tile_type),
+                    mc: Map::movement_cost(tile_type),
+                    def: Map::def_bonus(tile_type),
+                    unrevealed: Resource::num_unrevealed_on_tile(
+                        Position { x: *x, y: *y },
+                        &resources,
+                    ),
                     sanctuary: "true".to_owned(),
-                    passable: "true".to_owned(),
+                    passable: Map::is_passable(*x, *y, &map),
                     wildness: "high".to_owned(),
-                    resources: "none".to_owned(),
+                    resources: Resource::get_on_tile(Position { x: *x, y: *y }, &resources),
                 };
 
-                send_to_client(player_id, info_tile_packet, &clients);
-            }
-            PlayerEvent::InfoInventory { player_id, id } => {
-                println!("PlayerEvent::InfoInventory id: {:?}", id);
+                send_to_client(*player_id, info_tile_packet, &clients);
 
-                let inventory_items = Item::get_by_owner_packet(id, &items);
+                events_to_remove.push(index);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn info_item_system(mut events: ResMut<Events>, clients: Res<Clients>, mut items: ResMut<Items>) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::InfoInventory { player_id, id } => {
+                debug!("PlayerEvent::InfoInventory id: {:?}", id);
+
+                let inventory_items = Item::get_by_owner_packet(*id, &items);
 
                 let info_inventory_packet: ResponsePacket = ResponsePacket::InfoInventory {
-                    id: id,
+                    id: *id,
                     cap: 100,
                     tw: 100,
                     items: inventory_items,
                 };
 
-                send_to_client(player_id, info_inventory_packet, &clients);
+                send_to_client(*player_id, info_inventory_packet, &clients);
+
+                events_to_remove.push(index);
             }
             PlayerEvent::InfoItem { player_id, id } => {
-                println!("PlayerEvent::InfoItem id: {:?}", id);
-
-                let item = Item::get_packet(id, items);
+                let item = Item::get_packet(*id, &items);
 
                 if let Some(item) = item {
                     let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
@@ -613,13 +962,15 @@ fn message_system(
                         equipped: item.equipped,
                     };
 
-                    send_to_client(player_id, info_item_packet, &clients);
+                    send_to_client(*player_id, info_item_packet, &clients);
                 }
+
+                events_to_remove.push(index);
             }
             PlayerEvent::InfoItemByName { player_id, name } => {
-                println!("PlayerEvent::InfoItemByName name: {:?}", name);
+                debug!("PlayerEvent::InfoItemByName name: {:?}", name.clone());
 
-                let item = Item::get_by_name_packet(name, items);
+                let item = Item::get_by_name_packet(name.clone(), &items);
 
                 if let Some(item) = item {
                     let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
@@ -634,56 +985,60 @@ fn message_system(
                         equipped: item.equipped,
                     };
 
-                    send_to_client(player_id, info_item_packet, &clients);
+                    send_to_client(*player_id, info_item_packet, &clients);
                 }
+
+                events_to_remove.push(index);
             }
             PlayerEvent::InfoItemTransfer {
                 player_id,
-                sourceid,
-                targetid,
+                source_id,
+                target_id,
             } => {
-                println!(
+                debug!(
                     "PlayerEvent::InfoItemTransfer sourceid: {:?} targetid: {:?}",
-                    sourceid, targetid
+                    *source_id, *target_id
                 );
 
-                let source_items = Item::get_by_owner_packet(sourceid, &items);
-                let target_items = Item::get_by_owner_packet(targetid, &items);
+                let source_items = Item::get_by_owner_packet(*source_id, &items);
+                let target_items = Item::get_by_owner_packet(*target_id, &items);
 
                 let source_inventory = network::Inventory {
-                    id: sourceid,
+                    id: *source_id,
                     cap: 100,
                     tw: 5,
                     items: source_items,
                 };
 
                 let target_inventory = network::Inventory {
-                    id: targetid,
+                    id: *target_id,
                     cap: 100,
                     tw: 5,
                     items: target_items,
                 };
 
                 let info_item_transfer_packet: ResponsePacket = ResponsePacket::InfoItemTransfer {
-                    sourceid: sourceid,
+                    sourceid: *source_id,
                     sourceitems: source_inventory,
-                    targetid: targetid,
+                    targetid: *target_id,
                     targetitems: target_inventory,
                     reqitems: Vec::new(),
                 };
 
-                send_to_client(player_id, info_item_transfer_packet, &clients);
+                send_to_client(*player_id, info_item_transfer_packet, &clients);
+
+                events_to_remove.push(index);
             }
             PlayerEvent::ItemTransfer {
                 player_id,
                 target_id,
                 item_id,
             } => {
-                if let Some(item) = Item::find_by_id(item_id, &items) {
-                    Item::transfer(item_id, target_id, &mut items);
+                if let Some(item) = Item::find_by_id(*item_id, &items) {
+                    Item::transfer(*item_id, *target_id, &mut items);
 
                     let source_items = Item::get_by_owner_packet(item.owner, &items);
-                    let target_items = Item::get_by_owner_packet(target_id, &items);
+                    let target_items = Item::get_by_owner_packet(*target_id, &items);
 
                     let source_inventory = network::Inventory {
                         id: item.owner,
@@ -693,7 +1048,7 @@ fn message_system(
                     };
 
                     let target_inventory = network::Inventory {
-                        id: target_id,
+                        id: *target_id,
                         cap: 100,
                         tw: 5,
                         items: target_items,
@@ -703,24 +1058,46 @@ fn message_system(
                         result: "success".to_string(),
                         sourceid: item.owner,
                         sourceitems: source_inventory,
-                        targetid: target_id,
+                        targetid: *target_id,
                         targetitems: target_inventory,
                         reqitems: Vec::new(),
                     };
 
-                    send_to_client(player_id, item_transfer_packet, &clients);
+                    send_to_client(*player_id, item_transfer_packet, &clients);
                 }
+
+                events_to_remove.push(index);
             }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn item_split_system(
+    mut events: ResMut<Events>,
+    clients: Res<Clients>,
+    mut ids: ResMut<Ids>,
+    mut items: ResMut<Items>,
+    templates: Res<Templates>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::ItemSplit {
                 player_id,
                 item_id,
                 quantity,
             } => {
-                if let Some(item) = Item::find_by_id(item_id, &items) {
+                if let Some(item) = Item::find_by_id(*item_id, &items) {
                     // TODO add checks if item_id is owned by player and if quantity is more than item quantity
                     Item::split(
-                        item_id,
-                        quantity,
+                        *item_id,
+                        *quantity,
                         ids.new_item_id(),
                         &mut items,
                         &templates.item_templates,
@@ -731,12 +1108,46 @@ fn message_system(
                         owner: item.owner,
                     };
 
-                    send_to_client(player_id, item_split_packet, &clients);
+                    send_to_client(*player_id, item_split_packet, &clients);
                 }
+
+                events_to_remove.push(index);
             }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn order_follow_system(
+    mut events: ResMut<Events>,
+    mut commands: Commands,
+    hero_query: Query<
+        (
+            Entity,
+            &Id,
+            &Position,
+            &PlayerId,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+        ),
+        With<SubclassHero>,
+    >,
+    query: Query<MapObjQuery>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::OrderFollow {
                 player_id,
-                sourceid,
+                source_id,
             } => {
                 for (
                     entity,
@@ -751,33 +1162,94 @@ fn message_system(
                 ) in hero_query.iter()
                 {
                     // Check find hero from Move Event player
-                    if player_id != obj_player_id.0 {
+                    if *player_id != obj_player_id.0 {
                         continue;
                     }
 
                     for q in &query {
-                        if q.id.0 == sourceid {
+                        if q.id.0 == *source_id {
                             commands
                                 .entity(q.entity)
                                 .insert(OrderFollow { target: entity });
                         }
                     }
                 }
+
+                events_to_remove.push(index);
             }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn structure_list_system(
+    mut events: ResMut<Events>,
+    clients: Res<Clients>,
+    templates: Res<Templates>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::StructureList { player_id } => {
+                events_to_remove.push(index);
                 let structure_list = Structure::available_to_build(&templates.obj_templates);
 
                 let structure_list = ResponsePacket::StructureList {
                     result: structure_list,
                 };
 
-                send_to_client(player_id, structure_list, &clients);
+                send_to_client(*player_id, structure_list, &clients);
+
             }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn create_foundation_system(
+    mut events: ResMut<Events>,
+    mut commands: Commands,
+    game_tick: ResMut<GameTick>,
+    clients: Res<Clients>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
+    templates: Res<Templates>,
+    hero_query: Query<
+        (
+            Entity,
+            &Id,
+            &Position,
+            &PlayerId,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+        ),
+        With<SubclassHero>,
+    >,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::CreateFoundation {
                 player_id,
                 source_id,
                 structure_name,
             } => {
+                debug!("CreateFoundation");
+                events_to_remove.push(index);
+
                 for (
                     entity_id,
                     obj_id,
@@ -791,46 +1263,56 @@ fn message_system(
                 ) in hero_query.iter()
                 {
                     // Check if player matches
-                    if player_id != obj_player_id.0 {
+                    if *player_id != obj_player_id.0 {
                         continue;
                     }
 
                     let structure_id = ids.new_obj_id();
 
-                    if let Some(structure) =
+                    if let Some(structure_template) =
                         Structure::get(structure_name.clone(), &templates.obj_templates)
                     {
                         let structure = Obj {
                             id: Id(structure_id),
-                            player_id: PlayerId(player_id),
+                            player_id: PlayerId(*player_id),
                             position: Position { x: pos.x, y: pos.y },
                             name: Name(structure_name.clone()),
-                            template: Template(structure.template.clone()),
-                            class: Class(structure.class),
-                            subclass: Subclass(structure.subclass),
+                            template: Template(structure_template.template.clone()),
+                            class: Class(structure_template.class),
+                            subclass: Subclass(structure_template.subclass),
                             state: State("founded".into()),
                             viewshed: Viewshed {
                                 entities: HashSet::new(),
                                 range: 0,
                             },
                             misc: Misc {
-                                image: "foundation".to_string(),
+                                image: structure_template.template.to_string().to_lowercase(),
                                 hsl: Vec::new().into(),
                                 groups: Vec::new().into(),
                             },
                         };
 
-                        let structure_entity_id = commands.spawn((structure,)).id();
+                        let structure_attrs = StructureAttrs {
+                            start_time: 0,
+                            end_time: 0,
+                            build_time: structure_template.build_time.unwrap(), // Structure must have build time
+                            builder: *source_id,
+                            progress: 0,
+                        };
 
-                        // Insert state change event
-                        let new_obj_event = MapEventType::NewObjEvent;
+                        let structure_entity_id = commands
+                            .spawn((structure, structure_attrs, ClassStructure))
+                            .id();
+
+                        // Insert new obj event
+                        let new_obj_event = MapEventType::NewObjEvent { new_player: false };
                         let map_event_id = ids.new_map_event_id();
 
                         let map_state_event = MapEvent {
                             event_id: map_event_id,
                             entity_id: structure_entity_id,
                             obj_id: structure_id,
-                            player_id: player_id,
+                            player_id: *player_id,
                             pos_x: pos.x,
                             pos_y: pos.y,
                             run_tick: game_tick.0 + 1, // Add one game tick
@@ -838,29 +1320,300 @@ fn message_system(
                         };
 
                         map_events.insert(map_event_id, map_state_event);
+
+                        let packet = ResponsePacket::CreateFoundation {
+                            result: "success".to_string(),
+                        };
+
+                        send_to_client(*player_id, packet, &clients)
                     }
                 }
+
             }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn build_system(
+    mut events: ResMut<Events>,
+    clients: Res<Clients>,
+    game_tick: ResMut<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut ids: ResMut<Ids>,
+    builder_query: Query<
+        (Entity, &Id, &PlayerId, &Position, &State),
+        Or<(With<SubclassHero>, With<SubclassVillager>)>,
+    >,
+    mut structure_query: Query<
+        (
+            Entity,
+            &Id,
+            &PlayerId,
+            &Position,
+            &State,
+            &mut StructureAttrs,
+        ),
+        With<ClassStructure>,
+    >,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
             PlayerEvent::Build {
                 player_id,
                 source_id,
                 structure_id,
             } => {
+                debug!("Build");
+                events_to_remove.push(index);
 
-                //TODO complete
+                let mut builder: Option<TmpObj> = None;
+                let mut structure: Option<TmpObj> = None;
+
+                // Get builder
+                for (entity, obj_id, player, pos, state) in builder_query.iter() {
+                    if obj_id.0 == *source_id {
+                        // Get builder
+                        builder = Some(TmpObj {
+                            entity: entity,
+                            obj_id: obj_id.0,
+                            player_id: player.0,
+                            pos: pos.clone(),
+                            state: state.clone(),
+                        });
+                    }
+                }
+
+                // Get structure
+                for (entity, obj_id, player_id, pos, state, _structure_attrs) in
+                    structure_query.iter()
+                {
+                    if obj_id.0 == *structure_id {
+                        structure = Some(TmpObj {
+                            entity: entity,
+                            obj_id: obj_id.0,
+                            player_id: player_id.0,
+                            pos: pos.clone(),
+                            state: state.clone(),
+                        });
+                    }
+                }
+
+                if let (Some(builder), Some(structure)) = (builder, structure) {
+                    // Check if builder is owned by player
+                    if builder.player_id != *player_id {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Builder not owned by player."
+                                .to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);                        
+                        break;
+                    }
+
+                    // Check if structure is owned by player
+                    if structure.player_id != *player_id {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Structure not owned by player."
+                                .to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        break;
+                    }
+
+                    // Check if builder is on the same pos as structure
+                    if builder.pos != structure.pos {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Builder must be on the same position as structure."
+                                .to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        break;
+                    }
+
+                    if let Ok((entity, obj_id, player_id, pos, state, mut structure_attrs)) =
+                        structure_query.get_mut(structure.entity)
+                    {
+                        // Builder State Change Event to Building
+                        let state_change_event = MapEventType::StateChangeEvent {
+                            new_state: BUILDING.to_string(),
+                        };
+
+                        map_events.new(
+                            ids.new_map_event_id(),
+                            builder.entity,
+                            &Id(builder.obj_id),
+                            &PlayerId(builder.player_id),
+                            &builder.pos,
+                            game_tick.0 + 1, // in the future
+                            state_change_event,
+                        );
+
+                        structure_attrs.start_time = game_tick.0;
+                        structure_attrs.end_time = game_tick.0 + structure_attrs.build_time * 2;
+                        structure_attrs.builder = *source_id;
+
+                        // Structure State Change Event to Progressing
+                        let structure_state_change = MapEventType::StateChangeEvent {
+                            new_state: PROGRESSING.to_string(),
+                        };
+
+                        map_events.new(
+                            ids.new_map_event_id(),
+                            entity,
+                            obj_id,
+                            player_id,
+                            pos,
+                            game_tick.0 + 1, // in the future
+                            structure_state_change,
+                        );
+
+                        // Structure State Change Event to None as it completed
+                        let structure_state_change = MapEventType::StateChangeEvent {
+                            new_state: NONE.to_string(),
+                        };
+
+                        map_events.new(
+                            ids.new_map_event_id(),
+                            entity,
+                            obj_id,
+                            player_id,
+                            pos,
+                            structure_attrs.end_time, // in the future
+                            structure_state_change,
+                        );                        
+
+                        let packet = ResponsePacket::Build {
+                            build_time: structure_attrs.build_time / 5 // TODO: Build time in obj_template.yaml should be revisited.
+                        };
+
+                        send_to_client(player_id.0, packet, &clients);
+                    }
+                }
             }
-        };
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
     }
 }
 
-fn event_system(
+fn explore_system(
+    mut events: ResMut<Events>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
+    hero_query: Query<
+        (
+            Entity,
+            &Id,
+            &Position,
+            &PlayerId,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+        ),
+        With<SubclassHero>,
+    >,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::Explore { player_id } => {
+                for (
+                    entity_id,
+                    obj_id,
+                    pos,
+                    obj_player_id,
+                    _name,
+                    _template,
+                    _class,
+                    _subclass,
+                    _state,
+                ) in hero_query.iter()
+                {
+                    if *player_id == obj_player_id.0 {
+                        // Insert explore event
+                        let explore_event = MapEventType::ExploreEvent;
+                        let map_event_id = ids.new_map_event_id();
+
+                        let map_state_event = MapEvent {
+                            event_id: map_event_id,
+                            entity_id: entity_id,
+                            obj_id: obj_id.0,
+                            player_id: *player_id,
+                            pos_x: pos.x,
+                            pos_y: pos.y,
+                            run_tick: game_tick.0 + 1, // Add one game tick
+                            map_event_type: explore_event,
+                        };
+
+                        map_events.insert(map_event_id, map_state_event);
+                    }
+                }
+
+                events_to_remove.push(index);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn new_obj_event_system(
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut processed_map_events: ResMut<ProcessedMapEvents>,
+    mut perception_updates: ResMut<PerceptionUpdates>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        println!("Processing {:?}", map_event);
+
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                MapEventType::NewObjEvent { new_player } => {
+                    println!("Processing NewObjEvent");
+
+                    if *new_player {
+                        perception_updates.insert(map_event.player_id);
+                    }
+
+                    processed_map_events.push(map_event.clone());
+                    events_to_remove.push(*map_event_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn move_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
     clients: Res<Clients>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
     mut processed_map_events: ResMut<ProcessedMapEvents>,
-    mut perception_updates: ResMut<PerceptionUpdates>,
     mut set: ParamSet<(
         Query<(
             Entity,
@@ -886,8 +1639,6 @@ fn event_system(
         )>, // p1 immutable for looking up other entities
     )>,
 ) {
-    println!("Game Tick {:?}", game_tick.0);
-
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
@@ -896,13 +1647,6 @@ fn event_system(
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
-                MapEventType::NewObjEvent => {
-                    println!("Processing NewObjEvent");
-                    perception_updates.insert(map_event.player_id);
-
-                    processed_map_events.push(map_event.clone());
-                    events_to_remove.push(*map_event_id);
-                }
                 MapEventType::MoveEvent { dst_x, dst_y } => {
                     println!("Processing MoveEvent");
 
@@ -960,11 +1704,55 @@ fn event_system(
 
                     events_to_remove.push(*map_event_id);
                 }
-                MapEventType::GatherEvent { res_type } => {
-                    //gather_by_type(map_event.obj_id, res_type, map_event.pos_x, map_event.pos_y);
-                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn state_change_event_system(
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut processed_map_events: ResMut<ProcessedMapEvents>,
+    mut set: ParamSet<(
+        Query<(
+            Entity,
+            &Id,
+            &PlayerId,
+            &mut Position,
+            &mut State,
+            &Viewshed,
+            Option<&AI>,
+        )>, // p0 mutable for the event processing
+        Query<(
+            Entity,
+            &Id,
+            &PlayerId,
+            &Position,
+            &Name,
+            &Template,
+            &Class,
+            &Subclass,
+            &State,
+            &Viewshed,
+            &Misc,
+        )>, // p1 immutable for looking up other entities
+    )>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        println!("Processing {:?}", map_event);
+
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
                 MapEventType::StateChangeEvent { new_state } => {
-                    println!("Processing StateChangeEvent");
+                    println!("Processing StateChangeEvent: {:?}", new_state);
 
                     // Get entity and update state
                     if let Ok((_entity, id, playerId, mut pos, mut state, _viewshed, ai)) =
@@ -978,6 +1766,93 @@ fn event_system(
 
                     events_to_remove.push(*map_event_id);
                 }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn gather_event_system(
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut resources: ResMut<Resources>,
+    mut items: ResMut<Items>,
+    skills: ResMut<Skills>,
+    templates: Res<Templates>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        println!("Processing {:?}", map_event);
+
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                MapEventType::GatherEvent { res_type } => {
+                    println!("Processing GatherEvent");
+
+                    Resource::gather_by_type(
+                        map_event.obj_id,
+                        Position {
+                            x: map_event.pos_x,
+                            y: map_event.pos_y,
+                        },
+                        res_type.to_string(),
+                        &skills,
+                        &mut items,
+                        &templates.item_templates,
+                        &resources,
+                        &templates.res_templates,
+                        &mut ids,
+                    );
+
+                    events_to_remove.push(*map_event_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn explore_event_system(
+    game_tick: Res<GameTick>,
+    mut resources: ResMut<Resources>,
+    templates: Res<Templates>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        println!("Processing {:?}", map_event);
+
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                MapEventType::ExploreEvent => {
+                    debug!("Processing ExploreEvent");
+
+                    Resource::explore(
+                        map_event.obj_id,
+                        Position {
+                            x: map_event.pos_x,
+                            y: map_event.pos_y,
+                        },
+                        &mut resources,
+                        &templates.res_templates,
+                    );
+
+                    events_to_remove.push(*map_event_id);
+                }
+                _ => {}
             }
         }
     }
@@ -1044,7 +1919,7 @@ fn processed_event_system(
 
             for (id, player_id, pos, state, viewshed) in set.p1().iter() {
                 match &map_event.map_event_type {
-                    MapEventType::NewObjEvent => {
+                    MapEventType::NewObjEvent { new_player } => {
                         let distance =
                             Map::distance((map_event.pos_x, map_event.pos_y), (pos.x, pos.y));
 
@@ -1162,7 +2037,7 @@ fn perception_system(
     // Could use HashSet here due to the trait `FromIterator<&std::collections::HashSet<(i32, i32)>>` is not implemented for `Vec<(i32, i32)>`
     let mut tiles_to_send: HashMap<i32, Vec<(i32, i32)>> = HashMap::new();
 
-    println!("Perceptions to update: {:?}", perception_updates);
+    trace!("Perceptions to update: {:?}", perception_updates);
 
     for perception_player in perception_updates.iter() {
         for [obj1, obj2] in query.iter_combinations() {
@@ -1283,76 +2158,6 @@ fn perception_system(
     perception_updates.clear();
 }
 
-/* fn task_move_to_target_system(
-    mut commands: Commands,
-    game_tick: Res<GameTick>,
-    map: Res<Map>,
-    mut ids: ResMut<Ids>,
-    mut map_events: ResMut<MapEvents>,
-    all_pos: Query<&Position, Without<OrderFollow>>,
-    mut tasks: Query<
-        (Entity, &Id, &PlayerId, &Position, &mut State, &OrderFollow),
-        (With<OrderFollow>, Without<EventInProgress>),
-    >,
-) {
-    for (entity, obj_id, player_id, mut follower_pos, mut state, task) in tasks.iter_mut() {
-        println!("Task: {:?} Obj Pos: {:?}", task, follower_pos);
-        if let Ok(target_pos) = all_pos.get(task.target) {
-            if (follower_pos.x != target_pos.x || follower_pos.y != target_pos.y)
-                && is_none_state(&state.0)
-            {
-                if let Some(path_result) = Map::find_path(
-                    follower_pos.x,
-                    follower_pos.y,
-                    target_pos.x,
-                    target_pos.y,
-                    &map,
-                ) {
-                    println!("Follower path: {:?}", path_result);
-
-                    let (path, c) = path_result;
-                    let next_pos = &path[1];
-
-                    println!("Next pos: {:?}", next_pos);
-
-                    // Add State Change Event to Moving
-                    let state_change_event = MapEventType::StateChangeEvent {
-                        new_state: "moving".to_string(),
-                    };
-
-                    map_events.new(
-                        ids.new_map_event_id(),
-                        entity,
-                        obj_id,
-                        player_id,
-                        follower_pos,
-                        game_tick.0 + 4,
-                        state_change_event,
-                    );
-
-                    // Add Move Event
-                    let move_event = MapEventType::MoveEvent {
-                        dst_x: next_pos.0,
-                        dst_y: next_pos.1,
-                    };
-
-                    map_events.new(
-                        ids.new_map_event_id(),
-                        entity,
-                        obj_id,
-                        player_id,
-                        follower_pos,
-                        game_tick.0 + 36, // in the future
-                        move_event,
-                    );
-
-                    commands.entity(entity).insert(EventInProgress);
-                }
-            }
-        }
-    }
-} */
-
 fn update_game_tick(mut game_tick: ResMut<GameTick>, mut attrs: Query<(&mut Thirst, &mut Morale)>) {
     game_tick.0 = game_tick.0 + 1;
 
@@ -1379,18 +2184,18 @@ fn update_game_tick(mut game_tick: ResMut<GameTick>, mut attrs: Query<(&mut Thir
             thirst.thirst = 100.0;
         }
 
-        println!("thirst: {:?} morale: {:?}", thirst.thirst, morale.morale);
+        // println!("thirst: {:?} morale: {:?}", thirst.thirst, morale.morale);
     }
 }
 
 fn new_player(
     player_id: i32,
-    mut commands: Commands,
-    mut ids: ResMut<Ids>,
-    mut map_events: ResMut<MapEvents>,
-    mut items: ResMut<Items>,
-    templates: Res<Templates>,
-    game_tick: ResMut<GameTick>,
+    mut commands: &mut Commands,
+    mut ids: &mut ResMut<Ids>,
+    mut map_events: &mut ResMut<MapEvents>,
+    mut items: &mut ResMut<Items>,
+    templates: &Res<Templates>,
+    game_tick: &ResMut<GameTick>,
 ) {
     let start_x = 16;
     let start_y = 36;
@@ -1444,12 +2249,13 @@ fn new_player(
     // Spawn hero
     let hero_entity_id = commands
         .spawn((
-            hero, Hero, // Hero component tag
+            hero,
+            SubclassHero, // Hero component tag
         ))
         .id();
 
     // Insert new obj event
-    let new_obj_event = MapEventType::NewObjEvent;
+    let new_obj_event = MapEventType::NewObjEvent { new_player: true };
     let map_event_id = ids.new_map_event_id();
 
     let map_state_event = MapEvent {
@@ -1502,6 +2308,7 @@ fn new_player(
     let villager_entity_id = commands
         .spawn((
             villager,
+            SubclassVillager,
             Morale::new(100.0, 1.0),
             Thirst::new(0.0, 0.1),
             Thinker::build()
@@ -1519,7 +2326,7 @@ fn new_player(
         .id();
 
     // Insert state change event
-    let new_obj_event = MapEventType::NewObjEvent;
+    let new_obj_event = MapEventType::NewObjEvent { new_player: false };
     let map_event_id = ids.new_map_event_id();
 
     let map_state_event = MapEvent {
@@ -1570,61 +2377,6 @@ fn network_obj(
     };
 
     network_obj
-}
-
-fn new_structure(
-    structure_name: String,
-    position: &Position,
-    player_id: i32,
-    mut commands: Commands,
-    mut ids: ResMut<Ids>,
-    mut map_events: ResMut<MapEvents>,
-    templates: Res<Templates>,
-    game_tick: ResMut<GameTick>,
-) {
-    let structure_id = ids.new_obj_id();
-
-    let structure = Obj {
-        id: Id(structure_id),
-        player_id: PlayerId(player_id),
-        position: Position {
-            x: position.x,
-            y: position.y,
-        },
-        name: Name("Villager 1".into()),
-        template: Template("Human Villager".into()),
-        class: Class("unit".into()),
-        subclass: Subclass("villager".into()),
-        state: State("none".into()),
-        viewshed: Viewshed {
-            entities: HashSet::new(),
-            range: 2,
-        },
-        misc: Misc {
-            image: "humanvillager1".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
-        },
-    };
-
-    let structure_entity_id = commands.spawn((structure,)).id();
-
-    // Insert state change event
-    let new_obj_event = MapEventType::NewObjEvent;
-    let map_event_id = ids.new_map_event_id();
-
-    let map_state_event = MapEvent {
-        event_id: map_event_id,
-        entity_id: structure_entity_id,
-        obj_id: structure_id,
-        player_id: player_id,
-        pos_x: position.x,
-        pos_y: position.y,
-        run_tick: game_tick.0 + 1, // Add one game tick
-        map_event_type: new_obj_event,
-    };
-
-    map_events.insert(map_event_id, map_state_event);
 }
 
 fn dedup<T: Eq + Hash + Copy>(v: &mut Vec<T>) {

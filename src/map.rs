@@ -1,5 +1,5 @@
 use bevy::{ecs::query, prelude::*};
-use std::fs::File;
+use std::{fs::File, fmt};
 use std::io::BufReader;
 use std::path::Path;
 use url::Position;
@@ -46,6 +46,36 @@ pub enum TileType {
     Mountain,
     Volcano,
     Unknown,
+}
+
+impl fmt::Display for TileType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            TileType::Grasslands => write!(f, "Grasslands"),
+            TileType::Snow => write!(f, "Snow"),
+            TileType::River => write!(f, "River"),
+            TileType::Ocean => write!(f, "Ocean"),
+            TileType::Plains => write!(f, "Plains"),
+            TileType::HillsPlains => write!(f, "Plains Hills"),
+            TileType::Desert => write!(f, "Desert"),
+            TileType::Oasis => write!(f, "Oasis"),
+            TileType::HillsDesert => write!(f, "Desert Hills"),
+            TileType::HillsGrasslands => write!(f, "Grassland Hills"),
+            TileType::Grasslands => write!(f, "Grassland Hills"),
+            TileType::Swamp => write!(f, "Swamp"),
+            TileType::HillsSnow => write!(f, "Snow Hills"),
+            TileType::DeciduousForest => write!(f, "Deicduous Forest"),
+            TileType::Rainforest => write!(f, "Rain Forest"),
+            TileType::Jungle => write!(f, "Jungle"),
+            TileType::Savanna => write!(f, "Savanna"),
+            TileType::FrozenForest => write!(f, "Frozen Forest"),
+            TileType::PineForest => write!(f, "Pine Forest"),
+            TileType::PalmForest => write!(f, "Palm Forest"),
+            TileType::Mountain => write!(f, "Mountain"),
+            TileType::Volcano => write!(f, "Volcano"),
+            TileType::Unknown => write!(f, "Unknown")
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +241,19 @@ impl Map {
         return passable;
     }
 
+    pub fn tile_type(x: i32, y: i32, map: &Map) -> TileType {
+        let tile_index = y * WIDTH + x;
+        let tile_index_usize = tile_index as usize;
+        //let layers = map.base[tile_index_usize].layers.clone();
+        let tile_type = map.base[tile_index_usize].tile_type.clone();
+
+        return tile_type;
+    }
+
+    pub fn tile_name(tile_type: TileType) -> String {
+        return tile_type.to_string();
+    }
+
     pub fn movement_cost(tile_type: TileType) -> i32 {
         let movement_cost = match tile_type {
             TileType::Mountain => 5,
@@ -225,6 +268,23 @@ impl Map {
 
         println!("tile_type: {:?} mc: {:?}", tile_type, movement_cost);
         return movement_cost;
+    }
+
+    pub fn def_bonus(tile_type: TileType) -> f32 {
+        let def_bonus = match tile_type {
+            TileType::HillsPlains => 0.33,
+            TileType::HillsGrasslands => 0.33,
+            TileType::HillsSnow => 0.33,
+            TileType::HillsDesert => 0.33,
+            TileType::DeciduousForest => 0.5,
+            TileType::PineForest => 0.5,
+            TileType::FrozenForest => 0.5,
+            TileType::Jungle => 0.75,
+            TileType::Swamp => 0.66,
+            _ => 0.0
+        };
+
+        return def_bonus
     }
 
     fn gid_to_tiletype(gid: u32) -> TileType {
