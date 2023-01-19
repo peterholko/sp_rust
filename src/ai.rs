@@ -6,7 +6,7 @@ use pathfinding::prelude::directions::E;
 use crate::game::is_none_state;
 use crate::game::GameTick;
 use crate::game::{
-    EventInProgress, Id, Ids, MapEventType, MapEvents, OrderFollow, PlayerId, Position, State,
+    EventInProgress, Id, Ids, VisibleEvent, MapEvents, OrderFollow, PlayerId, Position, State,
 };
 use crate::item::{Item, Items, THIRST, WATER};
 use crate::map::Map;
@@ -127,7 +127,7 @@ pub fn process_order_system(
                                         println!("Next pos: {:?}", next_pos);
 
                                         // Add State Change Event to Moving
-                                        let state_change_event = MapEventType::StateChangeEvent {
+                                        let state_change_event = VisibleEvent::StateChangeEvent {
                                             new_state: "moving".to_string(),
                                         };
 
@@ -144,7 +144,7 @@ pub fn process_order_system(
                                         );
 
                                         // Add Move Event
-                                        let move_event = MapEventType::MoveEvent {
+                                        let move_event = VisibleEvent::MoveEvent {
                                             dst_x: next_pos.0,
                                             dst_y: next_pos.1,
                                         };

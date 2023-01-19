@@ -19,6 +19,7 @@ use game::GamePlugin;
 mod game;
 mod map;
 mod ai;
+mod player;
 mod network;
 mod templates;
 mod item;

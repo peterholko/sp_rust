@@ -2,13 +2,14 @@ use bevy::{ecs::query, prelude::*};
 use std::{fs::File, fmt};
 use std::io::BufReader;
 use std::path::Path;
-use url::Position;
 
 use serde::{Deserialize, Serialize};
 
 use tiled::{parse, LayerData};
 
 use pathfinding::prelude::astar;
+
+use crate::game::{Position};
 
 pub struct MapPlugin;
 
@@ -353,6 +354,20 @@ impl Map {
 
         distance
     }
+
+    pub fn dist(src_pos: Position, dst_pos: Position) -> u32 {
+
+        let src_pos_tuple = (src_pos.x, src_pos.y);
+        let dst_pos_tuple = (dst_pos.x, dst_pos.y);
+
+        let (sx, sy, sz) = Map::odd_q_to_cube(src_pos_tuple);
+        let (dx, dy, dz) = Map::odd_q_to_cube(dst_pos_tuple);
+
+        let distance = (((sx - dx).abs() + (sy - dy).abs() + (sz - dz).abs()) / 2) as u32;
+
+        distance
+    }
+
 
     pub fn range((q, r): (i32, i32), num: u32) -> Vec<(i32, i32)> {
         let n = num as i32;
