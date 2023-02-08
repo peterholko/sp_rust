@@ -186,6 +186,16 @@ impl Resource {
         }
     }
 
+    pub fn is_valid_type(res_type: String, pos: Position, resources: &Resources) -> bool {
+        let resources_on_tile = Resource::get_by_type(pos, res_type.clone(), resources);
+
+        if resources_on_tile.len() > 0 {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     fn type_to_skill(restype: String) -> String {
         match restype.as_str() {
             ORE => Skill::MINING.to_string(),

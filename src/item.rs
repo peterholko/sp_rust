@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
-use crate::templates::ItemTemplates;
+use crate::templates::{ItemTemplates, ResReq};
 
 pub const WATER: &str = "Water";
 pub const THIRST: &str = "Thirst";
@@ -52,7 +52,7 @@ impl Item {
 
         let mut attrs = HashMap::new();
 
-        attrs.insert(THIRST, 70.0);
+        //attrs.insert(THIRST, 70.0);
 
         Item {
             id: id,
@@ -66,6 +66,18 @@ impl Item {
             equipped: false,
             attrs: attrs,
         }
+    }
+
+    pub fn get_by_owner(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
+        let mut owner_items: Vec<Item> = Vec::new();
+
+        for item in items.iter() {
+            if item.owner == owner {
+                owner_items.push(item.clone());
+            }
+        }
+        
+        return owner_items;
     }
 
     pub fn get_by_owner_packet(owner: i32, items: &ResMut<Items>) -> Vec<network::Item> {
@@ -219,8 +231,25 @@ impl Item {
         } 
     }
 
+    pub fn remove(item_id: i32, items: &mut ResMut<Items>) {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            items.remove(index);
+        }
+    }
+
     pub fn find_index_by_id(item_id: i32, items: &ResMut<Items>) -> Option<usize> {
         items.iter().position(|item| item.id == item_id)
+    }
+
+    pub fn is_req(item: Item, reqs: Vec<ResReq>) -> bool {
+        
+        for req in reqs.iter() {
+            if req.req_type == item.name || req.req_type == item.class || req.req_type == item.subclass {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     fn can_merge(item_class: String) -> bool {
@@ -230,6 +259,8 @@ impl Item {
             _ => true,
         }
     }
+
+    
 }
 
 pub struct ItemPlugin;

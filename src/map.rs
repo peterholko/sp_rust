@@ -458,7 +458,19 @@ impl Map {
         result
     }
 
-    fn is_valid_pos((q, r): (i32, i32)) -> bool {
+    pub fn is_adjacent(source_pos: Position, target_pos: Position) -> bool {
+        let neighbours = Self::neighbours((source_pos.x, source_pos.y));
+
+        for (x, y) in neighbours {
+            if x == target_pos.x && y == target_pos.y {
+                return true;
+            } 
+        }
+
+        return false;
+    }
+
+    pub fn is_valid_pos((q, r): (i32, i32)) -> bool {
         q >= 0 && r >= 0 && q < (WIDTH as i32) && r < (HEIGHT as i32)
     }
 }

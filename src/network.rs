@@ -72,6 +72,8 @@ enum NetworkPacket {
     Gather { sourceid: i32, restype: String },
     #[serde(rename = "order_follow")]
     OrderFollow { sourceid: i32 },
+    #[serde(rename = "order_gather")]
+    OrderGather { sourceid: i32, restype: String },
     #[serde(rename = "structure_list")]
     StructureList {},
     #[serde(rename = "create_foundation")]
@@ -82,6 +84,8 @@ enum NetworkPacket {
     Survey { sourceid: i32 },
     #[serde(rename = "explore")]
     Explore {},
+    #[serde(rename = "assign_list")]
+    AssignList {}
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -203,6 +207,10 @@ pub enum ResponsePacket {
         cooldown: i32,
         stamina_cost: i32,
     },
+    #[serde(rename = "assign_list")]
+    AssignList {
+        result: Vec<Assignment>
+    },
     Ok,
     None,
     Pong,
@@ -315,6 +323,15 @@ pub struct Structure {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Assignment {
+    pub id: i32,
+    pub name: String,
+    pub image: String,
+    pub order: String,
+    pub structure: String
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TileResource {
     pub name: String,
     pub quantity: i32,
@@ -322,7 +339,6 @@ pub struct TileResource {
 
 pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clients>) {
     for (_client_id, client) in clients.lock().unwrap().iter() {
-        println!("Player: {:?} == client: {:?}", player_id, client);
         if client.player_id == player_id {
             client
                 .sender
@@ -597,6 +613,9 @@ async fn handle_connection(
                                             NetworkPacket::OrderFollow{sourceid} => {
                                                 handle_order_follow(player_id, sourceid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::OrderGather{sourceid, restype} => {
+                                                handle_order_gather(player_id, sourceid, restype, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::StructureList{} => {
                                                 handle_structure_list(player_id, client_to_game_sender.clone())
                                             }
@@ -612,6 +631,9 @@ async fn handle_connection(
                                             NetworkPacket::Explore{} => {
                                                 handle_explore(player_id, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::AssignList{} => {
+                                                handle_assign_list(player_id, client_to_game_sender.clone())
+                                            }                                            
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -985,6 +1007,24 @@ fn handle_order_follow(
     ResponsePacket::Ok
 }
 
+fn handle_order_gather(
+    player_id: i32,
+    sourceid: i32,
+    restype: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderGather {
+            player_id: player_id,
+            source_id: sourceid,
+            res_type: restype
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
 fn handle_structure_list(
     player_id: i32,
     client_to_game_sender: CBSender<PlayerEvent>,
@@ -1062,3 +1102,13 @@ fn handle_explore(player_id: i32, client_to_game_sender: CBSender<PlayerEvent>) 
     ResponsePacket::Ok
 }
 
+fn handle_assign_list(player_id: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::AssignList {
+            player_id: player_id,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}

@@ -22,8 +22,9 @@ pub struct ObjTemplates(Vec<ObjTemplate>);
 #[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
 pub struct ResReq {
     #[serde(rename = "type")]
-    req_type: String,
-    quantity: i32,
+    pub req_type: String,
+    pub quantity: i32,
+    pub cquantity: Option<i32> // current quantity
 }
 
 #[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]

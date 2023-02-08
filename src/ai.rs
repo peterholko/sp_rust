@@ -1,3 +1,4 @@
+use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 
 use big_brain::prelude::*;
@@ -6,7 +7,7 @@ use pathfinding::prelude::directions::E;
 use crate::game::is_none_state;
 use crate::game::GameTick;
 use crate::game::{
-    EventInProgress, Id, Ids, VisibleEvent, MapEvents, OrderFollow, PlayerId, Position, State,
+    EventInProgress, Id, Ids, MapEvents, Order, PlayerId, Position, State, VisibleEvent,
 };
 use crate::item::{Item, Items, THIRST, WATER};
 use crate::map::Map;
@@ -56,6 +57,16 @@ impl Morale {
     }
 }
 
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct OrderQuery {
+    id: &'static Id,
+    player_id: &'static PlayerId,
+    pos: &'static Position,
+    state: &'static mut State,
+    order: &'static Order,
+}
+
 /// The systems that make structures tick.
 pub struct AIPlugin;
 
@@ -76,11 +87,8 @@ pub fn process_order_system(
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
     morales: Query<&Morale>,
-    all_pos: Query<&Position, Without<OrderFollow>>,
-    mut tasks: Query<
-        (&Id, &PlayerId, &Position, &mut State, &OrderFollow),
-        (With<OrderFollow>, Without<EventInProgress>),
-    >,
+    all_pos: Query<&Position>,
+    mut village_order_query: Query<OrderQuery, (With<Order>, Without<EventInProgress>)>,
     mut query: Query<(&Actor, &mut ActionState, &ProcessOrder, &ActionSpan)>,
 ) {
     for (Actor(actor), mut state, _process_order, span) in &mut query {
@@ -89,89 +97,106 @@ pub fn process_order_system(
                 ActionState::Requested => {
                     debug!("Process Order Requested");
 
-                    if let Ok((obj_id, player_id, follower_pos, follower_state, order_follow)) =
-                        tasks.get(*actor)
-                    {
-                        if let Ok(target_pos) = all_pos.get(order_follow.target) {
-                            if follower_pos.x != target_pos.x || follower_pos.y != target_pos.y {
-                                if is_none_state(&follower_state.0) {
-                                    debug!("Executing following");
-                                    *state = ActionState::Executing;
+                    let Ok(villager) = village_order_query.get(*actor) else {
+                        trace!("No order to execute");
+                        continue;
+                    };
+
+                    match villager.order {
+                        Order::Follow { target } => {
+                            if let Ok(target_pos) = all_pos.get(*target) {
+                                if villager.pos.x != target_pos.x || villager.pos.y != target_pos.y
+                                {
+                                    if is_none_state(&villager.state.0) {
+                                        debug!("Executing following");
+                                        *state = ActionState::Executing;
+                                    }
                                 }
+                            } else {
+                                trace!("Invalid target to follow.");
                             }
                         }
-                    } else {
-                        trace!("No order to execute");
+                        Order::Gather { res_type } => {}
+                        _ => {}
                     }
                 }
                 ActionState::Executing => {
                     debug!("Process Order Executing");
-                    if let Ok((obj_id, player_id, follower_pos, mut follower_state, order_follow)) =
-                        tasks.get_mut(*actor)
-                    {
-                        if let Ok(target_pos) = all_pos.get(order_follow.target) {
-                            if follower_pos.x != target_pos.x || follower_pos.y != target_pos.y {
-                                if is_none_state(&follower_state.0) {
-                                    if let Some(path_result) = Map::find_path(
-                                        follower_pos.x,
-                                        follower_pos.y,
-                                        target_pos.x,
-                                        target_pos.y,
-                                        &map,
-                                    ) {
-                                        println!("Follower path: {:?}", path_result);
 
-                                        let (path, c) = path_result;
-                                        let next_pos = &path[1];
+                    let Ok(mut villager) = village_order_query.get_mut(*actor) else {
+                        trace!("No villager order to process");
+                        continue;
+                    };
 
-                                        println!("Next pos: {:?}", next_pos);
+                    match villager.order {
+                        Order::Follow { target } => {
+                            if let Ok(target_pos) = all_pos.get(*target) {
+                                if villager.pos.x != target_pos.x || villager.pos.y != target_pos.y
+                                {
+                                    if is_none_state(&villager.state.0) {
+                                        if let Some(path_result) = Map::find_path(
+                                            villager.pos.x,
+                                            villager.pos.y,
+                                            target_pos.x,
+                                            target_pos.y,
+                                            &map,
+                                        ) {
+                                            debug!("Follower path: {:?}", path_result);
 
-                                        // Add State Change Event to Moving
-                                        let state_change_event = VisibleEvent::StateChangeEvent {
-                                            new_state: "moving".to_string(),
-                                        };
+                                            let (path, c) = path_result;
+                                            let next_pos = &path[1];
 
-                                        follower_state.0 = "moving".to_string();
+                                            debug!("Next pos: {:?}", next_pos);
 
-                                        map_events.new(
-                                            ids.new_map_event_id(),
-                                            *actor,
-                                            obj_id,
-                                            player_id,
-                                            follower_pos,
-                                            game_tick.0 + 4,
-                                            state_change_event,
-                                        );
+                                            // Add State Change Event to Moving
+                                            let state_change_event =
+                                                VisibleEvent::StateChangeEvent {
+                                                    new_state: "moving".to_string(),
+                                                };
 
-                                        // Add Move Event
-                                        let move_event = VisibleEvent::MoveEvent {
-                                            dst_x: next_pos.0,
-                                            dst_y: next_pos.1,
-                                        };
+                                            villager.state.0 = "moving".to_string();
 
-                                        map_events.new(
-                                            ids.new_map_event_id(),
-                                            *actor,
-                                            obj_id,
-                                            player_id,
-                                            follower_pos,
-                                            game_tick.0 + 36, // in the future
-                                            move_event,
-                                        );
+                                            map_events.new(
+                                                ids.new_map_event_id(),
+                                                *actor,
+                                                villager.id,
+                                                villager.player_id,
+                                                villager.pos,
+                                                game_tick.0 + 4,
+                                                state_change_event,
+                                            );
 
-                                        commands.entity(*actor).insert(EventInProgress);
+                                            // Add Move Event
+                                            let move_event = VisibleEvent::MoveEvent {
+                                                dst_x: next_pos.0,
+                                                dst_y: next_pos.1,
+                                            };
 
+                                            map_events.new(
+                                                ids.new_map_event_id(),
+                                                *actor,
+                                                villager.id,
+                                                villager.player_id,
+                                                villager.pos,
+                                                game_tick.0 + 36, // in the future
+                                                move_event,
+                                            );
+
+                                            commands.entity(*actor).insert(EventInProgress);
+                                        }
+                                    } else {
+                                        debug!("Follower is still moving");
+                                        // ActionState is now executing
+                                        debug!("Executing action for entity: {:?}", *actor);
                                     }
-                                } {
-                                    debug!("Follower is still moving");
-                                    // ActionState is now executing
-                                    debug!("Executing action for entity: {:?}", *actor);
-                                }                                
-                            } else {
-                                debug!("Follower has reached destination");
-                                *state = ActionState::Success;
+                                } else {
+                                    debug!("Follower has reached destination");
+                                    *state = ActionState::Success;
+                                }
                             }
                         }
+                        Order::Gather { res_type } => {}
+                        _ => {}
                     }
                 }
                 ActionState::Cancelled => {
@@ -190,7 +215,7 @@ pub fn drink_action_system(
     tick: Res<GameTick>,
     mut items: ResMut<Items>,
     mut thirsts: Query<&mut Thirst>,
-    all: Query<(&Id, &State)>,                        // TODO combine into 1 query using options
+    all: Query<(&Id, &State)>, // TODO combine into 1 query using options
     drinking_states: Query<&DrinkingState>, // TODO combine into 1 query using options
     mut query: Query<(&Actor, &mut ActionState, &Drink, &ActionSpan)>,
 ) {
@@ -203,9 +228,12 @@ pub fn drink_action_system(
                 ActionState::Requested => {
                     if let Ok((obj_id, obj_state)) = all.get(*actor) {
                         if is_none_state(&obj_state.0) {
-                            if let Some(item) =
-                                Item::update_quantity_by_class(obj_id.0, WATER.to_string(), -1, &mut items)
-                            {
+                            if let Some(item) = Item::update_quantity_by_class(
+                                obj_id.0,
+                                WATER.to_string(),
+                                -1,
+                                &mut items,
+                            ) {
                                 if let Some(thirst_mod) = item.attrs.get(THIRST) {
                                     let drinking_state = DrinkingState {
                                         thirst_mod: *thirst_mod,
@@ -304,3 +332,5 @@ pub fn morale_scorer_system(
         }
     }
 }
+
+// if let Some(struct_name.field) =

@@ -2,6 +2,8 @@ use bevy::prelude::*;
 
 use std::collections::HashMap;
 
+use crate::game::StructureAttrs;
+use crate::item::{Item, Items};
 use crate::network;
 use crate::templates::{ObjTemplate, ObjTemplates, ResReq};
 
@@ -44,9 +46,88 @@ impl Structure {
         return None;
     }
 
-    pub fn get_reqs() {
+    pub fn has_req(structure_id: i32, structure_attrs: StructureAttrs, items: &ResMut<Items>) -> bool {
+
+        let mut req_items = structure_attrs.req;
+        let structure_items = Item::get_by_owner(structure_id, items);
+
+        for req_item in req_items.iter_mut() {
+            let mut req_quantity = req_item.quantity;
+    
+            for structure_item in structure_items.iter() {
+                if req_item.req_type == structure_item.name
+                    || req_item.req_type == structure_item.class
+                    || req_item.req_type == structure_item.subclass
+                {
+                    if req_quantity - structure_item.quantity > 0 {
+                        req_quantity -= structure_item.quantity;
+                    } else {
+                        req_quantity = 0;
+                    }
+                }
+            }
+    
+            req_item.cquantity = Some(req_quantity);
+        }
+
+        for req_item in req_items.iter() {
+            if let Some(current_req_quantity) = req_item.cquantity {
+                if current_req_quantity != 0 {
+                    return false;
+                }
+            } else {
+                // If cquantity is None
+                return false;
+            }
+        }
+
+        return true
 
     }
+
+    pub fn consume_reqs(structure_id: i32, structure_attrs: StructureAttrs, items: &mut ResMut<Items>) {
+        let mut req_items = structure_attrs.req;
+        let structure_items = Item::get_by_owner(structure_id, &items).clone();
+
+        for req_item in req_items.iter() {
+            for structure_item in structure_items.iter() {
+                if req_item.req_type == structure_item.name
+                    || req_item.req_type == structure_item.class
+                    || req_item.req_type == structure_item.subclass
+                {
+                    Item::remove(structure_item.id, items);
+                }
+            }            
+            
+        }
+    }
+
+    pub fn process_req_items(structure_items: Vec<Item>, mut req_items: Vec<ResReq>) -> Vec<ResReq> {
+        // Check current required quantity from structure items
+        for req_item in req_items.iter_mut() {
+            let mut req_quantity = req_item.quantity;
+    
+            for structure_item in structure_items.iter() {
+                if req_item.req_type == structure_item.name
+                    || req_item.req_type == structure_item.class
+                    || req_item.req_type == structure_item.subclass
+                {
+                    if req_quantity - structure_item.quantity > 0 {
+                        req_quantity -= structure_item.quantity;
+                    } else {
+                        req_quantity = 0;
+                    }
+                }
+            }
+    
+            req_item.cquantity = Some(req_quantity);
+        }
+    
+        return req_items;
+    }
+    
+
+
 }
 
 /*pub struct StructurePlugin;
