@@ -20,12 +20,14 @@ mod game;
 mod map;
 mod ai;
 mod player;
+mod combat;
 mod network;
 mod templates;
 mod item;
 mod structure;
 mod resource;
 mod skill;
+mod villager;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
@@ -38,7 +40,7 @@ pub fn setup() {
         .add_plugin(ScheduleRunnerPlugin::default())
         .add_plugin(LogPlugin {
             level: bevy::log::Level::DEBUG,
-            filter: "big_brain=warn,siege_perilous::ai=info,siege_perilious::game=debug".into(),
+            filter: "big_brain=warn,siege_perilous::ai=debug,siege_perilious::game=debug".into(),
         })        
         .add_plugin(GamePlugin)
         .run();

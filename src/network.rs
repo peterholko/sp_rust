@@ -1,5 +1,6 @@
 use bevy::prelude::{Resource, Res};
 use crossbeam_channel::Sender as CBSender;
+use serde_with::skip_serializing_none;
 
 use std::{
     collections::HashMap,
@@ -54,6 +55,8 @@ enum NetworkPacket {
     InfoObj { id: i32 },
     #[serde(rename = "info_skills")]
     InfoSkills { id: i32 },
+    #[serde(rename = "info_attrs")]
+    InfoAttrs { id: i32 },
     #[serde(rename = "info_tile")]
     InfoTile { x: i32, y: i32 },
     #[serde(rename = "info_inventory")]
@@ -85,9 +88,20 @@ enum NetworkPacket {
     #[serde(rename = "explore")]
     Explore {},
     #[serde(rename = "assign_list")]
-    AssignList {}
+    AssignList {},
+    #[serde(rename = "assign")]
+    Assign {sourceid: i32, targetid: i32},
+    #[serde(rename = "equip")]
+    Equip {item: i32, status: bool}
 }
 
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+pub struct StructureList
+{
+    pub result: Vec<Structure>,
+}
+
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "packet")]
 pub enum ResponsePacket {
@@ -115,6 +129,38 @@ pub enum ResponsePacket {
         subclass: String,
         template: String,
         state: String,
+        image: String,
+        hsl: Vec<i32>,
+        items: Option<Vec<Item>>,
+        skills: Option<HashMap<String, i32>>,
+        attributes: Option<HashMap<String, i32>>,
+        hp: Option<i32>,
+        base_hp: Option<i32>,
+        base_def: Option<i32>,        
+        base_vision: Option<i32>,
+        base_speed: Option<i32>,
+        base_stamina: Option<i32>,
+        base_dmg: Option<i32>,
+        dmg_range: Option<i32>,
+        stamina: Option<i32>,
+        structure: Option<String>,
+        action: Option<String>,
+        shelter: Option<String>,        
+        morale: Option<String>,
+        order: Option<String>,
+        capacity: Option<i32>,
+        total_weight: Option<i32>,
+        effects: Option<Vec<String>>
+    },
+    #[serde(rename = "info_skills")]
+    InfoSkills {
+        id: i32,
+        skills: HashMap<String, Skill>
+    },
+    #[serde(rename = "info_attrs")]
+    InfoAttrs {
+        id: i32,
+        attrs: HashMap<String, i32>
     },
     #[serde(rename = "info_tile")]
     InfoTile {
@@ -171,9 +217,7 @@ pub enum ResponsePacket {
         owner: i32,
     },
     #[serde(rename = "structure_list")]
-    StructureList {
-        result: Vec<Structure>,
-    },
+    StructureList(StructureList),
     #[serde(rename = "image_def")]
     ImageDef {
         name: String,
@@ -211,6 +255,14 @@ pub enum ResponsePacket {
     AssignList {
         result: Vec<Assignment>
     },
+    #[serde(rename = "assign")]
+    Assign {
+        result: String
+    },
+    #[serde(rename = "equip")]
+    Equip {
+        result: String
+    },
     Ok,
     None,
     Pong,
@@ -246,6 +298,7 @@ pub enum ChangeEvents {
     },
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "packet")]
 pub enum BroadcastEvents {
@@ -256,8 +309,8 @@ pub enum BroadcastEvents {
         attacktype: String,
         dmg: i32,
         state: String,
-        combo: String,
-        countered: String,
+        combo: Option<String>,
+        countered: Option<String>,
     },
 }
 
@@ -329,6 +382,13 @@ pub struct Assignment {
     pub image: String,
     pub order: String,
     pub structure: String
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Skill {
+    pub level: i32,
+    pub xp: i32, 
+    pub next: i32
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -586,6 +646,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoSkills{id} => {
                                                 handle_info_skills(player_id, id, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoAttrs{id} => {
+                                                handle_info_attrs(player_id, id, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::InfoTile{x, y} => {
                                                 handle_info_tile(player_id, x, y, client_to_game_sender.clone())
                                             }
@@ -633,7 +696,13 @@ async fn handle_connection(
                                             }
                                             NetworkPacket::AssignList{} => {
                                                 handle_assign_list(player_id, client_to_game_sender.clone())
-                                            }                                            
+                                            }    
+                                            NetworkPacket::Assign{sourceid, targetid} => {
+                                                handle_assign(player_id, sourceid, targetid, client_to_game_sender.clone())
+                                            }         
+                                            NetworkPacket::Equip{item, status} => {
+                                                handle_equip(player_id, item, status, client_to_game_sender.clone())
+                                            }                                                                                                                            
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -844,6 +913,22 @@ fn handle_info_skills(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::InfoSkills {
+            player_id: player_id,
+            id: id,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_attrs(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoAttrs {
             player_id: player_id,
             id: id,
         })
@@ -1106,6 +1191,32 @@ fn handle_assign_list(player_id: i32, client_to_game_sender: CBSender<PlayerEven
     client_to_game_sender
         .send(PlayerEvent::AssignList {
             player_id: player_id,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_assign(player_id: i32, sourceid: i32, targetid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Assign {
+            player_id: player_id,
+            source_id: sourceid,
+            target_id: targetid
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_equip(player_id: i32, item:i32, status: bool, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Equip {
+            player_id: player_id,
+            item_id: item,
+            status: status
         })
         .expect("Could not send message");
 

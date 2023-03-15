@@ -66,6 +66,20 @@ pub struct ObjTemplate {
     pub upkeep: Option<Vec<ResReq>>,
 }
 
+impl ObjTemplate {
+    pub fn get_template(template_name: String, templates: &Res<Templates>) -> ObjTemplate {
+        for obj_template in templates.obj_templates.iter() {
+            if template_name == obj_template.template {
+                return obj_template.clone();
+            }
+        }
+
+        // Cannot recover from an invalid obj template 
+        panic!("Cannot find obj_template: {:?}", template_name);
+    }
+
+}
+
 
 
 #[derive(Debug, Resource, Deref, DerefMut)]

@@ -6,8 +6,6 @@ use crate::game::Position;
 use crate::network;
 use crate::templates::{SkillTemplate, SkillTemplates};
 
-
-
 #[derive(Debug, Clone)]
 pub struct Skill {
     pub name: String,
@@ -19,6 +17,9 @@ pub struct Skill {
 pub struct Skills(HashMap<i32, HashMap<String, Skill>>);
 
 impl Skill {
+    pub const CLASS_GATHERING: &str = "Gathering";
+    pub const CLASS_CRAFTING: &str = "Crafting";
+
     pub const MINING: &str = "Mining";
     pub const WOODCUTTING: &str = "Woodcutting";
     pub const STONECUTTING: &str = "Stonecutting";
@@ -29,8 +30,8 @@ impl Skill {
         obj_id: i32,
         skill_name: String,
         value: i32,
-        skill_templates: &SkillTemplates,
         skills: &mut Skills,
+        skill_templates: &SkillTemplates,
     ) {
         /*
             xp = 75
@@ -50,54 +51,120 @@ impl Skill {
             level 1
 
         */
+        // Get template
+        let Some(skill_template) = skill_templates.get(&skill_name.clone()) else {
+            panic!("Invalid skill name {:?}, does not exist in templates.", skill_name.clone());
+        };
 
         if let Some(obj_skills) = skills.get_mut(&obj_id) {
-            if let Some(skill) = obj_skills.get_mut(&skill_name) {
-                println!("Skill: {:?}", skill);
-                if let Some(skill_template) = skill_templates.get(&skill_name) {
-                    let xp_level_list = &skill_template.xp;
+            if let Some(obj_skill) = obj_skills.get_mut(&skill_name) {
+            
+                Self::update_xp_level(obj_skill, value, skill_template);
 
-                    let mut remaining = value;
+            } else {
+                let mut new_skill = Skill {
+                    name: skill_name.clone(),
+                    level: 0,
+                    xp: 0,
+                };
+                
+                Self::update_xp_level(&mut new_skill, value, skill_template);
 
-                    while remaining > 0 {
-                        if let Ok(xp_index) = usize::try_from(skill.level) {
-                            if xp_index < xp_level_list.len() {
-                                if skill.xp + remaining < xp_level_list[xp_index] {
-                                    skill.xp += remaining;
-                                    remaining = 0;
-                                } else if skill.xp + value == xp_level_list[skill.level as usize] {
-                                    skill.xp = 0;
-                                    skill.level += 1;
-                                    remaining = 0;
-                                } else {
-                                    let total_xp = skill.xp + remaining;
-                                    remaining = total_xp - xp_level_list[skill.level as usize];
-
-                                    skill.xp = 0;
-                                    skill.level += 1;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
+                obj_skills.insert(skill_name.clone(), new_skill);
             }
         } else {
-            let mut obj_skills = HashMap::new();
-
-            let skill = Skill {
+            let mut new_skill = Skill {
                 name: skill_name.clone(),
                 level: 0,
                 xp: 0,
             };
+            
+            Self::update_xp_level(&mut new_skill, value, skill_template);
 
-            println!("Skill: {:?}", skill.clone());
-            obj_skills.insert(skill_name.clone(), skill);
+            let mut obj_skills = HashMap::new();
 
+            obj_skills.insert(skill_name.clone(), new_skill);
 
             skills.insert(obj_id, obj_skills);
         }
+    }
+
+    fn update_xp_level(skill: &mut Skill, value: i32, skill_template: &SkillTemplate) {
+        let xp_level_list = &skill_template.xp;
+        let mut remaining = value;
+
+        // Calculate skill level from xp value
+        while remaining > 0 {
+            if let Ok(xp_index) = usize::try_from(skill.level) {
+                if xp_index < xp_level_list.len() {
+                    if skill.xp + remaining < xp_level_list[xp_index] {
+                        skill.xp += remaining;
+                        remaining = 0;
+                    } else if skill.xp + value == xp_level_list[skill.level as usize] {
+                        skill.xp = 0;
+                        skill.level += 1;
+                        remaining = 0;
+                    } else {
+                        let total_xp = skill.xp + remaining;
+                        remaining = total_xp - xp_level_list[skill.level as usize];
+
+                        skill.xp = 0;
+                        skill.level += 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn get_by_owner(obj_id: i32, skills: &Skills) -> HashMap<String, &Skill> {
+        let mut skills_map = HashMap::new();
+
+        if let Some(obj_skills) = skills.get(&obj_id) {
+            for (skill_name, skill) in obj_skills.iter() {
+                skills_map.insert(skill_name.clone(), skill);
+            }
+        }
+
+        return skills_map;
+    }
+
+    pub fn get_levels_by_owner(obj_id: i32, skills: &Skills) -> HashMap<String, i32> {
+        let mut skills_map = HashMap::new();
+
+        if let Some(obj_skills) = skills.get(&obj_id) {
+            for (skill_name, skill) in obj_skills.iter() {
+                skills_map.insert(skill_name.clone(), skill.level);
+            }
+        }
+
+        return skills_map;
+    }
+
+    pub fn get_by_owner_packet(
+        obj_id: i32,
+        skills: &Skills,
+        skill_templates: &SkillTemplates,
+    ) -> HashMap<String, network::Skill> {
+        let mut skills_map = HashMap::new();
+
+        if let Some(obj_skills) = skills.get(&obj_id) {
+            for (skill_name, skill) in obj_skills.iter() {
+                let next_xp =
+                    Self::get_next(skill_name.to_string(), skill.level + 1, skill_templates);
+
+                let skill_data = network::Skill {
+                    level: skill.level,
+                    xp: skill.xp,
+                    next: next_xp,
+                };
+
+                skills_map.insert(skill_name.clone(), skill_data);
+            }
+        }
+
+        return skills_map;
     }
 
     pub fn get_by_name(obj_id: i32, skill_name: String, skills: &Skills) -> Option<Skill> {
@@ -108,6 +175,34 @@ impl Skill {
         }
 
         return None;
+    }
+
+    pub fn get_templates_by_class(
+        class: String,
+        skill_templates: &SkillTemplates,
+    ) -> Vec<SkillTemplate> {
+        let mut skill_template_by_class = Vec::new();
+
+        for (_skill_name, skill_template) in skill_templates.iter() {
+            if skill_template.class == class {
+                skill_template_by_class.push(skill_template.clone());
+            }
+        }
+
+        return skill_template_by_class;
+    }
+
+    pub fn get_next(skill_name: String, level: i32, skill_templates: &SkillTemplates) -> i32 {
+        let level_usize = level as usize;
+
+        for (_skill_name, skill_template) in skill_templates.iter() {
+            if skill_template.name == skill_name {
+                return skill_template.xp[level_usize];
+            }
+        }
+
+        // TODO reconsider panic state
+        return i32::MAX;
     }
 }
 

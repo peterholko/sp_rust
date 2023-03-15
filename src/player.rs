@@ -6,20 +6,22 @@ use pathfinding::prelude::directions::E;
 use std::collections::{HashMap, HashSet};
 
 use crate::ai::{Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty};
+use crate::combat::{Combat, CombatQuery};
 use crate::game::{
-    is_pos_empty, Class, ClassStructure, Clients, ExploredMap, GameTick, HeroClassList, Id, Ids,
-    MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj, Order,
-    PlayerId, Position, State, Stats, StructureAttrs, Subclass, SubclassHero, SubclassVillager,
-    Template, Viewshed, VisibleEvent, VisibleEvents, BUILDING, DEAD, FOUNDED, MOVING, NONE,
-    PROGRESSING,
+    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick, HeroClassList,
+    Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj, Order, PlayerId,
+    Position, State, Stats, StructureAttrs, Subclass, SubclassHero, SubclassVillager, Template,
+    Viewshed, VillagerAttrs, VisibleEvent, VisibleEvents, BUILDING, CREATIVITY, DEAD, DEXTERITY,
+    ENDURANCE, FOCUS, FOUNDED, INTELLECT, MOVING, NONE, PROGRESSING, SPIRIT, STRENGTH, TOUGHNESS, is_none_state,
 };
-use crate::item::{Item, Items};
+use crate::item::{Item, Items, DAMAGE};
 use crate::map::Map;
-use crate::network::{self, send_to_client, ResponsePacket};
+use crate::network::{self, send_to_client, ResponsePacket, StructureList};
 use crate::resource::{Resource, Resources};
-use crate::skill::Skills;
-use crate::structure::Structure;
-use crate::templates::{ResReq, SkillTemplate, SkillTemplates, Templates};
+use crate::skill::{Skill, Skills};
+use crate::structure::{Structure, CRAFT, RESOURCE};
+use crate::templates::{ObjTemplate, ResReq, SkillTemplate, SkillTemplates, Templates};
+use crate::villager::Villager;
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct PlayerEvents(pub Vec<PlayerEvent>);
@@ -55,6 +57,10 @@ pub enum PlayerEvent {
         id: i32,
     },
     InfoSkills {
+        player_id: i32,
+        id: i32,
+    },
+    InfoAttrs {
         player_id: i32,
         id: i32,
     },
@@ -122,29 +128,16 @@ pub enum PlayerEvent {
     AssignList {
         player_id: i32,
     },
-}
-
-// Used as temporary obj storage for system
-#[derive(Clone, Debug)]
-pub struct CoreObj {
-    pub entity: Entity,
-    pub obj_id: Id,
-    pub player_id: PlayerId,
-    pub pos: Position,
-    pub state: State,
-}
-
-// Used as temporary obj storage for system
-#[derive(Clone, Debug)]
-pub struct CoreObjWithAttrs {
-    pub entity: Entity,
-    pub id: Id,
-    pub player_id: PlayerId,
-    pub pos: Position,
-    pub class: Class,
-    pub subclass: Subclass,
-    pub state: State,
-    pub attrs: Option<StructureAttrs>,
+    Assign {
+        player_id: i32,
+        source_id: i32,
+        target_id: i32,
+    },
+    Equip {
+        player_id: i32,
+        item_id: i32,
+        status: bool
+    }
 }
 
 #[derive(WorldQuery)]
@@ -156,7 +149,22 @@ struct CoreQuery {
     name: &'static Name,
     class: &'static Class,
     subclass: &'static Subclass,
+    template: &'static Template,
     state: &'static State,
+    misc: &'static Misc,
+}
+
+#[derive(WorldQuery)]
+struct ItemTransferQuery {
+    entity: Entity,
+    id: &'static Id,
+    player_id: &'static PlayerId,
+    pos: &'static Position,
+    name: &'static Name,
+    class: &'static Class,
+    subclass: &'static Subclass,
+    state: &'static State,
+    structure_attrs: Option<&'static StructureAttrs>,
 }
 
 #[derive(WorldQuery)]
@@ -173,6 +181,21 @@ struct StructureQuery {
     attrs: &'static mut StructureAttrs,
 }
 
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+struct VillagerQuery {
+    entity: Entity,
+    id: &'static Id,
+    player_id: &'static PlayerId,
+    pos: &'static Position,
+    name: &'static Name,
+    class: &'static Class,
+    subclass: &'static Subclass,
+    state: &'static State,
+    misc: &'static Misc,
+    attrs: &'static mut VillagerAttrs,
+}
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
@@ -186,6 +209,8 @@ impl Plugin for PlayerPlugin {
             .add_system(attack_system)
             .add_system(gather_system)
             .add_system(info_obj_system)
+            .add_system(info_skills_system)
+            .add_system(info_attrs_system)
             .add_system(info_tile_system)
             .add_system(info_item_system)
             .add_system(item_transfer_system)
@@ -197,6 +222,7 @@ impl Plugin for PlayerPlugin {
             .add_system(build_system)
             .add_system(explore_system)
             .add_system(assign_list_system)
+            .add_system(assign_system)
             .insert_resource(player_events);
     }
 }
@@ -217,9 +243,9 @@ fn new_player_system(
     mut commands: Commands,
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
-    mut explored_map: ResMut<ExploredMap>,
     mut map_events: ResMut<MapEvents>,
     mut items: ResMut<Items>,
+    mut skills: ResMut<Skills>,
     templates: Res<Templates>,
 ) {
     let mut events_to_remove: Vec<usize> = Vec::new();
@@ -233,6 +259,7 @@ fn new_player_system(
                     &mut ids,
                     &mut map_events,
                     &mut items,
+                    &mut skills,
                     &templates,
                     &game_tick,
                 );
@@ -358,14 +385,13 @@ fn move_system(
 }
 
 fn attack_system(
+    mut commands: Commands,
     mut events: ResMut<PlayerEvents>,
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
     clients: Res<Clients>,
     mut map_events: ResMut<MapEvents>,
-    mut visible_events: ResMut<VisibleEvents>,
-    map: Res<Map>,
-    mut query: Query<(Entity, &Id, &Position, &PlayerId, &mut State, &mut Stats)>,
+    mut query: Query<CombatQuery>,
 ) {
     let mut events_to_remove: Vec<usize> = Vec::new();
 
@@ -379,105 +405,82 @@ fn attack_system(
             } => {
                 events_to_remove.push(index);
 
-                let mut attacker: Option<CoreObj> = None;
-                let mut target: Option<CoreObj> = None;
+                let Some(attacker_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find attacker entity from id: {:?}", source_id);
+                    continue;
+                };
 
-                // Get attacker
-                for (entity, id, pos, player_id, state, hitpoints) in query.iter() {
-                    if id.0 == *source_id {
-                        attacker = Some(CoreObj {
-                            entity: entity,
-                            obj_id: id.clone(),
-                            player_id: player_id.clone(),
-                            pos: pos.clone(),
-                            state: state.clone(),
-                        });
-                    }
+                let Some(target_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find target entity from id: {:?}", target_id);
+                    continue;
+                };
+
+                let entities = [attacker_entity, target_entity];
+
+                for a in query.iter() {
+                    debug!("CombatQueryItem: {:?}", a);
                 }
 
-                // Get target
-                for (entity, id, pos, player_id, state, hitpoints) in query.iter() {
-                    if id.0 == *target_id {
-                        target = Some(CoreObj {
-                            entity: entity,
-                            obj_id: id.clone(),
-                            player_id: player_id.clone(),
-                            pos: pos.clone(),
-                            state: state.clone(),
-                        });
-                    }
-                }
+                let Ok([mut attacker, mut target]) = query.get_many_mut(entities) else {
+                    error!("Cannot find attacker or target from entities {:?}", entities);
+                    continue;
+                };
 
-                if let (Some(attacker), Some(target)) = (attacker, target) {
-                    // Check if attacker is owned by player
-                    if attacker.player_id.0 != *player_id {
-                        let packet = ResponsePacket::Error {
-                            errmsg: "Attacker not owned by player.".to_string(),
-                        };
-                        send_to_client(*player_id, packet, &clients);
-                        break;
-                    }
-
-                    // Is target adjacent
-                    if Map::dist(attacker.pos, target.pos) > 1 {
-                        let packet = ResponsePacket::Error {
-                            errmsg: "Target is not adjacent.".to_string(),
-                        };
-                        send_to_client(*player_id, packet, &clients);
-                        break;
-                    }
-
-                    // Check if target is dead
-                    if target.state.0 == DEAD {
-                        let packet = ResponsePacket::Error {
-                            errmsg: "Target is dead.".to_string(),
-                        };
-                        send_to_client(*player_id, packet, &clients);
-                        break;
-                    }
-
-                    let packet = ResponsePacket::Attack {
-                        sourceid: *source_id,
-                        attacktype: attack_type.clone(),
-                        cooldown: 20,
-                        stamina_cost: 5,
+                // Check if attacker is owned by player
+                if attacker.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Attacker not owned by player.".to_string(),
                     };
-
                     send_to_client(*player_id, packet, &clients);
-
-                    let dmg = 50;
-
-                    if let Ok((entity, id, pos, player_id, mut state, mut stats)) =
-                        query.get_mut(target.entity)
-                    {
-                        stats.hp -= dmg;
-
-                        if stats.hp <= 0 {
-                            state.0 = DEAD.to_string();
-                        }
-
-                        let damage_event = VisibleEvent::DamageEvent {
-                            target_id: id.0,
-                            target_pos: pos.clone(),
-                            attack_type: attack_type.clone(),
-                            damage: dmg,
-                            state: state.0.clone(),
-                        };
-
-                        let map_event = MapEvent {
-                            event_id: ids.new_map_event_id(),
-                            entity_id: attacker.entity,
-                            obj_id: attacker.obj_id.0,
-                            player_id: attacker.player_id.0,
-                            pos_x: attacker.pos.x,
-                            pos_y: attacker.pos.y,
-                            run_tick: game_tick.0,
-                            map_event_type: damage_event,
-                        };
-
-                        visible_events.push(map_event);
-                    }
+                    break;
                 }
+
+                // Is target adjacent
+                if Map::dist(*attacker.pos, *target.pos) > 1 {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Target is not adjacent.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                // Check if target is dead
+                if target.state.0 == DEAD {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Target is dead.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                // Calculate and process damage
+                let damage = Combat::process_damage(
+                    attack_type.to_string(),
+                    &attacker,
+                    &mut target,
+                    &mut commands,
+                );
+
+                // Add visible damage event to broadcast to everyone nearby
+                Combat::add_damage_event(
+                    ids.new_map_event_id(),
+                    game_tick.0,
+                    attack_type.to_string(),
+                    damage,
+                    &attacker,
+                    &target,
+                    &mut map_events,
+                );
+
+                // Response to client with attack response packet
+                let packet = ResponsePacket::Attack {
+                    sourceid: *source_id,
+                    attacktype: attack_type.clone(),
+                    cooldown: 20,
+                    stamina_cost: 5,
+                };
+
+                send_to_client(*player_id, packet, &clients);
             }
             _ => {}
         }
@@ -575,30 +578,268 @@ fn gather_system(
 
 fn info_obj_system(
     mut events: ResMut<PlayerEvents>,
+    ids: ResMut<Ids>,
     clients: Res<Clients>,
-    query: Query<MapObjQuery>,
+    items: ResMut<Items>,
+    skills: Res<Skills>,
+    query: Query<CoreQuery>,
+    attrs_query: Query<&BaseAttrs>,
+    stats_query: Query<&Stats>,
 ) {
     let mut events_to_remove: Vec<usize> = Vec::new();
 
     for (index, event) in events.iter().enumerate() {
         match event {
             PlayerEvent::InfoObj { player_id, id } => {
-                for q in &query {
-                    if q.id.0 == *id {
-                        let info_obj_packet: ResponsePacket = ResponsePacket::InfoObj {
-                            id: q.id.0,
-                            name: q.name.0.to_owned(),
-                            template: q.template.0.to_owned(),
-                            class: q.class.0.to_owned(),
-                            subclass: q.subclass.0.to_owned(),
-                            state: q.state.0.to_owned(),
-                        };
+                events_to_remove.push(index);
 
-                        send_to_client(*player_id, info_obj_packet, &clients);
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    break;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find villager for {:?}", entity);
+                    break;
+                };
+
+                let mut info_obj_packet;
+
+                if obj.player_id.0 == *player_id {
+                    let items_packet = Some(Item::get_by_owner_packet(*id, &items));
+                    let skills_packet = Some(Skill::get_levels_by_owner(*id, &skills));
+
+                    let mut attributes: HashMap<String, i32> = HashMap::new();
+
+                    let mut effects = Some(Vec::new());
+
+                    // Required stats for all objects
+                    let mut hp = None;
+                    let mut base_hp = None;
+                    let mut base_def = None;
+
+                    let mut damage_range = None;
+                    let mut base_damage = None;
+                    let mut base_speed = None;
+                    let mut base_vision = None;
+
+                    let mut stamina = None;
+                    let mut base_stamina = None;
+
+                    let mut structure = None;
+                    let mut action = None;
+                    let mut shelter = None;
+
+                    let mut morale = None;
+                    let mut order = None;
+
+                    let mut total_weight = None;
+                    let mut capacity = None;
+
+                    //if obj.class.0.to_string() ==
+
+                    if let Ok(attrs) = attrs_query.get(obj.entity) {
+                        attributes.insert(CREATIVITY.to_string(), attrs.creativity);
+                        attributes.insert(DEXTERITY.to_string(), attrs.dexterity);
+                        attributes.insert(ENDURANCE.to_string(), attrs.endurance);
+                        attributes.insert(FOCUS.to_string(), attrs.focus);
+                        attributes.insert(INTELLECT.to_string(), attrs.intellect);
+                        attributes.insert(SPIRIT.to_string(), attrs.spirit);
+                        attributes.insert(STRENGTH.to_string(), attrs.strength);
+                        attributes.insert(TOUGHNESS.to_string(), attrs.toughness);
                     }
+
+                    if let Ok(stats) = stats_query.get(obj.entity) {
+                        hp = Some(stats.hp);
+                        base_hp = Some(stats.base_hp);
+                        base_def = Some(stats.base_def);
+
+                        damage_range = stats.damage_range;
+                        base_damage = stats.base_damage;
+                        base_speed = stats.base_speed;
+                        base_vision = stats.base_vision;
+                    }
+
+                    info_obj_packet = ResponsePacket::InfoObj {
+                        id: obj.id.0,
+                        name: obj.name.0.to_string(),
+                        template: obj.template.0.to_string(),
+                        class: obj.class.0.to_string(),
+                        subclass: obj.subclass.0.to_string(),
+                        state: obj.state.0.to_string(),
+                        image: obj.misc.image.clone(),
+                        hsl: obj.misc.hsl.clone(),
+                        items: items_packet,
+                        skills: skills_packet,
+                        attributes: Some(attributes),
+                        effects: effects,
+                        hp: hp,
+                        stamina: stamina,
+                        base_stamina: base_stamina,
+                        base_hp: base_hp,
+                        base_def: base_def,
+                        dmg_range: damage_range,
+                        base_dmg: base_damage,
+                        base_speed: base_speed,
+                        base_vision: base_vision,
+                        structure: structure,
+                        shelter: shelter,
+                        action: action,
+                        morale: morale,
+                        order: order,
+                        total_weight: total_weight,
+                        capacity: capacity,
+                    };
+                } else {
+                    // TODO add effects
+                    let effects = Vec::new();
+                    let mut items_packet = None;
+
+                    // Add items if object is dead
+                    if obj.state.0 == DEAD {
+                        items_packet = Some(Item::get_by_owner_packet(*id, &items));
+                    }
+
+                    // Non player owned object
+                    info_obj_packet = ResponsePacket::InfoObj {
+                        id: obj.id.0,
+                        name: obj.name.0.to_string(),
+                        template: obj.template.0.to_string(),
+                        class: obj.class.0.to_string(),
+                        subclass: obj.subclass.0.to_string(),
+                        state: obj.state.0.to_string(),
+                        image: obj.misc.image.clone(),
+                        hsl: obj.misc.hsl.clone(),
+                        items: items_packet,
+                        skills: None,
+                        attributes: None,
+                        effects: Some(effects),
+                        hp: None,
+                        stamina: None,
+                        base_stamina: None,
+                        base_hp: None,
+                        base_def: None,
+                        dmg_range: None,
+                        base_dmg: None,
+                        base_speed: None,
+                        base_vision: None,
+                        structure: None,
+                        shelter: None,
+                        action: None,
+                        morale: None,
+                        order: None,
+                        total_weight: None,
+                        capacity: None,
+                    };
                 }
 
+                send_to_client(*player_id, info_obj_packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn info_skills_system(
+    mut events: ResMut<PlayerEvents>,
+    ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    skills: Res<Skills>,
+    templates: Res<Templates>,
+    query: Query<CoreQuery>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::InfoSkills { player_id, id } => {
                 events_to_remove.push(index);
+
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    continue;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find villager for {:?}", entity);
+                    continue;
+                };
+
+                if obj.player_id.0 == *player_id {
+                    let obj_skills =
+                        Skill::get_by_owner_packet(obj.id.0, &skills, &templates.skill_templates);
+
+                    let info_skills_packet = ResponsePacket::InfoSkills {
+                        id: *id,
+                        skills: obj_skills,
+                    };
+
+                    send_to_client(*player_id, info_skills_packet, &clients);
+                } else {
+                    error!("Object {:?} is not owned by player {:?}", id, player_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn info_attrs_system(
+    mut events: ResMut<PlayerEvents>,
+    ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    query: Query<CoreQuery>,
+    attr_query: Query<&BaseAttrs>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::InfoAttrs { player_id, id } => {
+                events_to_remove.push(index);
+
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    continue;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find villager for {:?}", entity);
+                    continue;
+                };
+
+                if obj.player_id.0 == *player_id {
+                    if let Ok(attrs) = attr_query.get(entity) {
+                        let mut attrs_packet = HashMap::new();
+
+                        attrs_packet.insert(CREATIVITY.to_string(), attrs.creativity);
+                        attrs_packet.insert(DEXTERITY.to_string(), attrs.dexterity);
+                        attrs_packet.insert(ENDURANCE.to_string(), attrs.endurance);
+                        attrs_packet.insert(FOCUS.to_string(), attrs.focus);
+                        attrs_packet.insert(INTELLECT.to_string(), attrs.intellect);
+                        attrs_packet.insert(SPIRIT.to_string(), attrs.spirit);
+                        attrs_packet.insert(TOUGHNESS.to_string(), attrs.toughness);
+
+                        let info_attrs_packet = ResponsePacket::InfoAttrs {
+                            id: *id,
+                            attrs: attrs_packet,
+                        };
+
+                        send_to_client(*player_id, info_attrs_packet, &clients);
+                    } else {
+                        error!("Cannot find attributes for {:?}", id);
+                    }
+                } else {
+                    error!("Object {:?} is not owned by player {:?}", id, player_id);
+                }
             }
             _ => {}
         }
@@ -736,16 +977,7 @@ fn item_transfer_system(
     mut ids: ResMut<Ids>,
     mut items: ResMut<Items>,
     templates: Res<Templates>,
-    query: Query<(
-        Entity,
-        &Id,
-        &PlayerId,
-        &Position,
-        &Class,
-        &Subclass,
-        &State,
-        Option<&StructureAttrs>,
-    )>,
+    query: Query<ItemTransferQuery>,
 ) {
     let mut events_to_remove: Vec<usize> = Vec::new();
 
@@ -759,75 +991,91 @@ fn item_transfer_system(
                 events_to_remove.push(index);
 
                 if let Some(item) = Item::find_by_id(*item_id, &items) {
-                    let mut owner = None;
-                    let mut target = None;
+                    let Some(owner_entity) = ids.get_entity(item.owner) else {
+                        error!("Cannot find owner entity from id: {:?}", item.owner);
+                        continue;
+                    };
 
-                    // Get item owner
-                    for (entity, id, player_id, pos, class, subclass, state, attrs) in query.iter()
-                    {
-                        if id.0 == item.owner {
-                            owner = Some(CoreObjWithAttrs {
-                                entity: entity,
-                                id: id.clone(),
-                                player_id: player_id.clone(),
-                                pos: pos.clone(),
-                                class: class.clone(),
-                                subclass: subclass.clone(),
-                                state: state.clone(),
-                                attrs: attrs.cloned(),
-                            });
-                        }
+                    let Some(target_entity) = ids.get_entity(*target_id) else {
+                        error!("Cannot find target entity from id: {:?}", target_id);
+                        continue;
+                    };
+
+                    let entities = [owner_entity, target_entity];
+
+                    let Ok([mut owner, mut target]) = query.get_many(entities) else {
+                        error!("Cannot find owner or target from entities {:?}", entities);
+                        continue;
+                    };
+
+                    if !(owner.pos == target.pos || Map::is_adjacent(*owner.pos, *target.pos)) {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Item is not nearby.".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        continue;
                     }
 
-                    // Get item transfer target
-                    for (entity, id, player_id, pos, class, subclass, state, attrs) in query.iter()
-                    {
-                        if id.0 == *target_id {
-                            target = Some(CoreObjWithAttrs {
-                                entity: entity,
-                                id: id.clone(),
-                                player_id: player_id.clone(),
-                                pos: pos.clone(),
-                                class: class.clone(),
-                                subclass: subclass.clone(),
-                                state: state.clone(),
-                                attrs: attrs.cloned(),
-                            });
-                        }
-                    }
+                    let attrs = target.structure_attrs;
 
-                    if let (Some(owner), Some(target)) = (owner, target) {
-                        // Check owner and target are not on the same pos or adjacent
-                        if !(owner.pos == target.pos || Map::is_adjacent(owner.pos, target.pos)) {
+                    // Check if item is required for structure construction
+                    if let Some(attrs) = attrs {
+                        if !Item::is_req(item.clone(), attrs.req.clone()) {
                             let packet = ResponsePacket::Error {
-                                errmsg: "Item is not nearby.".to_string(),
+                                errmsg: "Item required for construction.".to_string(),
                             };
                             send_to_client(*player_id, packet, &clients);
                             break;
                         }
+                    }
 
-                        let attrs = &target.attrs;
+                    // Structure founded and under construction use case
+                    if target.class.0 == "structure" && target.state.0 == FOUNDED {
+                        // Process item transfer and calculate the require item quantities
+                        let req_items = process_item_transfer_structure(
+                            item.clone(),
+                            target, // target is the structure
+                            &mut items,
+                            &mut ids,
+                            &templates,
+                        );
 
-                        // Check if item is required for structure construction
-                        if let Some(attrs) = attrs {
-                            if !Item::is_req(item.clone(), attrs.req.clone()) {
-                                let packet = ResponsePacket::Error {
-                                    errmsg: "Item required for construction.".to_string(),
-                                };
-                                send_to_client(*player_id, packet, &clients);
-                                break;
-                            }
-                        }
+                        let source_items = Item::get_by_owner_packet(item.owner, &items);
+                        let target_items = Item::get_by_owner_packet(*target_id, &items);
 
-                        // Structure founded and under construction use case
-                        if target.class.0 == "structure" && target.state.0 == FOUNDED {
-                            // Process item transfer and calculate the require item quantities
-                            let req_items = process_item_transfer_structure(
-                                item.clone(),
-                                target, // target is the structure
-                                &mut items,
-                                &mut ids,
-                                &templates,
+                        let source_inventory = network::Inventory {
+                            id: item.owner,
+                            cap: 100,
+                            tw: 5,
+                            items: source_items.clone(),
+                        };
+
+                        let target_inventory = network::Inventory {
+                            id: *target_id,
+                            cap: 100,
+                            tw: 5,
+                            items: target_items.clone(),
+                        };
+
+                        let item_transfer_packet: ResponsePacket = ResponsePacket::ItemTransfer {
+                            result: "success".to_string(),
+                            sourceid: item.owner,
+                            sourceitems: source_inventory,
+                            targetid: *target_id,
+                            targetitems: target_inventory,
+                            reqitems: req_items,
+                        };
+
+                        send_to_client(*player_id, item_transfer_packet, &clients);
+                    } else if owner.class.0 == "structure" && owner.state.0 == FOUNDED {
+                        if let Some(structure_attrs) = owner.structure_attrs {
+                            Item::transfer(item.id, target.id.0, &mut items);
+
+                            let structure_items = Item::get_by_owner(owner.id.0, &items);
+
+                            let req_items = Structure::process_req_items(
+                                structure_items,
+                                structure_attrs.req.clone(),
                             );
 
                             let source_items = Item::get_by_owner_packet(item.owner, &items);
@@ -858,82 +1106,39 @@ fn item_transfer_system(
                                 };
 
                             send_to_client(*player_id, item_transfer_packet, &clients);
-                        } else if owner.class.0 == "structure" && owner.state.0 == FOUNDED {
-                            if let Some(structure_attrs) = owner.attrs {
-                                Item::transfer(item.id, target.id.0, &mut items);
-
-                                let structure_items = Item::get_by_owner(owner.id.0, &items);
-
-                                let req_items = Structure::process_req_items(
-                                    structure_items,
-                                    structure_attrs.req,
-                                );
-
-                                let source_items = Item::get_by_owner_packet(item.owner, &items);
-                                let target_items = Item::get_by_owner_packet(*target_id, &items);
-
-                                let source_inventory = network::Inventory {
-                                    id: item.owner,
-                                    cap: 100,
-                                    tw: 5,
-                                    items: source_items.clone(),
-                                };
-
-                                let target_inventory = network::Inventory {
-                                    id: *target_id,
-                                    cap: 100,
-                                    tw: 5,
-                                    items: target_items.clone(),
-                                };
-
-                                let item_transfer_packet: ResponsePacket =
-                                    ResponsePacket::ItemTransfer {
-                                        result: "success".to_string(),
-                                        sourceid: item.owner,
-                                        sourceitems: source_inventory,
-                                        targetid: *target_id,
-                                        targetitems: target_inventory,
-                                        reqitems: req_items,
-                                    };
-
-                                send_to_client(*player_id, item_transfer_packet, &clients);
-                            } else {
-                                error!("Obj is missing expected structure attributes");
-                            }
                         } else {
-                            Item::transfer(item.id, target.id.0, &mut items);
-
-                            let source_items = Item::get_by_owner_packet(item.owner, &items);
-                            let target_items = Item::get_by_owner_packet(*target_id, &items);
-
-                            let source_inventory = network::Inventory {
-                                id: item.owner,
-                                cap: 100,
-                                tw: 5,
-                                items: source_items.clone(),
-                            };
-
-                            let target_inventory = network::Inventory {
-                                id: *target_id,
-                                cap: 100,
-                                tw: 5,
-                                items: target_items.clone(),
-                            };
-
-                            let item_transfer_packet: ResponsePacket =
-                                ResponsePacket::ItemTransfer {
-                                    result: "success".to_string(),
-                                    sourceid: item.owner,
-                                    sourceitems: source_inventory,
-                                    targetid: *target_id,
-                                    targetitems: target_inventory,
-                                    reqitems: Vec::new(),
-                                };
-
-                            send_to_client(*player_id, item_transfer_packet, &clients);
+                            error!("Obj is missing expected structure attributes");
                         }
                     } else {
-                        error!("Failed to find source or target");
+                        Item::transfer(item.id, target.id.0, &mut items);
+
+                        let source_items = Item::get_by_owner_packet(item.owner, &items);
+                        let target_items = Item::get_by_owner_packet(*target_id, &items);
+
+                        let source_inventory = network::Inventory {
+                            id: item.owner,
+                            cap: 100,
+                            tw: 5,
+                            items: source_items.clone(),
+                        };
+
+                        let target_inventory = network::Inventory {
+                            id: *target_id,
+                            cap: 100,
+                            tw: 5,
+                            items: target_items.clone(),
+                        };
+
+                        let item_transfer_packet: ResponsePacket = ResponsePacket::ItemTransfer {
+                            result: "success".to_string(),
+                            sourceid: item.owner,
+                            sourceitems: source_inventory,
+                            targetid: *target_id,
+                            targetitems: target_inventory,
+                            reqitems: Vec::new(),
+                        };
+
+                        send_to_client(*player_id, item_transfer_packet, &clients);
                     }
                 } else {
                     error!("Failed to find item");
@@ -949,23 +1154,22 @@ fn item_transfer_system(
                     *source_id, *target_id
                 );
 
-                let mut target = None;
+                let Some(source_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find source entity from id: {:?}", source_id);
+                    continue;
+                };
 
-                // Get item transfer target
-                for (entity, id, player_id, pos, class, subclass, state, attrs) in query.iter() {
-                    if id.0 == *target_id {
-                        target = Some(CoreObjWithAttrs {
-                            entity: entity,
-                            id: id.clone(),
-                            player_id: player_id.clone(),
-                            pos: pos.clone(),
-                            class: class.clone(),
-                            subclass: subclass.clone(),
-                            state: state.clone(),
-                            attrs: attrs.cloned(),
-                        });
-                    }
-                }
+                let Some(target_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find target entity from id: {:?}", target_id);
+                    continue;
+                };
+
+                let entities = [source_entity, target_entity];
+
+                let Ok([mut source, mut target]) = query.get_many(entities) else {
+                    error!("Cannot find source or target from entities {:?}", entities);
+                    continue;
+                };
 
                 let source_items = Item::get_by_owner_packet(*source_id, &items);
                 let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1070,7 +1274,7 @@ fn order_follow_system(
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
-                    continue;
+                    break;
                 };
 
                 let Some(hero_entity) = ids.get_entity(hero_id) else {
@@ -1169,11 +1373,17 @@ fn structure_list_system(
                 events_to_remove.push(index);
                 let structure_list = Structure::available_to_build(&templates.obj_templates);
 
-                let structure_list = ResponsePacket::StructureList {
+                /*let structure_list = ResponsePacket::StructureList {
+                    result: structure_list,
+                };*/
+
+                let structure_list = StructureList {
                     result: structure_list,
                 };
 
-                send_to_client(*player_id, structure_list, &clients);
+                let res_packet = ResponsePacket::StructureList(structure_list);
+
+                send_to_client(*player_id, res_packet, &clients);
             }
             _ => {}
         }
@@ -1254,9 +1464,12 @@ fn create_foundation_system(
                     },
                     stats: Stats {
                         hp: 1,
+                        base_hp: structure_template.base_hp.unwrap(), // Convert option to non-option
                         base_def: 0,
                         base_damage: None,
                         damage_range: None,
+                        base_speed: None,
+                        base_vision: None,
                     },
                 };
 
@@ -1525,7 +1738,9 @@ fn explore_system(
 fn assign_list_system(
     mut events: ResMut<PlayerEvents>,
     clients: Res<Clients>,
-    villager_query: Query<CoreQuery, With<SubclassVillager>>,
+    mut ids: ResMut<Ids>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
     let mut events_to_remove: Vec<usize> = Vec::new();
 
@@ -1538,12 +1753,28 @@ fn assign_list_system(
 
                 for villager in villager_query.iter() {
                     if *player_id == villager.player_id.0 {
+                        let mut structure_name = "None".to_string();
+
+                        if villager.attrs.structure != -1 {
+                            let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
+                                error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                                continue;
+                            };
+
+                            let Ok(structure) = structure_query.get(structure_entity) else {
+                                error!("Query failed to find entity {:?}", structure_entity);
+                                continue;
+                            };
+
+                            structure_name = structure.name.0.to_string();
+                        }
+
                         let assignment = network::Assignment {
                             id: villager.id.0,
-                            name: "Igor the Peasant".to_string(),
-                            image: "humanvillager2".to_string(),
-                            order: "none".to_string(),
-                            structure: "none".to_string(),
+                            name: villager.name.0.to_string(),
+                            image: villager.misc.image.to_string(),
+                            order: "none".to_string(), // Query order
+                            structure: structure_name,
                         };
 
                         assignments.push(assignment);
@@ -1565,18 +1796,190 @@ fn assign_list_system(
     }
 }
 
+fn assign_system(
+    mut commands: Commands,
+    mut events: ResMut<PlayerEvents>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    structure_query: Query<StructureQuery, With<ClassStructure>>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::Assign {
+                player_id,
+                source_id,
+                target_id,
+            } => {
+                events_to_remove.push(index);
+
+                // Validation checks get source entity
+                let Some(villager_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find villager entity for {:?}", source_id);
+                    continue;
+                };
+
+                let Ok(mut villager) = villager_query.get_mut(villager_entity) else {
+                    error!("Query failed to find entity {:?}", villager_entity);
+                    continue;
+                };
+
+                let Some(structure_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find structure entity for {:?}", target_id);
+                    continue;
+                };
+
+                let Ok(structure) = structure_query.get(structure_entity) else {
+                    error!("Query failed to find entity {:?}", structure_entity);
+                    continue;
+                };
+
+                // Check if builder is owned by player
+                if villager.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Villager not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Check if structure is owned by player
+                if structure.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Set villager structure
+                villager.attrs.structure = structure.id.0;
+
+                if structure.subclass.0 == RESOURCE {
+                    commands.entity(villager_entity).insert(Order::Harvest);
+                } else if structure.subclass.0 == CRAFT {
+                    commands.entity(villager_entity).insert(Order::Refine);
+                } else {
+                    error!("Can only assign to crafting or harvesting buildings");
+                    continue;
+                }
+
+                let packet = ResponsePacket::Assign {
+                    result: "success".to_string(),
+                };
+
+                send_to_client(*player_id, packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}
+
+fn equip_system(
+    mut events: ResMut<PlayerEvents>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    mut items: ResMut<Items>,
+    query: Query<CoreQuery>,
+) {
+    let mut events_to_remove: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            PlayerEvent::Equip {
+                player_id,
+                item_id,
+                status
+            } => {
+                events_to_remove.push(index);
+
+                let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                    debug!("Failed to find item: {:?}", item_id);
+                    continue;
+                };
+
+                // Validation checks get source entity
+                let Some(owner_entity) = ids.get_entity(item.owner) else {
+                    error!("Cannot find villager entity for {:?}", item.owner);
+                    continue;
+                };
+
+                let Ok(owner) = query.get(owner_entity) else {
+                    error!("Query failed to find entity {:?}", owner_entity);
+                    continue;
+                };                
+
+                // Check if builder is owned by player
+                if owner.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Item not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Check if equipable 
+                if !Item::is_equipable(item.clone()) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Item is not equipable.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Check if object is busy
+                if !is_none_state(&owner.state.0) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Item owner is busy".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Equip if status is true
+                if *status {
+                    item.equipped = true;
+                } else {
+                    item.equipped = false;
+                }
+
+                let packet = ResponsePacket::Equip {
+                    result: "success".to_string(),
+                };
+
+                send_to_client(*player_id, packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(*index);
+    }
+}                
+
 fn new_player(
     player_id: i32,
     mut commands: &mut Commands,
     mut ids: &mut ResMut<Ids>,
     mut map_events: &mut ResMut<MapEvents>,
     mut items: &mut ResMut<Items>,
+    mut skills: &mut ResMut<Skills>,
     templates: &Res<Templates>,
     game_tick: &ResMut<GameTick>,
 ) {
     let start_x = 16;
     let start_y = 36;
-    let range = 2;
+    let range = 4;
+
+    let hero_template_name = "Novice Warrior".to_string();
+    let hero_template = ObjTemplate::get_template(hero_template_name.clone(), templates);
 
     // Create Hero Obj
     let hero_id = ids.new_obj_id();
@@ -1589,7 +1992,7 @@ fn new_player(
             y: start_y,
         },
         name: Name("Peter".into()),
-        template: Template("Novice Warrior".into()),
+        template: Template(hero_template_name),
         class: Class("unit".into()),
         subclass: Subclass("hero".into()),
         state: State("none".into()),
@@ -1600,10 +2003,13 @@ fn new_player(
             groups: Vec::new().into(),
         },
         stats: Stats {
-            hp: 100,
-            base_def: 0,
-            base_damage: None,
-            damage_range: None,
+            hp: hero_template.base_hp.unwrap(),
+            base_hp: hero_template.base_hp.unwrap(),
+            base_def: hero_template.base_def.unwrap(),
+            base_damage: hero_template.base_dmg,
+            damage_range: hero_template.dmg_range,
+            base_speed: hero_template.base_speed,
+            base_vision: hero_template.base_vision,
         },
     };
 
@@ -1658,6 +2064,19 @@ fn new_player(
     items.push(wood3);
     items.push(hide);
 
+    let mut item_attrs = HashMap::new();
+    item_attrs.insert(DAMAGE, 11.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        hero_id,
+        "Copper Training Axe".to_string(),
+        1,
+        item_attrs,
+        &templates.item_templates,
+        items,
+    );
+
     // Spawn hero
     let hero_entity_id = commands
         .spawn((
@@ -1687,8 +2106,10 @@ fn new_player(
     map_events.insert(map_event_id, map_state_event);
 
     // Villager obj
-
     let villager_id = ids.new_obj_id();
+
+    let villager_template_name = "Human Villager".to_string();
+    let villager_template = ObjTemplate::get_template(villager_template_name.clone(), templates);
 
     let villager = Obj {
         id: Id(villager_id),
@@ -1706,11 +2127,25 @@ fn new_player(
             groups: Vec::new().into(),
         },
         stats: Stats {
-            hp: 1,
-            base_def: 0,
-            base_damage: None,
-            damage_range: None,
+            hp: villager_template.base_hp.unwrap(),
+            base_hp: villager_template.base_hp.unwrap(),
+            base_def: villager_template.base_def.unwrap(),
+            base_damage: villager_template.base_dmg,
+            damage_range: villager_template.dmg_range,
+            base_speed: villager_template.base_speed,
+            base_vision: villager_template.base_vision,
         },
+    };
+
+    // Villager generate skills
+    Villager::generate_skills(villager_id, skills, &templates.skill_templates);
+
+    // Villager create attributes components
+    let base_attrs = Villager::generate_attributes(1);
+
+    let villager_attrs = VillagerAttrs {
+        shelter: "None".to_string(),
+        structure: -1,
     };
 
     let water_villager = Item::new(
@@ -1727,6 +2162,8 @@ fn new_player(
         .spawn((
             villager,
             SubclassVillager,
+            base_attrs,
+            villager_attrs,
             Morale::new(100.0, 1.0),
             Thirst::new(0.0, 0.1),
             Thinker::build()
@@ -1765,38 +2202,33 @@ fn new_player(
     //create_item(commands, heroId, "Honeybell Berries".to_owned(), "Food".to_owned(), "Berry".to_owned(), "honeybellberries".to_owned(), 5, 10);
 }
 
-fn get_current_req_quantities(
-    target: Option<CoreObjWithAttrs>,
-    items: &ResMut<Items>,
-) -> Vec<ResReq> {
-    if let Some(target) = target {
-        if target.class.0 == "structure" && target.state.0 == FOUNDED {
-            if let Some(attrs) = target.attrs {
-                let target_items = Item::get_by_owner(target.id.0, &items);
-                let mut req_items = attrs.req.clone();
+fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {
+    if target.class.0 == "structure" && target.state.0 == FOUNDED {
+        if let Some(attrs) = target.structure_attrs {
+            let target_items = Item::get_by_owner(target.id.0, &items);
+            let mut req_items = attrs.req.clone();
 
-                // Check current required quantity from structure items
-                for req_item in req_items.iter_mut() {
-                    let mut req_quantity = req_item.quantity;
+            // Check current required quantity from structure items
+            for req_item in req_items.iter_mut() {
+                let mut req_quantity = req_item.quantity;
 
-                    for target_item in target_items.iter() {
-                        if req_item.req_type == target_item.name
-                            || req_item.req_type == target_item.class
-                            || req_item.req_type == target_item.subclass
-                        {
-                            if req_quantity - target_item.quantity > 0 {
-                                req_quantity -= target_item.quantity;
-                            } else {
-                                req_quantity = 0;
-                            }
+                for target_item in target_items.iter() {
+                    if req_item.req_type == target_item.name
+                        || req_item.req_type == target_item.class
+                        || req_item.req_type == target_item.subclass
+                    {
+                        if req_quantity - target_item.quantity > 0 {
+                            req_quantity -= target_item.quantity;
+                        } else {
+                            req_quantity = 0;
                         }
                     }
-
-                    req_item.cquantity = Some(req_quantity);
                 }
 
-                return req_items;
+                req_item.cquantity = Some(req_quantity);
             }
+
+            return req_items;
         }
     }
 
@@ -1806,12 +2238,12 @@ fn get_current_req_quantities(
 
 fn process_item_transfer_structure(
     item: Item,
-    mut structure: CoreObjWithAttrs,
+    mut structure: ItemTransferQueryItem,
     mut items: &mut ResMut<Items>,
     mut ids: &mut ResMut<Ids>,
     templates: &Res<Templates>,
 ) -> Vec<ResReq> {
-    if let Some(attrs) = structure.attrs {
+    if let Some(attrs) = structure.structure_attrs {
         let structure_items = Item::get_by_owner(structure.id.0, &items);
         let mut req_items = Structure::process_req_items(structure_items, attrs.req.clone());
 

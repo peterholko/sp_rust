@@ -5,6 +5,8 @@ use bevy::{
     tasks::{IoTaskPool, Task},
 };
 
+use big_brain::prelude::{FirstToScore, Highest};
+use big_brain::thinker::Thinker;
 use rand::Rng;
 
 use std::collections::hash_map::Entry;
@@ -21,7 +23,10 @@ use tokio::sync::mpsc::Sender;
 
 use async_compat::Compat;
 
-use crate::ai::{AIPlugin, Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty};
+use crate::ai::{
+    AIPlugin, Chase, ChaseAttack, Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty,
+    VisibleTarget, VisibleTargetScorerBuilder, NO_TARGET,
+};
 use crate::item::{Item, ItemPlugin, Items};
 use crate::map::{Map, MapPlugin, MapTile};
 use crate::network::ResponsePacket;
@@ -29,7 +34,7 @@ use crate::network::{self, network_obj, send_to_client, BroadcastEvents};
 use crate::player::{PlayerEvent, PlayerEvents, PlayerPlugin};
 use crate::resource::{Resource, ResourcePlugin, Resources};
 use crate::skill::{Skill, SkillPlugin, Skills};
-use crate::templates::{Templates, TemplatesPlugin, ResReq};
+use crate::templates::{ResReq, Templates, TemplatesPlugin};
 
 pub struct GamePlugin;
 
@@ -42,7 +47,7 @@ pub struct Clients(Arc<Mutex<HashMap<i32, Client>>>);
 #[derive(Resource, Deref, DerefMut)]
 pub struct NetworkReceiver(CBReceiver<PlayerEvent>);
 
-#[derive(Resource, Deref, DerefMut)]
+#[derive(Resource, Deref, DerefMut, Debug)]
 pub struct MapEvents(pub HashMap<i32, MapEvent>);
 
 #[derive(Resource, Deref, DerefMut)]
@@ -58,7 +63,7 @@ pub struct Ids {
     pub obj: i32,
     pub item: i32,
     pub player_hero_map: HashMap<i32, i32>,
-    pub obj_entity_map: HashMap<i32, Entity>
+    pub obj_entity_map: HashMap<i32, Entity>,
 }
 
 #[derive(Resource, Deref, DerefMut)]
@@ -130,11 +135,26 @@ pub struct ClassStructure; //Class Structure
 pub struct AI;
 
 #[derive(Debug, Component, Clone)]
+pub struct BaseAttrs {
+    pub creativity: i32,
+    pub dexterity: i32,
+    pub endurance: i32,
+    pub focus: i32,
+    pub intellect: i32,
+    pub spirit: i32,
+    pub strength: i32,
+    pub toughness: i32,
+}
+
+#[derive(Debug, Component, Clone)]
 pub struct Stats {
     pub hp: i32,
+    pub base_hp: i32,
     pub base_def: i32,
     pub damage_range: Option<i32>,
     pub base_damage: Option<i32>,
+    pub base_speed: Option<i32>,
+    pub base_vision: Option<i32>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -145,23 +165,32 @@ pub struct Misc {
 }
 
 #[derive(Debug, Component, Clone)]
+pub struct VillagerAttrs {
+    pub shelter: String,
+    pub structure: i32,
+}
+
+#[derive(Debug, Component, Clone)]
 pub struct StructureAttrs {
     pub start_time: i32,
     pub end_time: i32,
     pub build_time: i32,
     pub builder: i32,
     pub progress: i32,
-    pub req: Vec<ResReq>
+    pub req: Vec<ResReq>,
+}
+
+#[derive(Debug, Component, Clone)]
+pub struct NPCAttrs {
+    pub target: i32,
 }
 
 #[derive(Debug, Component)]
 pub enum Order {
-    Follow {
-        target: Entity
-    },
-    Gather {
-        res_type: String
-    }
+    Follow { target: Entity },
+    Gather { res_type: String },
+    Harvest,
+    Refine,
 }
 
 #[derive(Debug, Component)]
@@ -210,10 +239,22 @@ pub enum HeroClassList {
 // States
 pub const NONE: &str = "none";
 pub const MOVING: &str = "moving";
+pub const ATTACKING: &str = "attacking";
 pub const DEAD: &str = "dead";
 pub const FOUNDED: &str = "founded";
 pub const PROGRESSING: &str = "progressing";
 pub const BUILDING: &str = "building";
+
+// Attributes
+
+pub const CREATIVITY: &str = "Creativity";
+pub const DEXTERITY: &str = "Dexterity";
+pub const ENDURANCE: &str = "Endurance";
+pub const FOCUS: &str = "Focus";
+pub const INTELLECT: &str = "Intellect";
+pub const SPIRIT: &str = "Spirit";
+pub const STRENGTH: &str = "Strength";
+pub const TOUGHNESS: &str = "Toughness";
 
 #[derive(Clone, Debug)]
 pub struct MapEvent {
@@ -239,6 +280,9 @@ pub enum VisibleEvent {
         dst_x: i32,
         dst_y: i32,
     },
+    CooldownEvent {
+        duration: i32,
+    },
     DamageEvent {
         target_id: i32,
         target_pos: Position,
@@ -249,10 +293,11 @@ pub enum VisibleEvent {
     GatherEvent {
         res_type: String,
     },
+    RefineEvent {
+        structure_id: i32,
+    },
     ExploreEvent,
 }
-
-
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
@@ -270,7 +315,10 @@ impl Plugin for GamePlugin {
             .add_system(move_event_system)
             .add_system(state_change_event_system)
             .add_system(gather_event_system)
+            .add_system(refine_event_system)
             .add_system(explore_event_system)
+            .add_system(damage_event_system)
+            .add_system(cooldown_event_system)
             .add_system(visible_event_system)
             .add_system(perception_system);
         // .add_system(task_move_to_target_system);
@@ -299,7 +347,7 @@ impl Game {
             obj: 0,
             item: 0,
             player_hero_map: HashMap::new(),
-            obj_entity_map: HashMap::new()
+            obj_entity_map: HashMap::new(),
         };
 
         // Initialize map events vector
@@ -370,8 +418,6 @@ fn new_obj_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
-        println!("Processing {:?}", map_event);
-
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
@@ -395,6 +441,7 @@ fn new_obj_event_system(
     }
 }
 
+// TODO modernize this system
 fn move_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
@@ -435,13 +482,11 @@ fn move_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter() {
-        println!("Processing {:?}", map_event);
-
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
                 VisibleEvent::MoveEvent { dst_x, dst_y } => {
-                    println!("Processing MoveEvent");
+                    debug!("Processing MoveEvent: {:?}", map_event);
 
                     // Check if destination is open
                     let mut is_dst_open = true;
@@ -461,7 +506,10 @@ fn move_event_system(
                         _misc,
                     ) in set.p1().iter()
                     {
-                        debug!("enttiy: {:?} id: {:?} player_id: {:?} pos: {:?}", entity, id, player_id, pos);
+                        debug!(
+                            "enttiy: {:?} id: {:?} player_id: {:?} pos: {:?}",
+                            entity, id, player_id, pos
+                        );
                         if (map_event.player_id != player_id.0)
                             && (pos.x == *dst_x && pos.y == *dst_y)
                         {
@@ -486,61 +534,70 @@ fn move_event_system(
                             // Adding processed map event
                             visible_events.push(map_event.clone());
 
-                            let mut rng = rand::thread_rng();
+                            if player_id.0 < 1000 {
+                                let mut rng = rand::thread_rng();
 
-                            let spawn_chance = 0.5;
-                            let random_num = rng.gen::<f32>();
+                                let spawn_chance = 0.25;
+                                let random_num = rng.gen::<f32>();
 
-                            if random_num < spawn_chance {
-                                let adjacent_pos = get_random_adjacent_pos(
-                                    player_id.0,
-                                    *dst_x,
-                                    *dst_y,
-                                    all_obj_pos,
-                                    &map,
-                                );
-
-                                if let Some(adjacent_pos) = adjacent_pos {
-                                    let spawn_result= spawn_npc(
-                                        1000,
-                                        adjacent_pos,
-                                        "Zombie".to_string(),
-                                        &mut commands,
-                                        &mut ids,
-                                        &templates, 
+                                if random_num < spawn_chance {
+                                    let adjacent_pos = get_random_adjacent_pos(
+                                        player_id.0,
+                                        *dst_x,
+                                        *dst_y,
+                                        all_obj_pos,
+                                        &map,
                                     );
 
-                                    match spawn_result {
-                                        Ok((entity, npc_id, player_id, pos)) => {
-                                            let event = create_map_event(entity, npc_id, player_id, pos, &game_tick, &mut ids);
-                                            events_to_add.push(event);
+                                    if let Some(adjacent_pos) = adjacent_pos {
+                                        let spawn_result = spawn_npc(
+                                            1000,
+                                            adjacent_pos,
+                                            "Zombie".to_string(),
+                                            &mut commands,
+                                            &mut ids,
+                                            &templates,
+                                        );
+
+                                        match spawn_result {
+                                            Ok((entity, npc_id, player_id, pos)) => {
+                                                let event = create_map_event(
+                                                    entity, npc_id, player_id, pos, &game_tick,
+                                                    &mut ids,
+                                                );
+                                                events_to_add.push(event);
+                                            }
+                                            Err(err_msg) => error!(err_msg),
                                         }
-                                        Err(err_msg) => error!(err_msg)
                                     }
                                 }
-                            }
 
-                            // Getting new map tiles
-                            let viewshed_tiles_pos = Map::range((pos.x, pos.y), viewshed.range);
+                                // Getting new map tiles
+                                let viewshed_tiles_pos = Map::range((pos.x, pos.y), viewshed.range);
 
-                            // Adding new maps to explored map
-                            // Assume player has some explored map tiles
-                            let player_explord_map = explored_map.get_mut(&player_id.0).unwrap();
+                                // Adding new maps to explored map
+                                // Assume player has some explored map tiles
+                                let player_explord_map =
+                                    explored_map.get_mut(&player_id.0).unwrap();
 
-                            let mut new_explored_tiles = Vec::new();
+                                let mut new_explored_tiles = Vec::new();
 
-                            for tile in viewshed_tiles_pos {
-                                if !player_explord_map.contains(&tile) {
-                                    new_explored_tiles.push(tile);
+                                for tile in viewshed_tiles_pos {
+                                    if !player_explord_map.contains(&tile) {
+                                        new_explored_tiles.push(tile);
+                                    }
+                                }
+
+                                // Only send new explored tiles
+                                if new_explored_tiles.len() > 0 {
+                                    let tiles_to_send =
+                                        Map::pos_to_tiles(&new_explored_tiles, &map);
+                                    let map_packet = ResponsePacket::Map {
+                                        data: tiles_to_send,
+                                    };
+                                    send_to_client(player_id.0, map_packet, &clients);
                                 }
                             }
-
-                            // Only send new explored tiles
-                            if new_explored_tiles.len() > 0 {
-                                let tiles_to_send = Map::pos_to_tiles(&new_explored_tiles, &map);
-                                let map_packet = ResponsePacket::Map { data: tiles_to_send };
-                                send_to_client(player_id.0, map_packet, &clients);
-                            } 
                         }
                     }
 
@@ -592,13 +649,11 @@ fn state_change_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
-        println!("Processing {:?}", map_event);
-
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
                 VisibleEvent::StateChangeEvent { new_state } => {
-                    println!("Processing StateChangeEvent: {:?}", new_state);
+                    debug!("Processing StateChangeEvent: {:?}", new_state);
 
                     // Get entity and update state
                     if let Ok((_entity, id, playerId, mut pos, mut state, _viewshed, ai)) =
@@ -634,8 +689,6 @@ fn gather_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
-        println!("Processing {:?}", map_event);
-
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
@@ -669,6 +722,62 @@ fn gather_event_system(
     }
 }
 
+fn refine_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut resources: ResMut<Resources>,
+    mut items: ResMut<Items>,
+    skills: ResMut<Skills>,
+    templates: Res<Templates>,
+    //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    mut state_query: Query<&mut State>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::RefineEvent { structure_id } => {
+                    info!("Processing RefineEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    // Set state back to none
+                    let Ok(mut villager_state) = state_query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    // Reset villager state to None
+                    villager_state.0 = "none".to_string();
+
+                    // Remove Event In Progress
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
+
+                    // Create new item
+                    Item::create(
+                        ids.new_item_id(),
+                        *structure_id,
+                        "Cragroot Maple Wood".to_string(),
+                        2,
+                        &templates.item_templates,
+                        &mut items,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
 fn explore_event_system(
     game_tick: Res<GameTick>,
     mut resources: ResMut<Resources>,
@@ -678,8 +787,6 @@ fn explore_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
-        println!("Processing {:?}", map_event);
-
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.map_event_type {
@@ -697,6 +804,75 @@ fn explore_event_system(
                     );
 
                     events_to_remove.push(*map_event_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn damage_event_system(
+    game_tick: Res<GameTick>,
+    mut visible_events: ResMut<VisibleEvents>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::DamageEvent {
+                    target_id,
+                    target_pos,
+                    attack_type,
+                    damage,
+                    state,
+                } => {
+                    debug!("Processing DamageEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    // Adding processed map event
+                    visible_events.push(map_event.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn cooldown_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut state_query: Query<&mut State>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::CooldownEvent { duration } => {
+                    debug!("Processing CooldownEvent {:?}", duration);
+                    events_to_remove.push(*map_event_id);
+                    // Set state back to none
+                    let Ok(mut obj_state) = state_query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
                 }
                 _ => {}
             }
@@ -734,7 +910,7 @@ fn visible_event_system(
     let mut all_broadcast_events: HashMap<i32, HashSet<BroadcastEvents>> = HashMap::new();
 
     for map_event in visible_events.iter() {
-        println!("Checking if processed map event is visible...");
+        debug!("Checking if map_event is visible: {:?}", map_event);
 
         // Get event object components.  eo => event_object
         if let Ok((
@@ -827,6 +1003,7 @@ fn visible_event_system(
                         damage,
                         state,
                     } => {
+                        debug!("Processing DamageEvent: {:?}", &map_event.map_event_type);
                         let attacker_distance =
                             Map::distance((map_event.pos_x, map_event.pos_y), (pos.x, pos.y));
 
@@ -837,8 +1014,8 @@ fn visible_event_system(
                                 attacktype: attack_type.to_string(),
                                 dmg: *damage,
                                 state: state.to_string(),
-                                combo: "false".to_string(),
-                                countered: "false".to_string(),
+                                combo: None,
+                                countered: None,
                             };
 
                             all_broadcast_events
@@ -857,8 +1034,8 @@ fn visible_event_system(
                                 attacktype: attack_type.to_string(),
                                 dmg: *damage,
                                 state: state.to_string(),
-                                combo: "false".to_string(),
-                                countered: "false".to_string(),
+                                combo: None,
+                                countered: None,
                             };
 
                             all_broadcast_events
@@ -996,10 +1173,10 @@ fn perception_system(
                         o.get_mut().extend(visible_tiles_pos.clone());
                         o.get_mut().sort_unstable();
                         o.get_mut().dedup();
-                    },
+                    }
                     Entry::Vacant(v) => {
                         v.insert(visible_tiles_pos.clone());
-                    },
+                    }
                 };
 
                 tiles_to_send
@@ -1046,11 +1223,10 @@ fn perception_system(
                         o.get_mut().extend(visible_tiles_pos.clone());
                         o.get_mut().sort_unstable();
                         o.get_mut().dedup();
-                        
-                    },
+                    }
                     Entry::Vacant(v) => {
                         v.insert(visible_tiles_pos.clone());
-                    },
+                    }
                 };
 
                 tiles_to_send
@@ -1099,7 +1275,7 @@ fn update_game_tick(mut game_tick: ResMut<GameTick>, mut attrs: Query<(&mut Thir
     game_tick.0 = game_tick.0 + 1;
 
     // Update thirst
-    for (mut thirst, mut morale) in &mut attrs {
+    /*for (mut thirst, mut morale) in &mut attrs {
         thirst.thirst += thirst.per_tick;
 
         // Is thirsty
@@ -1122,7 +1298,7 @@ fn update_game_tick(mut game_tick: ResMut<GameTick>, mut attrs: Query<(&mut Thir
         }
 
         // println!("thirst: {:?} morale: {:?}", thirst.thirst, morale.morale);
-    }
+    } */
 }
 
 fn dedup<T: Eq + Hash + Copy>(v: &mut Vec<T>) {
@@ -1175,12 +1351,12 @@ impl Ids {
 
     pub fn new_player_hero_mapping(&mut self, player_id: i32, hero_id: i32) {
         self.player_hero_map.insert(player_id, hero_id);
-    }    
+    }
 
     pub fn get_hero(&self, player_id: i32) -> Option<i32> {
         if let Some(hero_id) = self.player_hero_map.get(&player_id) {
-            return Some(*hero_id)
-        } 
+            return Some(*hero_id);
+        }
 
         return None;
     }
@@ -1268,13 +1444,30 @@ fn spawn_npc(
             },
             stats: Stats {
                 hp: npc_template.base_hp.unwrap(),
+                base_hp: npc_template.base_hp.unwrap(),
                 base_def: npc_template.base_def.unwrap(),
                 base_damage: npc_template.base_dmg,
                 damage_range: npc_template.dmg_range,
+                base_speed: npc_template.base_speed,
+                base_vision: npc_template.base_vision,
             },
         };
 
-        let entity = commands.spawn((npc, SubclassNPC)).id();
+        let entity = commands
+            .spawn((
+                npc,
+                SubclassNPC,
+                Chase,
+                VisibleTarget::new(NO_TARGET),
+                Thinker::build()
+                    .label("NPC Chase")
+                    .picker(Highest)
+                    .when(VisibleTargetScorerBuilder, ChaseAttack),
+            ))
+            .id();
+
+        debug!("New Zombie entity: {:?}", entity);
+        ids.new_entity_obj_mapping(npc_id, entity);
 
         return Ok((entity, Id(npc_id), PlayerId(player_id), pos));
     }

@@ -113,8 +113,6 @@ impl MapPos {
     let &MapPos(x, y) = self;
     let s = Map::get_neighbour_tiles(x, y, map);
 
-    println!("s: {:?}", s);
-
     s
   }
 }

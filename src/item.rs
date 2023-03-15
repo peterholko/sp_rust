@@ -5,11 +5,14 @@ use std::collections::HashMap;
 use crate::network;
 use crate::templates::{ItemTemplates, ResReq};
 
+pub const DAMAGE: &str = "Damage";
+
 pub const WATER: &str = "Water";
 pub const THIRST: &str = "Thirst";
 
 pub const WEAPON: &str = "Weapon";
 pub const ARMOR: &str = "Armor";
+
 
 #[derive(Debug, Clone)]
 pub struct Item {
@@ -35,6 +38,7 @@ impl Item {
         name: String,
         quantity: i32,
         item_templates: &ItemTemplates,
+
     ) -> Item {
         let mut class = "Invalid".to_string();
         let mut subclass = "Invalid".to_string();
@@ -68,6 +72,71 @@ impl Item {
         }
     }
 
+    pub fn new_with_attrs(
+        id: i32,
+        owner: i32,
+        name: String,
+        quantity: i32,
+        attrs: HashMap<&'static str, f32>,
+        item_templates: &ItemTemplates,
+        items: &mut Items,
+    ) {
+        let mut class = "Invalid".to_string();
+        let mut subclass = "Invalid".to_string();
+        let mut image = "Invalid".to_string();
+        let mut weight = 0.0;
+
+        for item_template in item_templates.iter() {
+            if name == item_template.name {
+                class = item_template.class.clone();
+                subclass = item_template.subclass.clone();
+                image = item_template.image.clone();
+                weight = item_template.weight * (quantity as f32);
+            }
+        }
+
+        let new_item = Item {
+            id: id,
+            owner: owner,
+            name: name,
+            quantity: quantity,
+            class: class,
+            subclass: subclass,
+            image: image,
+            weight: weight,
+            equipped: false,
+            attrs: attrs,
+        };
+
+        items.push(new_item);
+    }
+
+    pub fn create(
+        id: i32,
+        owner: i32,
+        name: String,
+        quantity: i32,
+        item_templates: &ItemTemplates,
+        items: &mut ResMut<Items>,
+    ) {
+        let new_item = Self::new(id, owner, name, quantity, item_templates);
+
+        // Can new item be merged into existing 
+        if Self::can_merge(new_item.class.clone()) {
+            if let Some(merged_index) = items
+                .iter()
+                .position(|item| item.owner == owner && item.name == new_item.name)
+            {
+                let mut merged_item = &mut items[merged_index];
+                merged_item.quantity += new_item.quantity;
+            } else {
+                items.push(new_item);
+            }
+        } else {
+            items.push(new_item);
+        }
+    }
+
     pub fn get_by_owner(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
         let mut owner_items: Vec<Item> = Vec::new();
 
@@ -76,7 +145,7 @@ impl Item {
                 owner_items.push(item.clone());
             }
         }
-        
+
         return owner_items;
     }
 
@@ -144,6 +213,37 @@ impl Item {
         return None;
     }
 
+    pub fn get_equipped(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
+        let mut equipped = Vec::new();
+
+        for item in items.iter() {
+            if item.owner == owner && item.equipped {
+                equipped.push(item.clone());
+            }
+        }
+
+        return equipped; 
+    }
+
+    pub fn get_equipped_weapons(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
+        let mut equipped_weapons = Vec::new();
+
+        for item in items.iter() {
+            if item.owner == owner && item.class == WEAPON && item.equipped {
+                equipped_weapons.push(item.clone());
+            }
+        }
+
+        return equipped_weapons;
+    }
+
+    pub fn is_equipable(item: Item) -> bool {
+        if item.class == WEAPON || item.class == ARMOR {
+            return true;
+        }
+        return false;
+    }
+
     fn find_by_class(owner: i32, class: String, items: &ResMut<Items>) -> Option<usize> {
         println!("items: {:?}", items);
 
@@ -196,7 +296,6 @@ impl Item {
 
     pub fn transfer(item_id: i32, target_id: i32, items: &mut ResMut<Items>) {
         if let Some(transfer_index) = items.iter().position(|item| item.id == item_id) {
-
             // Immutable item to transfer
             let item_to_transfer = items[transfer_index].clone();
 
@@ -205,7 +304,6 @@ impl Item {
                     .iter()
                     .position(|item| item.owner == target_id && item.name == item_to_transfer.name)
                 {
-
                     let mut merged_item = &mut items[merged_index];
                     merged_item.quantity += item_to_transfer.quantity;
 
@@ -219,16 +317,27 @@ impl Item {
         }
     }
 
-    pub fn split(item_id: i32, quantity: i32, new_id: i32, items: &mut ResMut<Items>, item_templates: &ItemTemplates) {
+    pub fn split(
+        item_id: i32,
+        quantity: i32,
+        new_id: i32,
+        items: &mut ResMut<Items>,
+        item_templates: &ItemTemplates,
+    ) {
         if let Some(index) = items.iter().position(|item| item.id == item_id) {
-
             let mut item = &mut items[index];
             item.quantity -= quantity;
 
-            let new_item = Self::new(new_id, item.owner, item.name.clone(), quantity, item_templates);
+            let new_item = Self::new(
+                new_id,
+                item.owner,
+                item.name.clone(),
+                quantity,
+                item_templates,
+            );
 
             items.push(new_item);
-        } 
+        }
     }
 
     pub fn remove(item_id: i32, items: &mut ResMut<Items>) {
@@ -242,9 +351,11 @@ impl Item {
     }
 
     pub fn is_req(item: Item, reqs: Vec<ResReq>) -> bool {
-        
         for req in reqs.iter() {
-            if req.req_type == item.name || req.req_type == item.class || req.req_type == item.subclass {
+            if req.req_type == item.name
+                || req.req_type == item.class
+                || req.req_type == item.subclass
+            {
                 return true;
             }
         }
@@ -259,8 +370,6 @@ impl Item {
             _ => true,
         }
     }
-
-    
 }
 
 pub struct ItemPlugin;

@@ -7,7 +7,13 @@ use crate::item::{Item, Items};
 use crate::network;
 use crate::templates::{ObjTemplate, ObjTemplates, ResReq};
 
+
+pub const RESOURCE: &str = "resource";
+pub const CRAFT: &str = "craft";
+
 pub struct Structure;
+
+
 
 impl Structure {
     pub fn available_to_build(obj_templates: &ObjTemplates) -> Vec<network::Structure> {
