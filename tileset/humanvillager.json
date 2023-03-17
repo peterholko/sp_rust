@@ -1,0 +1,26 @@
+{
+    "frames": {
+        "width": 72,
+        "height": 72
+    },
+    "animations": {
+        "die": [11],
+        "dead": [11],
+        "harvesting": {
+            "frames": [11,1,0,1],
+            "repeat": -1,
+            "speed": 2000
+        },
+        "crafting": {
+            "frames": [11,1,0,1],
+            "repeat": -1,
+            "speed": 2000
+        },
+        "none": [11],
+        "moving": {
+            "frames": [11,1,0,1],
+            "repeat": -1,
+            "speed": 1000
+        }
+    }
+}
