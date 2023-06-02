@@ -22,7 +22,7 @@ use crate::obj::{self};
 use crate::recipe::{Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
-use crate::structure::{Structure, CRAFT, RESOURCE};
+use crate::structure::{self, Structure, Deed, Deeds};
 use crate::templates::{ObjTemplate, ResReq, SkillTemplate, SkillTemplates, Templates};
 use crate::villager::Villager;
 
@@ -294,6 +294,7 @@ fn new_player_system(
     mut items: ResMut<Items>,
     mut skills: ResMut<Skills>,
     mut recipes: ResMut<Recipes>,
+    mut deeds: ResMut<Deeds>,
     templates: Res<Templates>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
@@ -311,6 +312,7 @@ fn new_player_system(
                     &mut items,
                     &mut skills,
                     &mut recipes,
+                    &mut deeds,
                     &templates,
                     &game_tick,
                 );
@@ -2051,9 +2053,9 @@ fn assign_system(
                 // Set villager structure
                 villager.attrs.structure = structure.id.0;
 
-                if structure.subclass.0 == RESOURCE {
+                if structure.subclass.0 == structure::RESOURCE {
                     commands.entity(villager_entity).insert(Order::Operate);
-                } else if structure.subclass.0 == CRAFT {
+                } else if structure.subclass.0 == structure::CRAFT {
                     commands.entity(villager_entity).insert(Order::Refine);
                 } else {
                     error!("Can only assign to crafting or harvesting buildings");
@@ -2489,6 +2491,7 @@ fn new_player(
     mut items: &mut ResMut<Items>,
     mut skills: &mut ResMut<Skills>,
     mut recipes: &mut ResMut<Recipes>,
+    mut deeds: &mut ResMut<Deeds>,
     templates: &Res<Templates>,
     game_tick: &ResMut<GameTick>,
 ) {
@@ -2755,7 +2758,10 @@ fn new_player(
         recipes,
     );
 
-    //create_item(commands, heroId, "Honeybell Berries".to_owned(), "Food".to_owned(), "Berry".to_owned(), "honeybellberries".to_owned(), 5, 10);
+    //Starting deeds 
+
+    
+
 }
 
 fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {

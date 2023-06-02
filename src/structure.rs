@@ -16,12 +16,24 @@ pub const MINE: &str = "Mine";
 pub const LUMBERCAMP: &str = "Lumbercamp";
 pub const QUARRY: &str = "Quarry";
 
+#[derive(Resource, Deref, DerefMut, Debug)]
+pub struct Deeds(Vec<Deed>);
+
+#[derive(Debug, Clone)]
+pub struct Deed {
+    player_id: i32,
+    structure: String,
+    level: i32,
+    tier: i32
+}
 
 pub struct Structure;
 
-
-
 impl Structure {
+    pub fn add_deed(player_id: i32, structure: String, level: i32, tier: i32, deeds: &mut ResMut<Deeds>,) {
+
+    }
+
     pub fn available_to_build(obj_templates: &ObjTemplates) -> Vec<network::Structure> {
         let mut available_list: Vec<network::Structure> = Vec::new();
 
@@ -161,9 +173,12 @@ impl Structure {
 
 }
 
-/*pub struct StructurePlugin;
+pub struct StructurePlugin;
 
 impl Plugin for StructurePlugin {
     fn build(&self, app: &mut App) {
+        let deeds = Deeds(Vec::new());
+
+        app.insert_resource(deeds);        
     }
-}*/
+}
