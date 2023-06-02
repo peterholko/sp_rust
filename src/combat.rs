@@ -1,18 +1,20 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
+use big_brain::thinker::{Actor, ThinkerBuilder};
 
 use std::collections::HashMap;
 
 use rand::Rng;
 
-use crate::ai::VisibleTarget;
+use crate::ai::{ChaseAttack, VisibleTarget};
 use crate::game::{
-    BaseAttrs, Class, Id, MapEvent, Misc, PlayerId, Position, State, Stats, Subclass, Template,
-    VisibleEvent, VisibleEvents, DEAD, MapEvents,
+    BaseAttrs, Class, Id, MapEvent, MapEvents, Misc, PlayerId, Position, State, Stats, Subclass,
+    Template, VisibleEvent, VisibleEvents, DEAD,
 };
+use crate::item::{Item, Items, DAMAGE};
 use crate::network;
-use crate::skill::{Skill, Skills};
-use crate::templates::{SkillTemplate, SkillTemplates};
+use crate::skill::{Skill, SkillUpdated, Skills};
+use crate::templates::{SkillTemplate, SkillTemplates, Templates, ObjTemplate};
 
 #[derive(WorldQuery)]
 #[world_query(mutable, derive(Debug))]
@@ -37,29 +39,54 @@ impl Combat {
         attack_type: String,
         attacker: &CombatQueryItem,
         target: &mut CombatQueryItem,
-        commands: &mut Commands
-    ) -> i32 {
+        commands: &mut Commands,
+        items: &mut ResMut<Items>,
+        templates: &Res<Templates>
+    ) -> (i32, Option<SkillUpdated>) {
+        
+        let target_template = ObjTemplate::get_template(target.template.0.clone(), &templates);
+        
         let damage_range = attacker.stats.damage_range.unwrap();
         let base_damage = attacker.stats.base_damage.unwrap();
 
         //TODO get item and weapons
+        let attacker_items = Item::get_equipped(attacker.id.0, &items);
+        debug!("Attacker Items: {:?}", attacker_items);
+        let damage_from_items = Item::get_items_value_by_attr(DAMAGE, attacker_items);
+        debug!("Damage From Items: {:?}", damage_from_items);
 
         //TODO get equiped weapons
+        let attacker_weapons = Item::get_equipped_weapons(attacker.id.0, &items);
 
         //TODO get effect modifications
 
         let mut rng = rand::thread_rng();
 
-        let roll_damage = rng.gen_range(0..damage_range) + base_damage;
+        let roll_damage = (rng.gen_range(0..damage_range) + base_damage) as f32;
+        let total_damage = (roll_damage + damage_from_items) as i32;
 
-        target.stats.hp -= roll_damage;
+        target.stats.hp -= total_damage;
+
+        let mut skill_updated = None;
 
         if target.stats.hp <= 0 {
             target.state.0 = DEAD.to_string();
-            commands.entity(target.entity).despawn();
+            commands.entity(target.entity).remove::<ThinkerBuilder>();
+            //commands.entity(target.entity).despawn();
+
+            for item in attacker_weapons.iter() {
+
+                skill_updated = Some(SkillUpdated {
+                    id: attacker.id.0,
+                    xp_type: item.subclass.to_string(),
+                    xp: target_template.kill_xp.unwrap_or(0) 
+                });
+            }
         }
 
-        return roll_damage;
+        debug!("Total Damage: {:?}", total_damage);
+
+        return (total_damage, skill_updated);
     }
 
     pub fn add_damage_event(
@@ -88,6 +115,5 @@ impl Combat {
             game_tick,
             damage_event,
         );
-
     }
 }

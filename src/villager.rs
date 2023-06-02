@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use rand::Rng;
 
-use crate::skill::{Skill, Skills};
+use crate::skill::{self, Skill, Skills};
 use crate::game::{Position, BaseAttrs};
 use crate::network;
 use crate::templates::{SkillTemplate, SkillTemplates};
@@ -49,8 +49,8 @@ impl Villager {
     pub fn generate_skills<'a>(villager_id: i32, skills: &mut Skills, skill_templates: &SkillTemplates) {
      
         let mut pool_of_skills = Vec::new();
-        let mut gathering_skills = Skill::get_templates_by_class(Skill::CLASS_GATHERING.to_string(), skill_templates);
-        let mut crafting_skills = Skill::get_templates_by_class(Skill::CLASS_CRAFTING.to_string(), skill_templates);
+        let mut gathering_skills = Skill::get_templates_by_class(skill::CLASS_GATHERING.to_string(), skill_templates);
+        let mut crafting_skills = Skill::get_templates_by_class(skill::CLASS_CRAFTING.to_string(), skill_templates);
 
         pool_of_skills.append(&mut gathering_skills);
         pool_of_skills.append(&mut crafting_skills);

@@ -23,6 +23,7 @@ use crate::game::{
 };
 use crate::item::{Item, Items, THIRST, WATER};
 use crate::map::Map;
+use crate::templates::Templates;
 
 pub const NO_TARGET: i32 = -1;
 
@@ -131,11 +132,11 @@ impl Plugin for AIPlugin {
         app.add_plugin(BigBrainPlugin)
             .add_system(nearby_target_system)
             //.add_system_to_stage(BigBrainStage::Actions, drink_action_system)
-            //.add_system_to_stage(BigBrainStage::Actions, process_order_system)
+            .add_system_to_stage(BigBrainStage::Actions, process_order_system)
             .add_system_to_stage(BigBrainStage::Actions, attack_target_system)
-            .add_system_to_stage(BigBrainStage::Scorers, target_scorer_system);
-        //.add_system_to_stage(BigBrainStage::Scorers, thirsty_scorer_system)
-        //.add_system_to_stage(BigBrainStage::Scorers, morale_scorer_system);
+            .add_system_to_stage(BigBrainStage::Scorers, target_scorer_system)
+            //.add_system_to_stage(BigBrainStage::Scorers, thirsty_scorer_system)
+            .add_system_to_stage(BigBrainStage::Scorers, morale_scorer_system);
     }
 }
 
@@ -183,6 +184,13 @@ pub fn process_order_system(
                                 *state = ActionState::Executing;
                             }
                         }
+                        Order::Operate => {
+                            debug!("Process Operate Order");
+                            if is_none_state(&villager.state.0) {
+                                debug!("Executing Operate");
+                                *state = ActionState::Executing;
+                            }
+                        }                        
                         Order::Refine => {
                             debug!("Process Refine Order");
                             if is_none_state(&villager.state.0) {
@@ -190,6 +198,20 @@ pub fn process_order_system(
                                 *state = ActionState::Executing;
                             }
                         }
+                        Order::Craft { recipe_name } => {
+                            debug!("Process Craft Order {:?}", recipe_name);
+                            if is_none_state(&villager.state.0) {
+                                debug!("Executing Crafting");
+                                *state = ActionState::Executing;
+                            }
+                        }
+                        Order::Explore => {
+                            debug!("Process Explore Order");
+                            if is_none_state(&villager.state.0) {
+                                debug!("Executing Explore");
+                                *state = ActionState::Executing;
+                            }
+                        }                        
                         _ => {}
                     }
                 }
@@ -287,7 +309,7 @@ pub fn process_order_system(
                                 );
                             }
                         }
-                        Order::Refine => {
+                        Order::Refine | Order::Operate => {
                             if is_none_state(&villager.state.0) {
                                 let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
                                     error!("Cannot find structure entity for {:?}", villager.attrs.structure);
@@ -353,12 +375,134 @@ pub fn process_order_system(
                                         commands.entity(*actor).insert(EventInProgress);
                                     }
                                 } else {
-                                    // Create refine event
-                                    let refine_event = VisibleEvent::RefineEvent {
+                                    // Create operate or refine event
+
+                                    match villager.order {
+                                        Order::Refine => {
+                                            let refine_event = VisibleEvent::RefineEvent {
+                                                structure_id: villager.attrs.structure,
+                                            };
+    
+                                            villager.state.0 = "refining".to_string();
+    
+                                            map_events.new(
+                                                ids.new_map_event_id(),
+                                                *actor,
+                                                villager.id,
+                                                villager.player_id,
+                                                villager.pos,
+                                                game_tick.0 + 40, // in the future
+                                                refine_event,
+                                            );
+                                        }     
+                                        Order::Operate => {
+                                            let operate_event = VisibleEvent::OperateEvent {
+                                                structure_id: villager.attrs.structure,
+                                            };
+    
+                                            //TODO look up subclass of structure and replace operating with mining, lumberjacking, etc...
+                                            villager.state.0 = "operating".to_string();
+    
+                                            map_events.new(
+                                                ids.new_map_event_id(),
+                                                *actor,
+                                                villager.id,
+                                                villager.player_id,
+                                                villager.pos,
+                                                game_tick.0 + 40, // in the future
+                                                operate_event,
+                                            );                                            
+                                        }                                   
+                                        _ => {
+                                            error!("Invalid order type: {:?}", villager.order);
+                                            continue;
+                                        }
+                                    }
+
+                                    commands.entity(*actor).insert(EventInProgress);
+
+                                    *state = ActionState::Success;
+                                }
+                            }
+                        }
+                        Order::Craft { recipe_name } => {
+                            if is_none_state(&villager.state.0) {
+                                let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
+                                    error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                                    continue;
+                                };
+
+                                let Ok(structure_pos) = all_pos.get(structure_entity) else {
+                                    error!("Query failed to find entity {:?}", structure_entity);
+                                    continue;
+                                };
+
+                                // Check if villager is on structure
+                                if villager.pos.x != structure_pos.x
+                                    || villager.pos.y != structure_pos.y
+                                {
+                                    if let Some(path_result) = Map::find_path(
+                                        villager.pos.x,
+                                        villager.pos.y,
+                                        structure_pos.x,
+                                        structure_pos.y,
+                                        &map,
+                                    ) {
+                                        debug!("Path to structure: {:?}", path_result);
+
+                                        let (path, c) = path_result;
+                                        let next_pos = &path[1];
+
+                                        debug!("Next pos: {:?}", next_pos);
+
+                                        // Add State Change Event to Moving
+                                        let state_change_event = VisibleEvent::StateChangeEvent {
+                                            new_state: "moving".to_string(),
+                                        };
+
+                                        villager.state.0 = "moving".to_string();
+
+                                        map_events.new(
+                                            ids.new_map_event_id(),
+                                            *actor,
+                                            villager.id,
+                                            villager.player_id,
+                                            villager.pos,
+                                            game_tick.0 + 4,
+                                            state_change_event,
+                                        );
+
+                                        // Add Move Event
+                                        let move_event = VisibleEvent::MoveEvent {
+                                            dst_x: next_pos.0,
+                                            dst_y: next_pos.1,
+                                        };
+
+                                        map_events.new(
+                                            ids.new_map_event_id(),
+                                            *actor,
+                                            villager.id,
+                                            villager.player_id,
+                                            villager.pos,
+                                            game_tick.0 + 36, // in the future
+                                            move_event,
+                                        );
+
+                                        commands.entity(*actor).insert(EventInProgress);
+                                    }
+                                } else {
+                                    // Create craft event
+                                    let craft_event = VisibleEvent::CraftEvent {
                                         structure_id: villager.attrs.structure,
+                                        recipe_name: recipe_name.clone(),
                                     };
 
-                                    villager.state.0 = "refining".to_string();
+                                    // Add State Change Event to Moving
+                                    let state_change_event = VisibleEvent::StateChangeEvent {
+                                        new_state: "crafting".to_string(),
+                                    };
+
+                                    villager.state.0 = "crafting".to_string();
 
                                     map_events.new(
                                         ids.new_map_event_id(),
@@ -366,8 +510,18 @@ pub fn process_order_system(
                                         villager.id,
                                         villager.player_id,
                                         villager.pos,
-                                        game_tick.0 + 20, // in the future
-                                        refine_event,
+                                        game_tick.0 + 4,
+                                        state_change_event,
+                                    );
+
+                                    map_events.new(
+                                        ids.new_map_event_id(),
+                                        *actor,
+                                        villager.id,
+                                        villager.player_id,
+                                        villager.pos,
+                                        game_tick.0 + 200, // in the future
+                                        craft_event,
                                     );
 
                                     commands.entity(*actor).insert(EventInProgress);
@@ -375,6 +529,21 @@ pub fn process_order_system(
                                     *state = ActionState::Success;
                                 }
                             }
+                        }
+                        Order::Explore => {
+                            if is_none_state(&villager.state.0) {
+                                let explore_event = VisibleEvent::ExploreEvent;
+
+                                map_events.new(
+                                    ids.new_map_event_id(),
+                                    *actor,
+                                    villager.id,
+                                    villager.player_id,
+                                    villager.pos,
+                                    game_tick.0 + 8, // in the future
+                                    explore_event,
+                                );
+                            }                            
                         }
                         _ => {}
                     }
@@ -541,6 +710,8 @@ fn attack_target_system(
     mut ids: ResMut<Ids>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
+    mut items: ResMut<Items>,
+    templates: Res<Templates>,
     visible_target_query: Query<&VisibleTarget, Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
     mut target_query: Query<CombatQuery, Without<SubclassNPC>>,
@@ -570,12 +741,13 @@ fn attack_target_system(
                     let wander_pos_list = Map::get_neighbour_tiles(npc.pos.x, npc.pos.y, &map);
 
                     if is_none_state(&npc.state.0) {
-
                         let mut rng = rand::thread_rng();
 
                         let random_index = rng.gen_range(0..wander_pos_list.len());
 
-                        if let Some((random_pos, _movement_cost)) = wander_pos_list.get(random_index) {
+                        if let Some((random_pos, _movement_cost)) =
+                            wander_pos_list.get(random_index)
+                        {
                             let random_pos_x = random_pos.0;
                             let random_pos_y = random_pos.1;
 
@@ -612,7 +784,7 @@ fn attack_target_system(
                                 move_event,
                             );
 
-                            commands.entity(*actor).insert(EventInProgress);                            
+                            commands.entity(*actor).insert(EventInProgress);
                         }
                     }
                 } else {
@@ -635,11 +807,13 @@ fn attack_target_system(
                         debug!("Target is adjacent, time to attack");
 
                         // Calculate and process damage
-                        let damage = Combat::process_damage(
+                        let (damage, _skill_gain) = Combat::process_damage(
                             "quick".to_string(),
                             &npc,
                             &mut target,
                             &mut commands,
+                            &mut items,
+                            &templates
                         );
 
                         // Add visible damage event to broadcast to everyone nearby
@@ -650,7 +824,7 @@ fn attack_target_system(
                             damage,
                             &npc,
                             &target,
-                            &mut map_events
+                            &mut map_events,
                         );
 
                         // Add Cooldown Event

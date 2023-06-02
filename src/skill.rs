@@ -1,10 +1,34 @@
 use bevy::prelude::*;
+use bevy::utils::tracing::field::debug;
 
 use std::collections::HashMap;
 
 use crate::game::Position;
 use crate::network;
 use crate::templates::{SkillTemplate, SkillTemplates};
+
+pub const CLASS_GATHERING: &str = "Gathering";
+pub const CLASS_CRAFTING: &str = "Crafting";
+
+pub const MINING: &str = "Mining";
+pub const WOODCUTTING: &str = "Woodcutting";
+pub const STONECUTTING: &str = "Stonecutting";
+pub const GATHERING: &str = "Gathering";
+pub const FARMING: &str = "Farming";
+
+pub const NOVICE_WARRIOR: &str = "Novice Warrior";
+pub const NOVICE_RANGER: &str = "Novice Ranger";
+pub const NOVICE_MAGE: &str = "Novice Mage";
+pub const SKILLED_WARRIOR: &str = "Skilled Warrior";
+pub const SKILLED_RANGER: &str = "Skilled Warrior";
+pub const SKILLED_MAGE: &str = "Skilled Mage";
+pub const GREAT_WARRIOR: &str = "Great Warrior";
+pub const GREAT_RANGER: &str = "Great Ranger";
+pub const GREAT_MAGE: &str = "Great Mage";
+pub const LEGENDARY_WARRIOR: &str = "Legendary Warrior";
+pub const LEGENDARY_RANGER: &str = "Legendary Ranger";
+pub const LEGENDARY_MAGE: &str = "Legendary Mage";
+pub const MAX_RANK: &str = "Max Rank";
 
 #[derive(Debug, Clone)]
 pub struct Skill {
@@ -13,19 +37,17 @@ pub struct Skill {
     pub xp: i32,
 }
 
+#[derive(Debug, Clone)]
+pub struct SkillUpdated {
+    pub id: i32,
+    pub xp_type: String,
+    pub xp: i32,
+}
+
 #[derive(Resource, Deref, DerefMut, Debug)]
 pub struct Skills(HashMap<i32, HashMap<String, Skill>>);
 
 impl Skill {
-    pub const CLASS_GATHERING: &str = "Gathering";
-    pub const CLASS_CRAFTING: &str = "Crafting";
-
-    pub const MINING: &str = "Mining";
-    pub const WOODCUTTING: &str = "Woodcutting";
-    pub const STONECUTTING: &str = "Stonecutting";
-    pub const GATHERING: &str = "Gathering";
-    pub const FARMING: &str = "Farming";
-
     pub fn update(
         obj_id: i32,
         skill_name: String,
@@ -58,16 +80,14 @@ impl Skill {
 
         if let Some(obj_skills) = skills.get_mut(&obj_id) {
             if let Some(obj_skill) = obj_skills.get_mut(&skill_name) {
-            
                 Self::update_xp_level(obj_skill, value, skill_template);
-
             } else {
                 let mut new_skill = Skill {
                     name: skill_name.clone(),
                     level: 0,
                     xp: 0,
                 };
-                
+
                 Self::update_xp_level(&mut new_skill, value, skill_template);
 
                 obj_skills.insert(skill_name.clone(), new_skill);
@@ -78,7 +98,7 @@ impl Skill {
                 level: 0,
                 xp: 0,
             };
-            
+
             Self::update_xp_level(&mut new_skill, value, skill_template);
 
             let mut obj_skills = HashMap::new();
@@ -87,6 +107,28 @@ impl Skill {
 
             skills.insert(obj_id, obj_skills);
         }
+    }
+
+    pub fn get_total_xp(obj_id: i32, skills: &Skills, skill_templates: &SkillTemplates) -> i32 {
+        let mut total_xp = 0;
+
+        if let Some(obj_skills) = skills.get(&obj_id) {
+            for (skill_name, skill) in obj_skills {
+                let Some(skill_template) = skill_templates.get(&skill_name.clone()) else {
+                    panic!("Invalid skill name {:?}, does not exist in templates.", skill_name.clone());
+                };
+
+                let xp_index = skill.level as usize;
+                let full_xp_level_list = &skill_template.xp;
+                let xp_level_list = &full_xp_level_list[0..xp_index].to_vec();
+                let sum_xp_level: i32 = xp_level_list.iter().sum();
+                let skill_total_xp = sum_xp_level + skill.xp;
+
+                total_xp += skill_total_xp;
+            }
+        }
+
+        return total_xp;
     }
 
     fn update_xp_level(skill: &mut Skill, value: i32, skill_template: &SkillTemplate) {
@@ -203,6 +245,26 @@ impl Skill {
 
         // TODO reconsider panic state
         return i32::MAX;
+    }
+
+    pub fn hero_advance(hero_template: String) -> (String, i32) {
+        let (next_template, required_xp) = match hero_template.as_str() {
+            NOVICE_WARRIOR => (SKILLED_WARRIOR, 10000),
+            NOVICE_RANGER => (SKILLED_RANGER, 10000),
+            NOVICE_MAGE => (SKILLED_MAGE, 10000),
+            SKILLED_WARRIOR => (GREAT_WARRIOR, 50000),
+            SKILLED_RANGER => (GREAT_RANGER, 50000),
+            SKILLED_MAGE => (GREAT_MAGE, 50000),
+            GREAT_WARRIOR => (LEGENDARY_WARRIOR, 1000000),
+            GREAT_RANGER => (LEGENDARY_RANGER, 1000000),
+            GREAT_MAGE => (LEGENDARY_MAGE, 1000000),
+            LEGENDARY_WARRIOR => (MAX_RANK, -1),
+            LEGENDARY_RANGER => (MAX_RANK, -1),
+            LEGENDARY_MAGE => (MAX_RANK, -1),
+            _ => (MAX_RANK, -1),
+        };
+
+        return (next_template.to_string(), required_xp);
     }
 }
 

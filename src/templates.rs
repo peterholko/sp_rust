@@ -125,19 +125,20 @@ pub struct RecipeTemplates(Vec<RecipeTemplate>);
 
 #[derive(Debug, Resource, PartialEq, Serialize, Deserialize)]
 pub struct RecipeTemplate {
-    name: String,
-    image: String,
-    structure: String,
-    class: String,
-    subclass: String,
-    tier: Option<i32>,
-    slot: String,
-    damage: Option<i32>,
-    speed: Option<f32>,
-    stamina_req: Option<i32>,
-    skill_req: Option<i32>,
-    weight: i32,
-    req: Vec<ResReq>,
+    pub name: String,
+    pub image: String,
+    pub structure: String,
+    pub class: String,
+    pub subclass: String,
+    pub tier: Option<i32>,
+    pub slot: String,
+    pub damage: Option<i32>,
+    pub speed: Option<f32>,
+    pub armor: Option<i32>,
+    pub stamina_req: Option<i32>,
+    pub skill_req: Option<i32>,
+    pub weight: i32,
+    pub req: Vec<ResReq>,
 }
 
 /// The systems that make structures tick.

@@ -5,11 +5,17 @@ use std::collections::HashMap;
 use crate::game::StructureAttrs;
 use crate::item::{Item, Items};
 use crate::network;
+use crate::resource::{ORE, WOOD, STONE};
 use crate::templates::{ObjTemplate, ObjTemplates, ResReq};
 
 
 pub const RESOURCE: &str = "resource";
 pub const CRAFT: &str = "craft";
+
+pub const MINE: &str = "Mine";
+pub const LUMBERCAMP: &str = "Lumbercamp";
+pub const QUARRY: &str = "Quarry";
+
 
 pub struct Structure;
 
@@ -52,9 +58,8 @@ impl Structure {
         return None;
     }
 
-    pub fn has_req(structure_id: i32, structure_attrs: StructureAttrs, items: &ResMut<Items>) -> bool {
+    pub fn has_req(structure_id: i32, req_items: &mut Vec<ResReq>, items: &ResMut<Items>) -> bool {
 
-        let mut req_items = structure_attrs.req;
         let structure_items = Item::get_by_owner(structure_id, items);
 
         for req_item in req_items.iter_mut() {
@@ -91,8 +96,8 @@ impl Structure {
 
     }
 
-    pub fn consume_reqs(structure_id: i32, structure_attrs: StructureAttrs, items: &mut ResMut<Items>) {
-        let mut req_items = structure_attrs.req;
+    pub fn consume_reqs(structure_id: i32, req_items: Vec<ResReq>, items: &mut ResMut<Items>) {
+
         let structure_items = Item::get_by_owner(structure_id, &items).clone();
 
         for req_item in req_items.iter() {
@@ -100,8 +105,8 @@ impl Structure {
                 if req_item.req_type == structure_item.name
                     || req_item.req_type == structure_item.class
                     || req_item.req_type == structure_item.subclass
-                {
-                    Item::remove(structure_item.id, items);
+                {                    
+                    Item::remove_quantity(structure_item.id, req_item.quantity, items)
                 }
             }            
             
@@ -132,6 +137,26 @@ impl Structure {
         return req_items;
     }
     
+    pub fn resource_type(structure_template: String) -> String {
+        let mut resource = "unknown";
+
+        match structure_template.as_str() {
+            MINE => {
+                resource = ORE
+            }
+            LUMBERCAMP => {
+                resource = WOOD
+            }
+            QUARRY => {
+                resource = STONE
+            }
+            _ => {
+                resource = "unknown"
+            }
+        }
+
+        return resource.to_string();
+    }
 
 
 }

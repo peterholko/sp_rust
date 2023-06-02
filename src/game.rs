@@ -27,13 +27,17 @@ use crate::ai::{
     AIPlugin, Chase, ChaseAttack, Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty,
     VisibleTarget, VisibleTargetScorerBuilder, NO_TARGET,
 };
-use crate::item::{Item, ItemPlugin, Items};
+use crate::encounter::Encounter;
+use crate::item::{Item, ItemPlugin, Items, DAMAGE, HEALING, HEALTH, POTION};
 use crate::map::{Map, MapPlugin, MapTile};
-use crate::network::ResponsePacket;
 use crate::network::{self, network_obj, send_to_client, BroadcastEvents};
+use crate::network::{ResponsePacket, StatsData};
+use crate::obj::{self};
 use crate::player::{PlayerEvent, PlayerEvents, PlayerPlugin};
+use crate::recipe::{Recipe, RecipePlugin, Recipes};
 use crate::resource::{Resource, ResourcePlugin, Resources};
 use crate::skill::{Skill, SkillPlugin, Skills};
+use crate::structure::Structure;
 use crate::templates::{ResReq, Templates, TemplatesPlugin};
 
 pub struct GamePlugin;
@@ -53,6 +57,9 @@ pub struct MapEvents(pub HashMap<i32, MapEvent>);
 #[derive(Resource, Deref, DerefMut)]
 pub struct VisibleEvents(Vec<MapEvent>);
 
+#[derive(Resource, Deref, DerefMut, Debug)]
+pub struct GameEvents(pub HashMap<i32, GameEvent>);
+
 #[derive(Resource, Deref, DerefMut, Debug, Default)]
 pub struct GameTick(pub i32);
 
@@ -60,6 +67,7 @@ pub struct GameTick(pub i32);
 #[derive(Resource, Clone, Debug)]
 pub struct Ids {
     pub map_event: i32,
+    pub player_event: i32,
     pub obj: i32,
     pub item: i32,
     pub player_hero_map: HashMap<i32, i32>,
@@ -185,12 +193,14 @@ pub struct NPCAttrs {
     pub target: i32,
 }
 
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Eq, PartialEq)]
 pub enum Order {
     Follow { target: Entity },
     Gather { res_type: String },
-    Harvest,
+    Operate,
     Refine,
+    Craft { recipe_name: String },
+    Explore,
 }
 
 #[derive(Debug, Component)]
@@ -224,6 +234,37 @@ pub struct MapObjQuery {
     pub class: &'static Class,
     pub subclass: &'static Subclass,
     pub state: &'static State,
+    pub viewshed: &'static Viewshed,
+    pub misc: &'static Misc,
+}
+
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct ItemUseObjQuery {
+    pub entity: Entity,
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub template: &'static Template,
+    pub state: &'static mut State,
+    pub misc: &'static Misc,
+    pub stats: &'static mut Stats,
+}
+
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct ObjQuery {
+    pub entity: Entity,
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub name: &'static Name,
+    pub template: &'static mut Template,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub state: &'static mut State,
     pub viewshed: &'static Viewshed,
     pub misc: &'static Misc,
 }
@@ -273,6 +314,10 @@ pub enum VisibleEvent {
     NewObjEvent {
         new_player: bool,
     },
+    UpdateObjEvent {
+        attr: String,
+        value: String
+    },
     StateChangeEvent {
         new_state: String,
     },
@@ -293,10 +338,33 @@ pub enum VisibleEvent {
     GatherEvent {
         res_type: String,
     },
+    OperateEvent {
+        structure_id: i32,
+    },
     RefineEvent {
         structure_id: i32,
     },
+    CraftEvent {
+        structure_id: i32,
+        recipe_name: String,
+    },
     ExploreEvent,
+    UseItemEvent {
+        item_id: i32,
+        item_owner_id: i32,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct GameEvent {
+    pub event_id: i32,
+    pub run_tick: i32,
+    pub game_event_type: GameEventType,
+}
+
+#[derive(Clone, Debug)]
+pub enum GameEventType {
+    SpawnNPC { npc_type: String, pos: Position },
 }
 
 impl Plugin for GamePlugin {
@@ -308,18 +376,23 @@ impl Plugin for GamePlugin {
             .add_plugin(ItemPlugin)
             .add_plugin(ResourcePlugin)
             .add_plugin(SkillPlugin)
+            .add_plugin(RecipePlugin)
             .init_resource::<GameTick>()
             .add_startup_system(Game::setup)
             .add_system_to_stage(CoreStage::PreUpdate, update_game_tick)
             .add_system(new_obj_event_system)
             .add_system(move_event_system)
             .add_system(state_change_event_system)
+            .add_system(update_obj_event_system)
             .add_system(gather_event_system)
-            .add_system(refine_event_system)
+            .add_system(operate_refine_event_system)
+            .add_system(craft_event_system)
             .add_system(explore_event_system)
             .add_system(damage_event_system)
             .add_system(cooldown_event_system)
+            .add_system(use_item_system)
             .add_system(visible_event_system)
+            .add_system(game_event_system)
             .add_system(perception_system);
         // .add_system(task_move_to_target_system);
     }
@@ -344,6 +417,7 @@ impl Game {
         // Initialize indexes
         let ids: Ids = Ids {
             map_event: 0,
+            player_event: 0,
             obj: 0,
             item: 0,
             player_hero_map: HashMap::new(),
@@ -353,6 +427,8 @@ impl Game {
         // Initialize map events vector
         let map_events: MapEvents = MapEvents(HashMap::new());
         let processed_map_events: VisibleEvents = VisibleEvents(Vec::new());
+
+        let game_events: GameEvents = GameEvents(HashMap::new());
 
         let perception_updates: PerceptionUpdates = PerceptionUpdates(HashSet::new());
 
@@ -403,6 +479,7 @@ impl Game {
         commands.insert_resource(game_tick);
         commands.insert_resource(map_events);
         commands.insert_resource(processed_map_events);
+        commands.insert_resource(game_events);
         commands.insert_resource(perception_updates);
         commands.insert_resource(ids);
         commands.insert_resource(explored_map);
@@ -449,8 +526,8 @@ fn move_event_system(
     mut ids: ResMut<Ids>,
     mut explored_map: ResMut<ExploredMap>,
     map: Res<Map>,
-    templates: Res<Templates>,
     mut map_events: ResMut<MapEvents>,
+    mut game_events: ResMut<GameEvents>,
     mut visible_events: ResMut<VisibleEvents>,
     mut set: ParamSet<(
         Query<(
@@ -534,6 +611,7 @@ fn move_event_system(
                             // Adding processed map event
                             visible_events.push(map_event.clone());
 
+                            // If player is moving, TODO improve this
                             if player_id.0 < 1000 {
                                 let mut rng = rand::thread_rng();
 
@@ -550,25 +628,27 @@ fn move_event_system(
                                     );
 
                                     if let Some(adjacent_pos) = adjacent_pos {
-                                        let spawn_result = spawn_npc(
-                                            1000,
-                                            adjacent_pos,
-                                            "Zombie".to_string(),
-                                            &mut commands,
-                                            &mut ids,
-                                            &templates,
-                                        );
 
-                                        match spawn_result {
-                                            Ok((entity, npc_id, player_id, pos)) => {
-                                                let event = create_map_event(
-                                                    entity, npc_id, player_id, pos, &game_tick,
-                                                    &mut ids,
-                                                );
-                                                events_to_add.push(event);
-                                            }
-                                            Err(err_msg) => error!(err_msg),
-                                        }
+                                        let tile_type = Map::tile_type(adjacent_pos.x, adjacent_pos.y, &map);
+                                        let npc_list = Encounter::npc_list(tile_type);
+                                        let index = rng.gen_range(0..npc_list.len());
+                                        let npc_type = npc_list[index].to_string();
+
+                                        debug!("Spawning a NPC of type: {:?}", npc_type);
+
+                                        let event_type = GameEventType::SpawnNPC {
+                                            npc_type: npc_type,
+                                            pos: adjacent_pos,
+                                        };
+                                        let event_id = ids.new_map_event_id();
+
+                                        let event = GameEvent {
+                                            event_id: event_id,
+                                            run_tick: game_tick.0 + 4, // Add one game tick
+                                            game_event_type: event_type,
+                                        };
+
+                                        game_events.insert(event.event_id, event);
                                     }
                                 }
 
@@ -677,6 +757,47 @@ fn state_change_event_system(
     }
 }
 
+fn update_obj_event_system(
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut visible_events: ResMut<VisibleEvents>,
+    mut query: Query<ObjQuery>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::UpdateObjEvent { attr, value} => {
+                    debug!("Processing UpdateObjEvent: {:?} {:?}", attr, value);
+
+                    // Set state back to none
+                    let Ok(mut obj) = query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    match attr.as_str() {
+                        obj::TEMPLATE => {
+                            obj.template.0 = value.to_string();
+                            visible_events.push(map_event.clone());
+                        }
+                        _ => {}
+                    }
+
+                    events_to_remove.push(*map_event_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
 fn gather_event_system(
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
@@ -696,6 +817,7 @@ fn gather_event_system(
                     println!("Processing GatherEvent");
 
                     Resource::gather_by_type(
+                        map_event.obj_id,
                         map_event.obj_id,
                         Position {
                             x: map_event.pos_x,
@@ -722,7 +844,7 @@ fn gather_event_system(
     }
 }
 
-fn refine_event_system(
+fn operate_refine_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
@@ -731,7 +853,8 @@ fn refine_event_system(
     skills: ResMut<Skills>,
     templates: Res<Templates>,
     //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
-    mut state_query: Query<&mut State>,
+    //mut state_query: Query<&mut State>,
+    mut query: Query<ObjQuery>,
     mut map_events: ResMut<MapEvents>,
 ) {
     let mut events_to_remove = Vec::new();
@@ -745,13 +868,70 @@ fn refine_event_system(
                     events_to_remove.push(*map_event_id);
 
                     // Set state back to none
-                    let Ok(mut villager_state) = state_query.get_mut(map_event.entity_id) else {
+                    let Ok(mut villager) = query.get_mut(map_event.entity_id) else {
                         error!("Query failed to find entity {:?}", map_event.entity_id);
                         continue;
                     };
 
                     // Reset villager state to None
-                    villager_state.0 = "none".to_string();
+                    villager.state.0 = "none".to_string();
+
+                    // Remove Event In Progress
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
+
+                    // Create new item
+                    Item::create(
+                        ids.new_item_id(),
+                        *structure_id,
+                        "Cragroot Maple Wood".to_string(),
+                        2,
+                        &templates.item_templates,
+                        &mut items,
+                    );
+                }
+                VisibleEvent::OperateEvent { structure_id } => {
+                    info!("Processing OperateEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    // Set state back to none
+                    let Ok(mut villager) = query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    // Reset villager state to None
+                    villager.state.0 = "none".to_string();
+
+                    let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                        error!("Cannot find entity from structure_id: {:?}", structure_id);
+                        continue;
+                    };
+
+                    // Set state back to none
+                    let Ok(mut structure) = query.get(structure_entity) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    let res_type = Structure::resource_type(structure.template.0.clone());
+
+                    Resource::gather_by_type(
+                        map_event.obj_id,
+                        *structure_id,
+                        Position {
+                            x: map_event.pos_x,
+                            y: map_event.pos_y,
+                        },
+                        res_type.to_string(),
+                        &skills,
+                        &mut items,
+                        &templates.item_templates,
+                        &resources,
+                        &templates.res_templates,
+                        &mut ids,
+                    );
 
                     // Remove Event In Progress
                     commands
@@ -778,6 +958,80 @@ fn refine_event_system(
     }
 }
 
+fn craft_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut resources: ResMut<Resources>,
+    mut items: ResMut<Items>,
+    skills: ResMut<Skills>,
+    templates: Res<Templates>,
+    recipes: Res<Recipes>,
+    //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    mut state_query: Query<&mut State>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::CraftEvent {
+                    structure_id,
+                    recipe_name,
+                } => {
+                    info!("Processing CraftEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    // Set state back to none
+                    let Ok(mut villager_state) = state_query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };
+
+                    let recipe = Recipe::get_by_name(recipe_name.clone(), &recipes);
+
+                    if let Some(mut recipe) = recipe {
+                        if Structure::has_req(*structure_id, &mut recipe.req, &mut items) {
+                            Structure::consume_reqs(*structure_id, recipe.req, &mut items);
+
+                            // Reset villager state to None
+                            villager_state.0 = "none".to_string();
+
+                            // Remove Event In Progress
+                            commands
+                                .entity(map_event.entity_id)
+                                .remove::<EventInProgress>();
+
+                            let mut item_attrs = HashMap::new();
+                            item_attrs.insert(DAMAGE, 11.0);
+
+                            // Create new item
+                            Item::craft(
+                                ids.new_item_id(),
+                                *structure_id,
+                                recipe_name.to_string(),
+                                1,
+                                item_attrs,
+                                &templates.recipe_templates,
+                                &mut items,
+                                None,
+                                None,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
 fn explore_event_system(
     game_tick: Res<GameTick>,
     mut resources: ResMut<Resources>,
@@ -792,6 +1046,7 @@ fn explore_event_system(
             match &map_event.map_event_type {
                 VisibleEvent::ExploreEvent => {
                     debug!("Processing ExploreEvent");
+                    events_to_remove.push(*map_event_id);
 
                     Resource::explore(
                         map_event.obj_id,
@@ -802,8 +1057,6 @@ fn explore_event_system(
                         &mut resources,
                         &templates.res_templates,
                     );
-
-                    events_to_remove.push(*map_event_id);
                 }
                 _ => {}
             }
@@ -873,6 +1126,84 @@ fn cooldown_event_system(
                     commands
                         .entity(map_event.entity_id)
                         .remove::<EventInProgress>();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn use_item_system(
+    game_tick: Res<GameTick>,
+    clients: Res<Clients>,
+    mut ids: ResMut<Ids>,
+    mut items: ResMut<Items>,
+    mut visible_events: ResMut<VisibleEvents>,
+    mut map_events: ResMut<MapEvents>,
+    mut query: Query<ItemUseObjQuery>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::UseItemEvent {
+                    item_id,
+                    item_owner_id,
+                } => {
+                    debug!("Processing UseItemEvent {:?}", item_id);
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(entity) = ids.get_entity(*item_owner_id) else {
+                        error!("Cannot find item owner entity from id: {:?}", item_owner_id);
+                        continue;
+                    };
+
+                    let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                        debug!("Failed to find item: {:?}", item_id);
+                        continue;
+                    };
+
+                    let Ok(mut item_owner) = query.get_mut(entity) else {
+                        error!("Query failed to find entity {:?}", entity);
+                        continue;
+                    };
+
+                    match (item.class.as_str(), item.subclass.as_str()) {
+                        (POTION, HEALTH) => {
+                            let healing_value = *item.attrs.get(HEALING).unwrap() as i32;
+
+                            if item_owner.stats.hp < item_owner.stats.base_hp {
+                                if (item_owner.stats.hp + healing_value) > item_owner.stats.base_hp
+                                {
+                                    item_owner.stats.hp = item_owner.stats.base_hp;
+                                } else {
+                                    item_owner.stats.hp += healing_value;
+                                }
+
+                                debug!("Entity: {:?} Hp: {:?}", item_owner_id, item_owner.stats.hp);
+
+                                let packet = ResponsePacket::Stats {
+                                    data: StatsData {
+                                        id: *item_owner_id,
+                                        hp: item_owner.stats.hp,
+                                        base_hp: item_owner.stats.base_hp,
+                                        stamina: 10000, // TODO missing stamina
+                                        base_stamina: 10000,
+                                        effects: Vec::new(),
+                                    },
+                                };
+
+                                send_to_client(item_owner.player_id.0, packet, &clients);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {}
             }
@@ -1063,6 +1394,26 @@ fn visible_event_system(
                                 .or_default()
                                 .insert(change_event);
                         }
+                    }
+                    VisibleEvent::UpdateObjEvent { attr, value} => {
+                        let distance =
+                            Map::distance((map_event.pos_x, map_event.pos_y), (pos.x, pos.y));
+
+                        if viewshed.range >= distance {
+                            println!("Send obj update to client");
+
+                            let change_event = network::ChangeEvents::ObjUpdate {
+                                event: "obj_update".to_string(),
+                                obj_id: map_event.obj_id,
+                                attr: attr.to_string(),
+                                value: value.clone(),
+                            };
+
+                            all_change_events
+                                .entry(player_id.0)
+                                .or_default()
+                                .insert(change_event);
+                        }                        
                     }
                     _ => {}
                 }
@@ -1271,6 +1622,60 @@ fn perception_system(
     perception_updates.clear();
 }
 
+fn game_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut items: ResMut<Items>,
+    templates: Res<Templates>,
+    mut game_events: ResMut<GameEvents>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (event_id, game_event_type) in game_events.iter_mut() {
+        if game_event_type.run_tick < game_tick.0 {
+            // Execute event
+            match &game_event_type.game_event_type {
+                GameEventType::SpawnNPC { npc_type, pos } => {
+                    debug!("Processing SpawnNPC");
+                    events_to_remove.push(*event_id);
+
+                    let spawn_result = spawn_npc(
+                        1000,
+                        *pos,
+                        npc_type.to_string(),
+                        &mut commands,
+                        &mut ids,
+                        &mut items,
+                        &templates,
+                    );
+
+                    match spawn_result {
+                        Ok((entity, npc_id, player_id, pos)) => {
+                            let event = create_map_event(
+                                entity,
+                                npc_id.clone(),
+                                player_id,
+                                pos,
+                                &game_tick,
+                                &mut ids,
+                            );
+                            map_events.insert(event.event_id, event);
+                        }
+                        Err(err_msg) => error!(err_msg),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        game_events.remove(event_id);
+    }
+}
+
 fn update_game_tick(mut game_tick: ResMut<GameTick>, mut attrs: Query<(&mut Thirst, &mut Morale)>) {
     game_tick.0 = game_tick.0 + 1;
 
@@ -1406,13 +1811,26 @@ impl MapEvents {
     }
 }
 
+impl GameEvents {
+    pub fn new(&mut self, event_id: i32, run_tick: i32, game_event_type: GameEventType) {
+        let game_event = GameEvent {
+            event_id: event_id,
+            run_tick: run_tick,
+            game_event_type: game_event_type,
+        };
+
+        //self.insert(map_event_id, map_state_event);
+        self.insert(event_id, game_event);
+    }
+}
+
 fn spawn_npc(
     player_id: i32,
     pos: Position,
     template: String,
     commands: &mut Commands,
     ids: &mut ResMut<Ids>,
-    // mut items: &mut ResMut<Items>,
+    mut items: &mut ResMut<Items>,
     templates: &Res<Templates>,
 ) -> Result<(Entity, Id, PlayerId, Position), &'static str> {
     let mut npc_template = None;
@@ -1426,6 +1844,8 @@ fn spawn_npc(
 
     if let Some(npc_template) = npc_template {
         let npc_id = ids.new_obj_id();
+        
+        let image: String = npc_template.template.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
 
         let npc = Obj {
             id: Id(npc_id),
@@ -1438,7 +1858,7 @@ fn spawn_npc(
             state: State("none".into()),
             viewshed: Viewshed { range: 2 },
             misc: Misc {
-                image: npc_template.template.to_lowercase(),
+                image: image,
                 hsl: Vec::new().into(),
                 groups: Vec::new().into(),
             },
@@ -1466,7 +1886,9 @@ fn spawn_npc(
             ))
             .id();
 
-        debug!("New Zombie entity: {:?}", entity);
+        Encounter::generate_loot(npc_id, ids, items, templates);
+
+        debug!("New {:?} entity: {:?}", template, entity);
         ids.new_entity_obj_mapping(npc_id, entity);
 
         return Ok((entity, Id(npc_id), PlayerId(player_id), pos));

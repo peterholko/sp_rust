@@ -57,6 +57,8 @@ enum NetworkPacket {
     InfoSkills { id: i32 },
     #[serde(rename = "info_attrs")]
     InfoAttrs { id: i32 },
+    #[serde(rename = "info_advance")]
+    InfoAdvance { sourceid: i32 },    
     #[serde(rename = "info_tile")]
     InfoTile { x: i32, y: i32 },
     #[serde(rename = "info_inventory")]
@@ -77,6 +79,12 @@ enum NetworkPacket {
     OrderFollow { sourceid: i32 },
     #[serde(rename = "order_gather")]
     OrderGather { sourceid: i32, restype: String },
+    #[serde(rename = "order_refine")]
+    OrderRefine {structureid: i32},    
+    #[serde(rename = "order_craft")]
+    OrderCraft {sourceid: i32, recipe: String},    
+    #[serde(rename = "order_explore")]
+    OrderExplore {sourceid: i32},    
     #[serde(rename = "structure_list")]
     StructureList {},
     #[serde(rename = "create_foundation")]
@@ -92,7 +100,15 @@ enum NetworkPacket {
     #[serde(rename = "assign")]
     Assign {sourceid: i32, targetid: i32},
     #[serde(rename = "equip")]
-    Equip {item: i32, status: bool}
+    Equip {item: i32, status: bool},
+    #[serde(rename = "recipe_list")]
+    RecipeList {structureid: i32},
+    #[serde(rename = "use")]
+    Use {item: i32},
+    #[serde(rename = "delete")]
+    Remove {sourceid: i32},
+    #[serde(rename = "advance")]
+    Advance {sourceid: i32}   
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -162,6 +178,14 @@ pub enum ResponsePacket {
         id: i32,
         attrs: HashMap<String, i32>
     },
+    #[serde(rename = "info_advance")]
+    InfoAdvance {
+        id: i32,
+        rank: String,
+        next_rank: String,
+        total_xp: i32,
+        req_xp: i32
+    },
     #[serde(rename = "info_tile")]
     InfoTile {
         x: i32,
@@ -202,6 +226,12 @@ pub enum ResponsePacket {
         targetitems: Inventory,
         reqitems: Vec<ResReq>,
     },
+    #[serde(rename = "info_item_update")]
+    InfoItemUpdate {
+        id: i32,
+        item: Item,
+        merged: bool
+    },    
     #[serde(rename = "item_transfer")]
     ItemTransfer {
         result: String,
@@ -263,6 +293,16 @@ pub enum ResponsePacket {
     Equip {
         result: String
     },
+    #[serde(rename = "recipe_list")]
+    RecipeList {
+        result: Vec<Recipe>
+    },
+    #[serde(rename = "xp")] 
+    Xp {
+        id: i32,
+        xp_type: String,
+        xp: i32
+    },
     Ok,
     None,
     Pong,
@@ -316,12 +356,12 @@ pub enum BroadcastEvents {
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct StatsData {
-    id: i32,
-    hp: i32,
-    base_hp: i32,
-    stamina: i32,
-    base_stamina: i32,
-    effects: Vec<i32>,
+    pub id: i32,
+    pub hp: i32,
+    pub base_hp: i32,
+    pub stamina: i32,
+    pub base_stamina: i32,
+    pub effects: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Hash, PartialEq)]
@@ -382,6 +422,24 @@ pub struct Assignment {
     pub image: String,
     pub order: String,
     pub structure: String
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Recipe {
+    pub name: String,
+    pub image: String,
+    pub structure: String,
+    pub class: String,
+    pub subclass: String,
+    pub tier: Option<i32>,
+    pub slot: String,
+    pub damage: Option<i32>,
+    pub speed: Option<f32>,
+    pub armor: Option<i32>,
+    pub stamina_req: Option<i32>,
+    pub skill_req: Option<i32>,
+    pub weight: i32,
+    pub req: Vec<ResReq>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -456,7 +514,9 @@ lazy_static! {
                 let data = std::fs::read_to_string(&path).expect("Unable to read file");
                 let json: serde_json::Value = serde_json::from_str(&data).expect("JSON does not have correct format.");
                 //tileset.insert(file_stem.unwrap().to_str().unwrap().to_string(), serde_json::to_string(&json).unwrap());
-                tileset.insert(file_stem.unwrap().to_str().unwrap().to_string(), json);
+                let file_stem = file_stem.unwrap().to_str().unwrap().to_string();
+                println!("File stem: {:?}", file_stem);
+                tileset.insert(file_stem, json);
               },
               Err(e) => println!("{:?}", e),
           }
@@ -618,7 +678,7 @@ async fn handle_connection(
                                                 }
                                             }
                                             NetworkPacket::ImageDef{name} => {
-
+                                                println!("ImageDef name: {:?}", name);
                                                 let mut name_stripped = name.clone();
                                                 let raw_name = name;
 
@@ -649,6 +709,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoAttrs{id} => {
                                                 handle_info_attrs(player_id, id, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoAdvance{sourceid} => {
+                                                handle_info_advance(player_id, sourceid, client_to_game_sender.clone())
+                                            }                                             
                                             NetworkPacket::InfoTile{x, y} => {
                                                 handle_info_tile(player_id, x, y, client_to_game_sender.clone())
                                             }
@@ -702,7 +765,28 @@ async fn handle_connection(
                                             }         
                                             NetworkPacket::Equip{item, status} => {
                                                 handle_equip(player_id, item, status, client_to_game_sender.clone())
-                                            }                                                                                                                            
+                                            }   
+                                            NetworkPacket::RecipeList{structureid} => {
+                                                handle_recipe_list(player_id, structureid, client_to_game_sender.clone())
+                                            }                                                                                                                           
+                                            NetworkPacket::OrderRefine{structureid} => {
+                                                handle_order_refine(player_id, structureid, client_to_game_sender.clone())
+                                            }      
+                                            NetworkPacket::OrderCraft{sourceid, recipe} => {
+                                                handle_order_craft(player_id, sourceid, recipe, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::OrderExplore{sourceid} => {
+                                                handle_order_explore(player_id, sourceid, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::Use{item} => {
+                                                handle_use(player_id, item, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::Remove{sourceid} => {
+                                                handle_remove(player_id, sourceid, client_to_game_sender.clone())
+                                            }       
+                                            NetworkPacket::Advance{sourceid} => {
+                                                handle_advance(player_id, sourceid, client_to_game_sender.clone())
+                                            }                                                                                                                                                                                                         
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -931,6 +1015,22 @@ fn handle_info_attrs(
         .send(PlayerEvent::InfoAttrs {
             player_id: player_id,
             id: id,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_advance(
+    player_id: i32,
+    sourceid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoAdvance {
+            player_id: player_id,
+            id: sourceid,
         })
         .expect("Could not send message");
 
@@ -1217,6 +1317,91 @@ fn handle_equip(player_id: i32, item:i32, status: bool, client_to_game_sender: C
             player_id: player_id,
             item_id: item,
             status: status
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_recipe_list(player_id: i32, structureid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::RecipeList {
+            player_id: player_id,
+            structure_id: structureid
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_refine(player_id: i32, structureid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderRefine {
+            player_id: player_id,
+            structure_id: structureid
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_craft(player_id: i32, sourceid: i32, recipe: String, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderCraft {
+            player_id: player_id,
+            structure_id: sourceid, // sourceid should really be renamed to structure_id in the client
+            recipe_name: recipe
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_explore(player_id: i32, sourceid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderExplore {
+            player_id: player_id,
+            villager_id: sourceid, // sourceid should really be renamed to structure_id in the client
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_use(player_id: i32, item: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Use {
+            player_id: player_id,
+            item_id: item, // sourceid should really be renamed to structure_id in the client
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_remove(player_id: i32, sourceid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Remove {
+            player_id: player_id,
+            structure_id: sourceid, // sourceid should really be renamed to structure_id in the client
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_advance(player_id: i32, sourceid: i32, client_to_game_sender: CBSender<PlayerEvent>) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Advance {
+            player_id: player_id,
+            id: sourceid, // sourceid should really be renamed to structure_id in the client
         })
         .expect("Could not send message");
 

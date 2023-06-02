@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
-use crate::templates::{ItemTemplates, ResReq};
+use crate::templates::{ItemTemplates, ResReq, RecipeTemplates};
 
 pub const DAMAGE: &str = "Damage";
 
@@ -13,6 +13,10 @@ pub const THIRST: &str = "Thirst";
 pub const WEAPON: &str = "Weapon";
 pub const ARMOR: &str = "Armor";
 
+pub const POTION: &str = "Potion";
+pub const HEALTH: &str = "Health";
+
+pub const HEALING: &str = "Healing";
 
 #[derive(Debug, Clone)]
 pub struct Item {
@@ -137,6 +141,58 @@ impl Item {
         }
     }
 
+    pub fn craft(
+        id: i32,
+        owner: i32,
+        recipe_name: String,
+        quantity: i32,
+        attrs: HashMap<&'static str, f32>,
+        recipe_templates: &RecipeTemplates,
+        items: &mut Items,
+        custom_name: Option<String>, //override
+        custom_image: Option<String>, //override
+    ) {
+        // By default the recipe name is the item name
+        let mut name: String = recipe_name.clone();
+
+        let mut class = "Invalid".to_string();
+        let mut subclass = "Invalid".to_string();
+        let mut image = "Invalid".to_string();
+        let mut weight = 0.0;
+
+        for recipe_template in recipe_templates.iter() {
+            if recipe_name == recipe_template.name {
+                class = recipe_template.class.clone();
+                subclass = recipe_template.subclass.clone();
+                image = recipe_template.image.clone();
+                weight = recipe_template.weight as f32 * (quantity as f32);
+            }
+        }
+
+        if let Some(custom_name) = custom_name {
+            name = custom_name;
+        }
+
+        if let Some(custom_image) = custom_image {
+            image = custom_image;
+        }
+
+        let new_item = Item {
+            id: id,
+            owner: owner,
+            name: name,
+            quantity: quantity,
+            class: class,
+            subclass: subclass,
+            image: image,
+            weight: weight,
+            equipped: false,
+            attrs: attrs,
+        };
+
+        items.push(new_item);
+    }
+
     pub fn get_by_owner(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
         let mut owner_items: Vec<Item> = Vec::new();
 
@@ -244,6 +300,32 @@ impl Item {
         return false;
     }
 
+    pub fn equip(item_id: i32, status: bool, items: &mut ResMut<Items>) {
+        for item in &mut items.iter_mut() {
+            if item_id == item.id {
+                item.equipped = status;
+            }
+        }
+    }
+
+    pub fn use_item(item_id: i32, status: bool, items: &mut ResMut<Items>) {
+
+    }
+
+    pub fn get_items_value_by_attr(attr: &str, items: Vec<Item>) -> f32 {
+        let mut item_values = 0.0;
+
+
+        for item in items.iter() {
+            match item.attrs.get(&attr) {
+                Some(item_value) => item_values += item_value,
+                None => item_values += 0.0          
+            }
+        }
+
+        item_values
+    }
+
     fn find_by_class(owner: i32, class: String, items: &ResMut<Items>) -> Option<usize> {
         println!("items: {:?}", items);
 
@@ -343,6 +425,19 @@ impl Item {
     pub fn remove(item_id: i32, items: &mut ResMut<Items>) {
         if let Some(index) = items.iter().position(|item| item.id == item_id) {
             items.remove(index);
+        }
+    }
+
+    pub fn remove_quantity(item_id: i32, quantity: i32, items: &mut ResMut<Items>) {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            let mut item = &mut items[index];
+            if item.quantity >= quantity {
+                item.quantity -= quantity;
+
+                if item.quantity == 0 {
+                    items.swap_remove(index);
+                } 
+            } 
         }
     }
 

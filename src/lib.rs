@@ -24,10 +24,13 @@ mod combat;
 mod network;
 mod templates;
 mod item;
+mod recipe;
 mod structure;
 mod resource;
 mod skill;
 mod villager;
+mod encounter;
+mod obj;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 

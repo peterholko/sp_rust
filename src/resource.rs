@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::game::{Ids, Position};
 use crate::item::{Item, Items};
 use crate::network;
-use crate::skill::{Skill, Skills};
+use crate::skill::{self, Skill, Skills};
 use crate::templates::{ItemTemplates, ResReq, ResTemplate, ResTemplates};
 
 pub const ORE: &str = "Ore";
@@ -93,10 +93,13 @@ impl Resource {
 
     pub fn get_by_type(
         position: Position,
-        restype: String,
+        res_type: String,
         resources: &Resources,
     ) -> Vec<Resource> {
         if let Some(resources_on_tile) = resources.get(&position) {
+
+            debug!("Restype: {:?} Resources on tile: {:?}", res_type, resources_on_tile);
+
             return resources_on_tile
                 .clone()
                 .into_values()
@@ -110,14 +113,15 @@ impl Resource {
 
     pub fn gather_by_type(
         obj_id: i32,
+        dest_obj_id: i32,
         position: Position,
         res_type: String,
         skills: &Skills,
-        mut items: &mut Items,
+        mut items: &mut ResMut<Items>,
         item_templates: &ItemTemplates,
         resources: &Resources,
         res_templates: &ResTemplates,
-        mut ids: &mut Ids,
+        ids: &mut Ids,
     ) {
         //TODO move elsewhere...
         let mut rng = rand::thread_rng();
@@ -143,16 +147,14 @@ impl Resource {
                 let random_num = rng.gen::<f32>();
 
                 if random_num < gather_chance {
-                    let resource_item = Item::new(
+                    Item::create(
                         ids.new_item_id(),
-                        obj_id,
+                        dest_obj_id,
                         resource.name.clone(),
                         1, //TODO should this be only 1 ?
                         item_templates,
+                        &mut items
                     );
-
-                    items.push(resource_item.clone());
-                    println!("Item gathered: {:?}", resource_item);
                 } else {
                     println!("No item gathered.");
                 }
@@ -170,7 +172,9 @@ impl Resource {
     ) {
         let explore_skill = 50; // TODO move to skills
 
+
         if let Some(resources_on_tile) = resources.get_mut(&position) {
+            debug!("Resources on tile: {:?}", resources_on_tile);
             for (_resource_type, resource) in resources_on_tile {
                 if let Some(res_template) = res_templates.get(&resource.name) {
                     let res_skill_req = res_template.skill_req;
@@ -198,12 +202,12 @@ impl Resource {
 
     fn type_to_skill(restype: String) -> String {
         match restype.as_str() {
-            ORE => Skill::MINING.to_string(),
-            WOOD => Skill::WOODCUTTING.to_string(),
-            STONE => Skill::STONECUTTING.to_string(),
-            WATER => Skill::GATHERING.to_string(),
-            FOOD => Skill::FARMING.to_string(),
-            PLANT => Skill::GATHERING.to_string(),
+            ORE => skill::MINING.to_string(),
+            WOOD => skill::WOODCUTTING.to_string(),
+            STONE => skill::STONECUTTING.to_string(),
+            WATER => skill::GATHERING.to_string(),
+            FOOD => skill::FARMING.to_string(),
+            PLANT => skill::GATHERING.to_string(),
             _ => "Invalid".to_string(),
         }
     }

@@ -8,15 +8,18 @@ use std::collections::{HashMap, HashSet};
 use crate::ai::{Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty};
 use crate::combat::{Combat, CombatQuery};
 use crate::game::{
-    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick, HeroClassList,
-    Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj, Order, PlayerId,
-    Position, State, Stats, StructureAttrs, Subclass, SubclassHero, SubclassVillager, Template,
-    Viewshed, VillagerAttrs, VisibleEvent, VisibleEvents, BUILDING, CREATIVITY, DEAD, DEXTERITY,
-    ENDURANCE, FOCUS, FOUNDED, INTELLECT, MOVING, NONE, PROGRESSING, SPIRIT, STRENGTH, TOUGHNESS, is_none_state,
+    is_none_state, is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick,
+    HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj,
+    Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass, SubclassHero,
+    SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent, VisibleEvents, BUILDING,
+    CREATIVITY, DEAD, DEXTERITY, ENDURANCE, FOCUS, FOUNDED, INTELLECT, MOVING, NONE, PROGRESSING,
+    SPIRIT, STRENGTH, TOUGHNESS,
 };
-use crate::item::{Item, Items, DAMAGE};
+use crate::item::{self, Item, Items};
 use crate::map::Map;
 use crate::network::{self, send_to_client, ResponsePacket, StructureList};
+use crate::obj::{self};
+use crate::recipe::{Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
 use crate::structure::{Structure, CRAFT, RESOURCE};
@@ -24,7 +27,7 @@ use crate::templates::{ObjTemplate, ResReq, SkillTemplate, SkillTemplates, Templ
 use crate::villager::Villager;
 
 #[derive(Resource, Deref, DerefMut)]
-pub struct PlayerEvents(pub Vec<PlayerEvent>);
+pub struct PlayerEvents(pub HashMap<i32, PlayerEvent>);
 
 #[derive(Resource, Clone, Debug)]
 pub enum PlayerEvent {
@@ -61,6 +64,10 @@ pub enum PlayerEvent {
         id: i32,
     },
     InfoAttrs {
+        player_id: i32,
+        id: i32,
+    },
+    InfoAdvance {
         player_id: i32,
         id: i32,
     },
@@ -105,6 +112,19 @@ pub enum PlayerEvent {
         source_id: i32,
         res_type: String,
     },
+    OrderRefine {
+        player_id: i32,
+        structure_id: i32,
+    },
+    OrderCraft {
+        player_id: i32,
+        structure_id: i32,
+        recipe_name: String,
+    },
+    OrderExplore {
+        player_id: i32,
+        villager_id: i32,
+    },
     StructureList {
         player_id: i32,
     },
@@ -136,8 +156,24 @@ pub enum PlayerEvent {
     Equip {
         player_id: i32,
         item_id: i32,
-        status: bool
-    }
+        status: bool,
+    },
+    RecipeList {
+        player_id: i32,
+        structure_id: i32,
+    },
+    Use {
+        player_id: i32,
+        item_id: i32,
+    },
+    Remove {
+        player_id: i32,
+        structure_id: i32,
+    },
+    Advance {
+        player_id: i32,
+        id: i32,
+    },    
 }
 
 #[derive(WorldQuery)]
@@ -177,6 +213,7 @@ struct StructureQuery {
     name: &'static Name,
     class: &'static Class,
     subclass: &'static Subclass,
+    template: &'static Template,
     state: &'static State,
     attrs: &'static mut StructureAttrs,
 }
@@ -201,7 +238,7 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         // Initialize events
-        let player_events: PlayerEvents = PlayerEvents(Vec::new());
+        let player_events: PlayerEvents = PlayerEvents(HashMap::new());
 
         app.add_system(message_broker_system)
             .add_system(new_player_system)
@@ -211,18 +248,25 @@ impl Plugin for PlayerPlugin {
             .add_system(info_obj_system)
             .add_system(info_skills_system)
             .add_system(info_attrs_system)
+            .add_system(info_advance_system)
             .add_system(info_tile_system)
             .add_system(info_item_system)
             .add_system(item_transfer_system)
             .add_system(item_split_system)
             .add_system(order_follow_system)
             .add_system(order_gather_system)
+            .add_system(order_refine_system)
+            .add_system(order_craft_system)
             .add_system(structure_list_system)
             .add_system(create_foundation_system)
             .add_system(build_system)
             .add_system(explore_system)
             .add_system(assign_list_system)
             .add_system(assign_system)
+            .add_system(equip_system)
+            .add_system(recipe_list_system)
+            .add_system(order_explore_system)
+            .add_system(use_item_system)
             .insert_resource(player_events);
     }
 }
@@ -230,11 +274,14 @@ impl Plugin for PlayerPlugin {
 fn message_broker_system(
     client_to_game_receiver: Res<NetworkReceiver>,
     mut player_events: ResMut<PlayerEvents>,
+    mut ids: ResMut<Ids>,
 ) {
     if let Ok(evt) = client_to_game_receiver.try_recv() {
         println!("{:?}", evt);
 
-        player_events.push(evt.clone());
+        player_events.insert(ids.player_event, evt.clone());
+
+        ids.player_event += 1;
     }
 }
 
@@ -246,13 +293,16 @@ fn new_player_system(
     mut map_events: ResMut<MapEvents>,
     mut items: ResMut<Items>,
     mut skills: ResMut<Skills>,
+    mut recipes: ResMut<Recipes>,
     templates: Res<Templates>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::NewPlayer { player_id } => {
+                events_to_remove.push(*event_id);
+
                 new_player(
                     *player_id,
                     &mut commands,
@@ -260,18 +310,17 @@ fn new_player_system(
                     &mut map_events,
                     &mut items,
                     &mut skills,
+                    &mut recipes,
                     &templates,
                     &game_tick,
                 );
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
     for index in events_to_remove.iter() {
-        events.remove(*index);
+        events.remove(index);
     }
 }
 
@@ -298,13 +347,13 @@ fn move_system(
     >,
     query: Query<MapObjQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Move { player_id, x, y } => {
                 debug!("Move Event: {:?}", event);
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let player_id = player_id;
 
@@ -379,8 +428,8 @@ fn move_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -391,11 +440,14 @@ fn attack_system(
     mut ids: ResMut<Ids>,
     clients: Res<Clients>,
     mut map_events: ResMut<MapEvents>,
+    mut items: ResMut<Items>,
+    mut skills: ResMut<Skills>,
+    templates: Res<Templates>,
     mut query: Query<CombatQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Attack {
                 player_id,
@@ -403,7 +455,7 @@ fn attack_system(
                 source_id,
                 target_id,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(attacker_entity) = ids.get_entity(*source_id) else {
                     error!("Cannot find attacker entity from id: {:?}", source_id);
@@ -454,11 +506,13 @@ fn attack_system(
                 }
 
                 // Calculate and process damage
-                let damage = Combat::process_damage(
+                let (damage, skill_updated) = Combat::process_damage(
                     attack_type.to_string(),
                     &attacker,
                     &mut target,
                     &mut commands,
+                    &mut items,
+                    &templates,
                 );
 
                 // Add visible damage event to broadcast to everyone nearby
@@ -481,13 +535,33 @@ fn attack_system(
                 };
 
                 send_to_client(*player_id, packet, &clients);
+
+                debug!("Skill gain: {:?}", skill_updated);
+
+                if let Some(skill_updated) = skill_updated {
+                    Skill::update(
+                        attacker.id.0,
+                        skill_updated.xp_type.clone(),
+                        skill_updated.xp,
+                        &mut skills,
+                        &templates.skill_templates,
+                    );
+
+                    let skill_updated_packet = ResponsePacket::Xp {
+                        id: attacker.id.0,
+                        xp_type: skill_updated.xp_type,
+                        xp: skill_updated.xp,
+                    };
+
+                    send_to_client(*player_id, skill_updated_packet, &clients);
+                };
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -512,9 +586,9 @@ fn gather_system(
         With<SubclassHero>,
     >,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Gather {
                 player_id,
@@ -522,6 +596,7 @@ fn gather_system(
                 res_type,
             } => {
                 debug!("PlayerEvent::Gather");
+                events_to_remove.push(*event_id);
 
                 for (
                     entity_id,
@@ -564,15 +639,13 @@ fn gather_system(
 
                     debug!("Skills: {:?}", skills);
                 }
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -586,12 +659,12 @@ fn info_obj_system(
     attrs_query: Query<&BaseAttrs>,
     stats_query: Query<&Stats>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoObj { player_id, id } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(entity) = ids.get_entity(*id) else {
                     error!("Cannot find entity for {:?}", id);
@@ -739,8 +812,8 @@ fn info_obj_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -752,12 +825,12 @@ fn info_skills_system(
     templates: Res<Templates>,
     query: Query<CoreQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoSkills { player_id, id } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(entity) = ids.get_entity(*id) else {
                     error!("Cannot find entity for {:?}", id);
@@ -787,8 +860,8 @@ fn info_skills_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -799,12 +872,12 @@ fn info_attrs_system(
     query: Query<CoreQuery>,
     attr_query: Query<&BaseAttrs>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoAttrs { player_id, id } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(entity) = ids.get_entity(*id) else {
                     error!("Cannot find entity for {:?}", id);
@@ -845,8 +918,106 @@ fn info_attrs_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn info_advance_system(
+    mut events: ResMut<PlayerEvents>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    mut map_events: ResMut<MapEvents>,
+    query: Query<CoreQuery>,
+    skills: Res<Skills>,
+    templates: Res<Templates>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::InfoAdvance { player_id, id } => {
+                events_to_remove.push(*event_id);
+
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    continue;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find obj for {:?}", entity);
+                    continue;
+                };
+
+                if obj.player_id.0 == *player_id {
+                    let (next_template, required_xp) = Skill::hero_advance(obj.template.0.clone());
+
+                    let info_advance_packet = ResponsePacket::InfoAdvance {
+                        id: obj.id.0,
+                        rank: obj.template.0.clone(),
+                        next_rank: next_template,
+                        total_xp: Skill::get_total_xp(*id, &skills, &templates.skill_templates),
+                        req_xp: required_xp,
+                    };
+
+                    send_to_client(*player_id, info_advance_packet, &clients);
+                } else {
+                    error!("Object {:?} is not owned by player {:?}", id, player_id);
+                }
+            }
+            PlayerEvent::Advance { player_id, id } => {
+
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    continue;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find obj for {:?}", entity);
+                    continue;
+                };
+
+                if obj.player_id.0 == *player_id {
+                    let (next_template, _required_xp) = Skill::hero_advance(obj.template.0.clone());
+
+                    //Add obj update event
+                    let obj_update_event = VisibleEvent::UpdateObjEvent {
+                        attr: obj::TEMPLATE.to_string(),
+                        value: next_template.clone()
+                    };
+
+                    map_events.new(
+                        ids.new_map_event_id(),
+                        entity,
+                        &obj.id,
+                        &obj.player_id,
+                        obj.pos,
+                        game_tick.0,
+                        obj_update_event,
+                    );                    
+
+                    let (new_next_template, new_required_xp) = Skill::hero_advance(next_template.clone());
+
+                    let advance_packet = ResponsePacket::InfoAdvance {
+                        id: obj.id.0,
+                        rank: next_template.clone(),
+                        next_rank: new_next_template,
+                        total_xp: 0, // Advancing resets to zero
+                        req_xp: new_required_xp,
+                    };
+                    
+                    send_to_client(*player_id, advance_packet, &clients);
+                }
+
+                events_to_remove.push(*event_id); 
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -856,12 +1027,13 @@ fn info_tile_system(
     map: Res<Map>,
     resources: Res<Resources>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoTile { player_id, x, y } => {
                 debug!("PlayerEvent::InfoTile x: {:?} y: {:?}", *x, *y);
+                events_to_remove.push(*event_id);
 
                 let tile_type = Map::tile_type(*x, *y, &map);
 
@@ -882,15 +1054,13 @@ fn info_tile_system(
                 };
 
                 send_to_client(*player_id, info_tile_packet, &clients);
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -899,13 +1069,13 @@ fn info_item_system(
     clients: Res<Clients>,
     mut items: ResMut<Items>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoInventory { player_id, id } => {
                 debug!("PlayerEvent::InfoInventory id: {:?}", id);
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let inventory_items = Item::get_by_owner_packet(*id, &items);
 
@@ -919,6 +1089,8 @@ fn info_item_system(
                 send_to_client(*player_id, info_inventory_packet, &clients);
             }
             PlayerEvent::InfoItem { player_id, id } => {
+                events_to_remove.push(*event_id);
+
                 let item = Item::get_packet(*id, &items);
 
                 if let Some(item) = item {
@@ -936,11 +1108,10 @@ fn info_item_system(
 
                     send_to_client(*player_id, info_item_packet, &clients);
                 }
-
-                events_to_remove.push(index);
             }
             PlayerEvent::InfoItemByName { player_id, name } => {
                 debug!("PlayerEvent::InfoItemByName name: {:?}", name.clone());
+                events_to_remove.push(*event_id);
 
                 let item = Item::get_by_name_packet(name.clone(), &items);
 
@@ -959,15 +1130,13 @@ fn info_item_system(
 
                     send_to_client(*player_id, info_item_packet, &clients);
                 }
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -979,16 +1148,16 @@ fn item_transfer_system(
     templates: Res<Templates>,
     query: Query<ItemTransferQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::ItemTransfer {
                 player_id,
                 target_id,
                 item_id,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 if let Some(item) = Item::find_by_id(*item_id, &items) {
                     let Some(owner_entity) = ids.get_entity(item.owner) else {
@@ -1016,21 +1185,22 @@ fn item_transfer_system(
                         continue;
                     }
 
-                    let attrs = target.structure_attrs;
-
-                    // Check if item is required for structure construction
-                    if let Some(attrs) = attrs {
-                        if !Item::is_req(item.clone(), attrs.req.clone()) {
-                            let packet = ResponsePacket::Error {
-                                errmsg: "Item required for construction.".to_string(),
-                            };
-                            send_to_client(*player_id, packet, &clients);
-                            break;
-                        }
-                    }
-
                     // Structure founded and under construction use case
                     if target.class.0 == "structure" && target.state.0 == FOUNDED {
+                        let attrs = target.structure_attrs;
+
+                        // Check if item is required for structure construction
+                        if let Some(attrs) = attrs {
+                            if !Item::is_req(item.clone(), attrs.req.clone()) {
+                                info!("Item not required for construction: {:?}", item);
+                                let packet = ResponsePacket::Error {
+                                    errmsg: "Item not required for construction.".to_string(),
+                                };
+                                send_to_client(*player_id, packet, &clients);
+                                break;
+                            }
+                        }
+
                         // Process item transfer and calculate the require item quantities
                         let req_items = process_item_transfer_structure(
                             item.clone(),
@@ -1068,6 +1238,20 @@ fn item_transfer_system(
 
                         send_to_client(*player_id, item_transfer_packet, &clients);
                     } else if owner.class.0 == "structure" && owner.state.0 == FOUNDED {
+                        let attrs = target.structure_attrs;
+
+                        // Check if item is required for structure construction
+                        if let Some(attrs) = attrs {
+                            if !Item::is_req(item.clone(), attrs.req.clone()) {
+                                info!("Item not required for construction: {:?}", item);
+                                let packet = ResponsePacket::Error {
+                                    errmsg: "Item not required for construction.".to_string(),
+                                };
+                                send_to_client(*player_id, packet, &clients);
+                                break;
+                            }
+                        }
+
                         if let Some(structure_attrs) = owner.structure_attrs {
                             Item::transfer(item.id, target.id.0, &mut items);
 
@@ -1149,6 +1333,8 @@ fn item_transfer_system(
                 source_id,
                 target_id,
             } => {
+                events_to_remove.push(*event_id);
+
                 debug!(
                     "PlayerEvent::InfoItemTransfer sourceid: {:?} targetid: {:?}",
                     *source_id, *target_id
@@ -1166,10 +1352,19 @@ fn item_transfer_system(
 
                 let entities = [source_entity, target_entity];
 
-                let Ok([mut source, mut target]) = query.get_many(entities) else {
+                let Ok([source, target]) = query.get_many(entities) else {
                     error!("Cannot find source or target from entities {:?}", entities);
                     continue;
                 };
+
+                if target.player_id.0 != *player_id && target.state.0 != DEAD.to_string() {
+                    error!("Cannot transfer items from alive entity {:?}", target.id.0);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Cannot transfer items from alive entity".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 let source_items = Item::get_by_owner_packet(*source_id, &items);
                 let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1199,15 +1394,13 @@ fn item_transfer_system(
                 };
 
                 send_to_client(*player_id, info_item_transfer_packet, &clients);
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1218,15 +1411,17 @@ fn item_split_system(
     mut items: ResMut<Items>,
     templates: Res<Templates>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::ItemSplit {
                 player_id,
                 item_id,
                 quantity,
             } => {
+                events_to_remove.push(*event_id);
+
                 if let Some(item) = Item::find_by_id(*item_id, &items) {
                     // TODO add checks if item_id is owned by player and if quantity is more than item quantity
                     Item::split(
@@ -1244,15 +1439,13 @@ fn item_split_system(
 
                     send_to_client(*player_id, item_split_packet, &clients);
                 }
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1262,15 +1455,15 @@ fn order_follow_system(
     mut commands: Commands,
     query: Query<MapObjQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::OrderFollow {
                 player_id,
                 source_id,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
@@ -1295,8 +1488,8 @@ fn order_follow_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1308,16 +1501,16 @@ fn order_gather_system(
     mut commands: Commands,
     query: Query<CoreQuery, With<SubclassVillager>>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::OrderGather {
                 player_id,
                 source_id,
                 res_type,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(entity) = ids.get_entity(*source_id) else {
                     error!("Cannot find entity for {:?}", source_id);
@@ -1355,8 +1548,8 @@ fn order_gather_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1365,17 +1558,13 @@ fn structure_list_system(
     clients: Res<Clients>,
     templates: Res<Templates>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::StructureList { player_id } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
                 let structure_list = Structure::available_to_build(&templates.obj_templates);
-
-                /*let structure_list = ResponsePacket::StructureList {
-                    result: structure_list,
-                };*/
 
                 let structure_list = StructureList {
                     result: structure_list,
@@ -1389,8 +1578,8 @@ fn structure_list_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1404,9 +1593,9 @@ fn create_foundation_system(
     templates: Res<Templates>,
     hero_query: Query<CoreQuery, With<SubclassHero>>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::CreateFoundation {
                 player_id,
@@ -1414,7 +1603,7 @@ fn create_foundation_system(
                 structure_name,
             } => {
                 debug!("CreateFoundation");
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 // Validation checks and get hero entity
                 let Some(hero_entity) = ids.get_entity(*source_id) else {
@@ -1515,8 +1704,8 @@ fn create_foundation_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1530,9 +1719,9 @@ fn build_system(
     builder_query: Query<CoreQuery, Or<(With<SubclassHero>, With<SubclassVillager>)>>,
     mut structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Build {
                 player_id,
@@ -1540,7 +1729,7 @@ fn build_system(
                 structure_id,
             } => {
                 debug!("Build");
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 // Validation checks and get builder and structure entities
                 let Some(builder_entity) = ids.get_entity(*source_id) else {
@@ -1591,7 +1780,7 @@ fn build_system(
                 }
 
                 // Check if structure is missing required items
-                if !Structure::has_req(structure.id.0, structure.attrs.clone(), &mut items) {
+                if !Structure::has_req(structure.id.0, &mut structure.attrs.req, &mut items) {
                     let packet = ResponsePacket::Error {
                         errmsg: "Structure is missing required items.".to_string(),
                     };
@@ -1600,7 +1789,7 @@ fn build_system(
                 }
 
                 // Consume req items
-                Structure::consume_reqs(structure.id.0, structure.attrs.clone(), &mut items);
+                Structure::consume_reqs(structure.id.0, structure.attrs.req.clone(), &mut items);
 
                 // Set structure building attributes
                 structure.attrs.start_time = game_tick.0;
@@ -1662,8 +1851,8 @@ fn build_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1687,11 +1876,13 @@ fn explore_system(
         With<SubclassHero>,
     >,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Explore { player_id } => {
+                events_to_remove.push(*event_id);
+
                 for (
                     entity_id,
                     obj_id,
@@ -1723,15 +1914,13 @@ fn explore_system(
                         map_events.insert(map_event_id, map_state_event);
                     }
                 }
-
-                events_to_remove.push(index);
             }
             _ => {}
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1742,12 +1931,12 @@ fn assign_list_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::AssignList { player_id } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let mut assignments = Vec::new();
 
@@ -1791,8 +1980,8 @@ fn assign_list_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1804,16 +1993,16 @@ fn assign_system(
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Assign {
                 player_id,
                 source_id,
                 target_id,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 // Validation checks get source entity
                 let Some(villager_entity) = ids.get_entity(*source_id) else {
@@ -1854,11 +2043,16 @@ fn assign_system(
                     continue;
                 }
 
+                debug!(
+                    "Assign villager to structure class {:?} with id {:?}",
+                    structure.subclass.0, structure.id.0
+                );
+
                 // Set villager structure
                 villager.attrs.structure = structure.id.0;
 
                 if structure.subclass.0 == RESOURCE {
-                    commands.entity(villager_entity).insert(Order::Harvest);
+                    commands.entity(villager_entity).insert(Order::Operate);
                 } else if structure.subclass.0 == CRAFT {
                     commands.entity(villager_entity).insert(Order::Refine);
                 } else {
@@ -1876,8 +2070,8 @@ fn assign_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
 }
 
@@ -1888,16 +2082,16 @@ fn equip_system(
     mut items: ResMut<Items>,
     query: Query<CoreQuery>,
 ) {
-    let mut events_to_remove: Vec<usize> = Vec::new();
+    let mut events_to_remove: Vec<i32> = Vec::new();
 
-    for (index, event) in events.iter().enumerate() {
+    for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::Equip {
                 player_id,
                 item_id,
-                status
+                status,
             } => {
-                events_to_remove.push(index);
+                events_to_remove.push(*event_id);
 
                 let Some(mut item) = Item::find_by_id(*item_id, &items) else {
                     debug!("Failed to find item: {:?}", item_id);
@@ -1913,9 +2107,9 @@ fn equip_system(
                 let Ok(owner) = query.get(owner_entity) else {
                     error!("Query failed to find entity {:?}", owner_entity);
                     continue;
-                };                
+                };
 
-                // Check if builder is owned by player
+                // Check if entity is owned by player
                 if owner.player_id.0 != *player_id {
                     let packet = ResponsePacket::Error {
                         errmsg: "Item not owned by player.".to_string(),
@@ -1924,7 +2118,7 @@ fn equip_system(
                     continue;
                 }
 
-                // Check if equipable 
+                // Check if equipable
                 if !Item::is_equipable(item.clone()) {
                     let packet = ResponsePacket::Error {
                         errmsg: "Item is not equipable.".to_string(),
@@ -1942,15 +2136,74 @@ fn equip_system(
                     continue;
                 }
 
+                debug!("Equip packet: {:?}", status);
                 // Equip if status is true
                 if *status {
-                    item.equipped = true;
+                    Item::equip(*item_id, *status, &mut items);
                 } else {
-                    item.equipped = false;
+                    Item::equip(*item_id, *status, &mut items);
                 }
 
-                let packet = ResponsePacket::Equip {
+                let success_packet = ResponsePacket::Equip {
                     result: "success".to_string(),
+                };
+
+                send_to_client(*player_id, success_packet, &clients);
+
+                let item_packet = Item::get_packet(item.id, &items).unwrap();
+
+                let item_update_packet: ResponsePacket = ResponsePacket::InfoItemUpdate {
+                    id: item.owner,
+                    item: item_packet,
+                    merged: true,
+                };
+
+                send_to_client(*player_id, item_update_packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn recipe_list_system(
+    mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
+    mut ids: ResMut<Ids>,
+    recipes: Res<Recipes>,
+    structure_query: Query<StructureQuery, With<ClassStructure>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::RecipeList {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                    error!("Cannot find structure entity for {:?}", structure_id);
+                    continue;
+                };
+
+                let Ok(structure) = structure_query.get(structure_entity) else {
+                    error!("Query failed to find entity {:?}", structure_entity);
+                    continue;
+                };
+
+                let structure_recipes = Recipe::get_by_structure_packet(
+                    *player_id,
+                    structure.template.0.clone(),
+                    &recipes,
+                );
+
+                let packet = ResponsePacket::RecipeList {
+                    result: structure_recipes,
                 };
 
                 send_to_client(*player_id, packet, &clients);
@@ -1959,10 +2212,274 @@ fn equip_system(
         }
     }
 
-    for index in events_to_remove.iter() {
-        events.remove(*index);
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
     }
-}                
+}
+
+fn order_refine_system(
+    mut commands: Commands,
+    mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::OrderRefine {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let mut villager = None;
+
+                //Find villager assigned to structure
+                for villager_item in villager_query.iter() {
+                    if villager_item.attrs.structure == *structure_id
+                        && villager_item.player_id.0 == *player_id
+                    {
+                        villager = Some(villager_item);
+                    }
+                }
+
+                if villager.is_none() {
+                    error!(
+                        "Cannot find a villager assigned to structure {:?}",
+                        *structure_id
+                    );
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No villager assigned to structure to refine.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                if let Some(villager) = villager {
+                    info!("Adding Order Refine to {:?}", villager.id);
+                    commands.entity(villager.entity).insert(Order::Refine);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn order_craft_system(
+    mut commands: Commands,
+    mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
+    mut items: ResMut<Items>,
+    recipes: Res<Recipes>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::OrderCraft {
+                player_id,
+                structure_id,
+                recipe_name,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let mut villager = None;
+
+                //Find villager assigned to structure
+                for villager_item in villager_query.iter() {
+                    if villager_item.attrs.structure == *structure_id
+                        && villager_item.player_id.0 == *player_id
+                    {
+                        villager = Some(villager_item);
+                    }
+                }
+
+                if villager.is_none() {
+                    error!(
+                        "Cannot find a villager assigned to structure {:?}",
+                        *structure_id
+                    );
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No villager assigned to structure to refine.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                let recipe = Recipe::get_by_name(recipe_name.clone(), &recipes);
+
+                if recipe.is_none() {
+                    error!("Invalid recipe name {:?}", *recipe_name);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Invalid recipe".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                if let Some(mut recipe) = recipe {
+                    //TODO consider if checking reqs is required here
+                    if Structure::has_req(*structure_id, &mut recipe.req, &mut items) {
+                        if let Some(villager) = villager {
+                            info!("Adding Order Craft to {:?}", villager.id);
+                            commands.entity(villager.entity).insert(Order::Craft {
+                                recipe_name: recipe_name.clone(),
+                            });
+                        }
+                    } else {
+                        error!("Insufficient resources to craft {:?}", *recipe_name);
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Insufficient resources to craft".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        break;
+                    }
+                } else {
+                    error!("Cannot find recipe: {:?}", *recipe_name);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Cannot find recipe".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn order_explore_system(
+    mut events: ResMut<PlayerEvents>,
+    ids: Res<Ids>,
+    mut commands: Commands,
+    clients: Res<Clients>,
+    query: Query<MapObjQuery>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::OrderExplore {
+                player_id,
+                villager_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(entity) = ids.get_entity(*villager_id) else {
+                    error!("Cannot find entity for {:?}", villager_id);
+                    break;
+                };
+
+                let Ok(villager) = query.get(entity) else {
+                    error!("Cannot find villager for {:?}", entity);
+                    break;
+                };
+
+                if villager.player_id.0 != *player_id {
+                    error!("Villager not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Cannot order another player's villager".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                // Add OrderFollow component to source and set hero_entity as target
+                for q in &query {
+                    if q.id.0 == *villager_id {
+                        commands.entity(q.entity).insert(Order::Explore);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn use_item_system(
+    mut events: ResMut<PlayerEvents>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut commands: Commands,
+    clients: Res<Clients>,
+    mut items: ResMut<Items>,
+    mut map_events: ResMut<MapEvents>,
+    query: Query<MapObjQuery>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::Use { player_id, item_id } => {
+                events_to_remove.push(*event_id);
+
+                let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                    debug!("Failed to find item: {:?}", item_id);
+                    continue;
+                };
+
+                // Validation checks get source entity
+                let Some(owner_entity) = ids.get_entity(item.owner) else {
+                    error!("Cannot find villager entity for {:?}", item.owner);
+                    continue;
+                };
+
+                let Ok(owner) = query.get(owner_entity) else {
+                    error!("Query failed to find entity {:?}", owner_entity);
+                    continue;
+                };
+
+                // Check if entity is owned by player
+                if owner.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Item not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+                // Insert explore event
+                let use_item_event = VisibleEvent::UseItemEvent {
+                    item_id: *item_id,
+                    item_owner_id: owner.id.0,
+                };
+
+                let map_event_id = ids.new_map_event_id();
+
+                let map_state_event = MapEvent {
+                    event_id: map_event_id,
+                    entity_id: owner_entity,
+                    obj_id: owner.id.0,
+                    player_id: *player_id,
+                    pos_x: owner.pos.x,
+                    pos_y: owner.pos.y,
+                    run_tick: game_tick.0 + 1, // Add one game tick
+                    map_event_type: use_item_event,
+                };
+
+                map_events.insert(map_event_id, map_state_event);
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
 
 fn new_player(
     player_id: i32,
@@ -1971,6 +2488,7 @@ fn new_player(
     mut map_events: &mut ResMut<MapEvents>,
     mut items: &mut ResMut<Items>,
     mut skills: &mut ResMut<Skills>,
+    mut recipes: &mut ResMut<Recipes>,
     templates: &Res<Templates>,
     game_tick: &ResMut<GameTick>,
 ) {
@@ -2046,7 +2564,7 @@ fn new_player(
         ids.new_item_id(),
         hero_id,
         "Cragroot Maple Wood".to_string(),
-        4,
+        5,
         &templates.item_templates,
     );
     let hide = Item::new(
@@ -2056,6 +2574,21 @@ fn new_player(
         5,
         &templates.item_templates,
     );
+    let ingot = Item::new(
+        ids.new_item_id(),
+        hero_id,
+        "Valleyrun Copper Ingot".to_string(),
+        25,
+        &templates.item_templates,
+    );
+
+    let timber = Item::new(
+        ids.new_item_id(),
+        hero_id,
+        "Cragroot Maple Timber".to_string(),
+        50,
+        &templates.item_templates,
+    );
 
     items.push(berries);
     items.push(water);
@@ -2063,9 +2596,11 @@ fn new_player(
     items.push(wood2);
     items.push(wood3);
     items.push(hide);
+    items.push(ingot);
+    items.push(timber);
 
     let mut item_attrs = HashMap::new();
-    item_attrs.insert(DAMAGE, 11.0);
+    item_attrs.insert(item::DAMAGE, 11.0);
 
     Item::new_with_attrs(
         ids.new_item_id(),
@@ -2073,6 +2608,19 @@ fn new_player(
         "Copper Training Axe".to_string(),
         1,
         item_attrs,
+        &templates.item_templates,
+        items,
+    );
+
+    let mut item_attrs2 = HashMap::new();
+    item_attrs2.insert(item::HEALING, 10.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        hero_id,
+        "Health Potion".to_string(),
+        1,
+        item_attrs2,
         &templates.item_templates,
         items,
     );
@@ -2140,7 +2688,7 @@ fn new_player(
     // Villager generate skills
     Villager::generate_skills(villager_id, skills, &templates.skill_templates);
 
-    // Villager create attributes components
+    // Villager create attributes components ```
     let base_attrs = Villager::generate_attributes(1);
 
     let villager_attrs = VillagerAttrs {
@@ -2198,6 +2746,14 @@ fn new_player(
     };
 
     map_events.insert(map_event_id, map_state_event);
+
+    // Starting recipes
+    Recipe::create(
+        player_id,
+        "Training Pick Axe".to_string(),
+        &templates.recipe_templates,
+        recipes,
+    );
 
     //create_item(commands, heroId, "Honeybell Berries".to_owned(), "Food".to_owned(), "Berry".to_owned(), "honeybellberries".to_owned(), 5, 10);
 }

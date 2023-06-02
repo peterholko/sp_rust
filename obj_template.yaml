@@ -7,7 +7,7 @@
 - name: Wolf
   class: unit
   subclass: npc
-  template: Zombie
+  template: Wolf
   family: Animal
   base_hp: 10
   base_stamina: 10000
@@ -18,13 +18,13 @@
   base_vision: 3
   int: animal
   aggression: high
-  kill_xp: 5
+  kill_xp: 12000
   waterwalk: 1
 
 - name: Giant Rat
   class: unit
   subclass: npc
-  template: Rat
+  template: Giant Rat
   family: Animal
   base_hp: 10
   base_stamina: 10000
@@ -57,7 +57,7 @@
 - name: Scorpion
   class: unit
   subclass: npc
-  template: Rat
+  template: Scorpion
   family: Animal
   base_hp: 10
   base_stamina: 10000
@@ -320,6 +320,19 @@
   base_vision: 2
   capacity: 300
 
+- name: Skilled Warrior
+  class: unit
+  subclass: hero
+  template: Skilled Warrior
+  base_hp: 200
+  base_stamina: 10000
+  base_dmg: 1
+  dmg_range: 1
+  base_def: 0
+  base_speed: 5
+  base_vision: 2
+  capacity: 300  
+
 ##################
 #### VILLAGERS ###
 ##################
@@ -374,7 +387,7 @@
   template: Mine
   base_hp: 250
   base_def: 0
-  build_time: 480
+  build_time: 24 #480
   level: 0
   capacity: 200
   profession: the Miner
