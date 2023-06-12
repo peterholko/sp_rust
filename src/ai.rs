@@ -17,7 +17,6 @@ use crate::game::SubclassNPC;
 use crate::game::SubclassVillager;
 use crate::game::Viewshed;
 use crate::game::VillagerAttrs;
-use crate::game::ATTACKING;
 use crate::game::{
     EventInProgress, Id, Ids, MapEvents, Order, PlayerId, Position, State, VisibleEvent,
 };
@@ -152,6 +151,7 @@ pub fn process_order_system(
     mut query: Query<(&Actor, &mut ActionState, &ProcessOrder, &ActionSpan)>,
 ) {
     for (Actor(actor), mut state, _process_order, span) in &mut query {
+        debug!("entity: {:?}", actor);
         if let Ok(morale) = morales.get(*actor) {
             match *state {
                 ActionState::Requested => {
@@ -248,7 +248,7 @@ pub fn process_order_system(
                                             // Add State Change Event to Moving
                                             let state_change_event =
                                                 VisibleEvent::StateChangeEvent {
-                                                    new_state: "moving".to_string(),
+                                                    new_state: "moving".to_string()
                                                 };
 
                                             villager.state.0 = "moving".to_string();
@@ -718,6 +718,7 @@ fn attack_target_system(
     mut query: Query<(&Actor, &mut ActionState, &ChaseAttack)>,
 ) {
     for (Actor(actor), mut state, chase_attack) in &mut query {
+        debug!("entity: {:?}", actor);
         let Ok(visible_target) = visible_target_query.get(*actor) else {
             continue;
         };
@@ -944,6 +945,7 @@ pub fn target_scorer_system(
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorerBuilder>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
+        debug!("entity: {:?}", actor);
         if let Ok(target) = target_query.get(*actor) {
             debug!("Scorer target_id: {:?}", target);
             if target.target != NO_TARGET {
@@ -987,6 +989,7 @@ pub fn morale_scorer_system(
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<HighMorale>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
+        debug!("entity: {:?}", actor);
         if let Ok(morale) = morales.get(*actor) {
             score.set(morale.morale / 100.0);
 

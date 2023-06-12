@@ -9,10 +9,10 @@ use rand::Rng;
 use crate::ai::{ChaseAttack, VisibleTarget};
 use crate::game::{
     BaseAttrs, Class, Id, MapEvent, MapEvents, Misc, PlayerId, Position, State, Stats, Subclass,
-    Template, VisibleEvent, VisibleEvents, DEAD,
+    Template, VisibleEvent, VisibleEvents,
 };
 use crate::item::{Item, Items, DAMAGE};
-use crate::network;
+use crate::{network, obj};
 use crate::skill::{Skill, SkillUpdated, Skills};
 use crate::templates::{SkillTemplate, SkillTemplates, Templates, ObjTemplate};
 
@@ -70,7 +70,7 @@ impl Combat {
         let mut skill_updated = None;
 
         if target.stats.hp <= 0 {
-            target.state.0 = DEAD.to_string();
+            target.state.0 = obj::STATE_DEAD.to_string();
             commands.entity(target.entity).remove::<ThinkerBuilder>();
             //commands.entity(target.entity).despawn();
 

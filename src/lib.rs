@@ -31,6 +31,7 @@ mod skill;
 mod villager;
 mod encounter;
 mod obj;
+mod experiment;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 

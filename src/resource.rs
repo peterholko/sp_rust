@@ -156,10 +156,10 @@ impl Resource {
                         &mut items
                     );
                 } else {
-                    println!("No item gathered.");
+                    trace!("No item gathered.");
                 }
             } else {
-                // TODO add error logging
+                error!("Cannot find resource template for {:?}", resource.name);
             }
         }
     }

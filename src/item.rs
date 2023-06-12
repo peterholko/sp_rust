@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
-use crate::templates::{ItemTemplates, ResReq, RecipeTemplates};
+use crate::templates::{ItemTemplate, ItemTemplates, RecipeTemplates, ResReq};
 
 pub const DAMAGE: &str = "Damage";
 
@@ -29,6 +29,7 @@ pub struct Item {
     pub image: String,
     pub weight: f32,
     pub equipped: bool,
+    pub experiment: Option<bool>,
     pub attrs: HashMap<&'static str, f32>,
 }
 
@@ -42,7 +43,6 @@ impl Item {
         name: String,
         quantity: i32,
         item_templates: &ItemTemplates,
-
     ) -> Item {
         let mut class = "Invalid".to_string();
         let mut subclass = "Invalid".to_string();
@@ -72,6 +72,7 @@ impl Item {
             image: image,
             weight: weight,
             equipped: false,
+            experiment: None,
             attrs: attrs,
         }
     }
@@ -109,6 +110,7 @@ impl Item {
             image: image,
             weight: weight,
             equipped: false,
+            experiment: None,
             attrs: attrs,
         };
 
@@ -122,22 +124,30 @@ impl Item {
         quantity: i32,
         item_templates: &ItemTemplates,
         items: &mut ResMut<Items>,
-    ) {
-        let new_item = Self::new(id, owner, name, quantity, item_templates);
+    ) -> (Item, bool) {
+        let new_item = Item::new(id, owner, name.clone(), quantity, item_templates);
 
-        // Can new item be merged into existing 
-        if Self::can_merge(new_item.class.clone()) {
+        // Can new item be merged into existing
+        if Item::can_merge(new_item.class.clone()) {
             if let Some(merged_index) = items
                 .iter()
                 .position(|item| item.owner == owner && item.name == new_item.name)
             {
                 let mut merged_item = &mut items[merged_index];
                 merged_item.quantity += new_item.quantity;
+
+                return (merged_item.clone(), true);
             } else {
                 items.push(new_item);
+
+                // Return new item to send to client
+                return (Item::new(id, owner, name, quantity, item_templates), false);
             }
         } else {
             items.push(new_item);
+
+            // Return new item to send to client
+            return (Item::new(id, owner, name, quantity, item_templates), false);
         }
     }
 
@@ -149,7 +159,7 @@ impl Item {
         attrs: HashMap<&'static str, f32>,
         recipe_templates: &RecipeTemplates,
         items: &mut Items,
-        custom_name: Option<String>, //override
+        custom_name: Option<String>,  //override
         custom_image: Option<String>, //override
     ) {
         // By default the recipe name is the item name
@@ -187,6 +197,7 @@ impl Item {
             image: image,
             weight: weight,
             equipped: false,
+            experiment: None,
             attrs: attrs,
         };
 
@@ -203,6 +214,15 @@ impl Item {
         }
 
         return owner_items;
+    }
+
+    pub fn get_by_class(owner: i32, class: String, items: &ResMut<Items>) -> Option<Item> {
+        if let Some(index) = Item::find_by_class(owner, class, items) {
+            let item = &items[index];
+            return Some(item.clone());
+        }
+
+        return None;
     }
 
     pub fn get_by_owner_packet(owner: i32, items: &ResMut<Items>) -> Vec<network::Item> {
@@ -249,6 +269,20 @@ impl Item {
         return None;
     }
 
+    pub fn to_packet(item: Item) -> network::Item {
+        return network::Item {
+            id: item.id,
+            owner: item.owner,
+            name: item.name.clone(),
+            quantity: item.quantity,
+            class: item.class.clone(),
+            subclass: item.subclass.clone(),
+            image: item.image.clone(),
+            weight: item.weight,
+            equipped: item.equipped,
+        };
+    }
+
     pub fn get_by_name_packet(item_name: String, items: &ResMut<Items>) -> Option<network::Item> {
         for item in items.iter() {
             if item.name == item_name {
@@ -278,7 +312,7 @@ impl Item {
             }
         }
 
-        return equipped; 
+        return equipped;
     }
 
     pub fn get_equipped_weapons(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
@@ -308,18 +342,15 @@ impl Item {
         }
     }
 
-    pub fn use_item(item_id: i32, status: bool, items: &mut ResMut<Items>) {
-
-    }
+    pub fn use_item(item_id: i32, status: bool, items: &mut ResMut<Items>) {}
 
     pub fn get_items_value_by_attr(attr: &str, items: Vec<Item>) -> f32 {
         let mut item_values = 0.0;
 
-
         for item in items.iter() {
             match item.attrs.get(&attr) {
                 Some(item_value) => item_values += item_value,
-                None => item_values += 0.0          
+                None => item_values += 0.0,
             }
         }
 
@@ -369,6 +400,8 @@ impl Item {
 
     // TODO reconsider returning the cloned item...
     pub fn find_by_id(item_id: i32, items: &ResMut<Items>) -> Option<Item> {
+        info!("Find by id {:?}", item_id);
+        info!("Items: {:?}", items);
         if let Some(index) = items.iter().position(|item| item.id == item_id) {
             return Some(items[index].clone());
         }
@@ -428,21 +461,19 @@ impl Item {
         }
     }
 
-    pub fn remove_quantity(item_id: i32, quantity: i32, items: &mut ResMut<Items>) {
-        if let Some(index) = items.iter().position(|item| item.id == item_id) {
-            let mut item = &mut items[index];
-            if item.quantity >= quantity {
-                item.quantity -= quantity;
+    pub fn remove_quantity(item_id: i32, quantity: i32, items: &mut ResMut<Items>) -> Option<Item> {
+        let index = items.iter().position(|item| item.id == item_id).unwrap(); // Should panic if item is not found
+        let mut item = &mut items[index];
+        if item.quantity >= quantity {
+            item.quantity -= quantity;
 
-                if item.quantity == 0 {
-                    items.swap_remove(index);
-                } 
-            } 
+            if item.quantity == 0 {
+                items.swap_remove(index);
+                return None;
+            }                            
         }
-    }
 
-    pub fn find_index_by_id(item_id: i32, items: &ResMut<Items>) -> Option<usize> {
-        items.iter().position(|item| item.id == item_id)
+        return Some(item.clone());
     }
 
     pub fn is_req(item: Item, reqs: Vec<ResReq>) -> bool {
@@ -456,6 +487,49 @@ impl Item {
         }
 
         return false;
+    }
+
+    pub fn get_weight(
+        item_name: String,
+        item_quantity: i32,
+        items: &ResMut<Items>,
+        item_templates: &ItemTemplates,
+    ) -> i32 {
+        let item_template = Item::get_template(item_name, item_templates);
+
+        return (item_quantity as f32 * item_template.weight) as i32;
+    }
+
+    pub fn get_total_weight(
+        owner: i32,
+        items: &ResMut<Items>,
+        item_templates: &ItemTemplates,
+    ) -> i32 {
+        let mut total_weight = 0.0;
+
+        for item in items.iter() {
+            if item.owner == owner {
+                let item_template = Item::get_template(item.name.clone(), item_templates);
+
+                total_weight += item_template.weight * item.quantity as f32;
+            }
+        }
+
+        return total_weight as i32;
+    }
+
+    pub fn get_template(item_name: String, item_templates: &ItemTemplates) -> &ItemTemplate {
+        for item_template in item_templates.iter() {
+            if item_name == item_template.name {
+                return item_template;
+            }
+        }
+
+        panic!("Invalid item template name {:?}", item_name);
+    }
+
+    pub fn find_index_by_id(item_id: i32, items: &ResMut<Items>) -> Option<usize> {
+        items.iter().position(|item| item.id == item_id)
     }
 
     fn can_merge(item_class: String) -> bool {
