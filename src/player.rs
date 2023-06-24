@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty};
 use crate::combat::{Combat, CombatQuery};
-use crate::experiment::Experiments;
+use crate::experiment::{self, Experiments};
 use crate::game::{
     is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick, HeroClassList,
     Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj, Order, PlayerId,
@@ -183,7 +183,8 @@ pub enum PlayerEvent {
     },
     SetExperimentItem {
         player_id: i32,
-        item_id: i32
+        item_id: i32,
+        is_resource: bool //assume is source if not resource
     }
 }
 
@@ -263,6 +264,7 @@ impl Plugin for PlayerPlugin {
             .add_system(info_advance_system)
             .add_system(info_tile_system)
             .add_system(info_item_system)
+            .add_system(info_experiment_system)
             .add_system(item_transfer_system)
             .add_system(item_split_system)
             .add_system(order_follow_system)
@@ -280,6 +282,7 @@ impl Plugin for PlayerPlugin {
             .add_system(order_explore_system)
             .add_system(use_item_system)
             .add_system(remove_system)
+            .add_system(set_experiment_item_system)
             .insert_resource(player_events);
     }
 }
@@ -1334,6 +1337,7 @@ fn item_transfer_system(
 
                     // Structure founded and under construction use case
                     if target.class.0 == "structure" && target.state.0 == obj::STATE_FOUNDED {
+                        info!("Transfering to target structure with state founded.");
                         let attrs = target.structure_attrs;
 
                         // Check if item is required for structure construction
@@ -1390,6 +1394,7 @@ fn item_transfer_system(
 
                         send_to_client(*player_id, item_transfer_packet, &clients);
                     } else if owner.class.0 == "structure" && owner.state.0 == obj::STATE_FOUNDED {
+                        info!("Transfering from owner structure with state founded.");
                         let attrs = target.structure_attrs;
 
                         // Check if item is required for structure construction
@@ -1454,6 +1459,7 @@ fn item_transfer_system(
                             error!("Obj is missing expected structure attributes");
                         }
                     } else {
+                        info!("Other item transfer");
                         Item::transfer(item.id, target.id.0, &mut items);
 
                         let source_capacity =
@@ -1615,6 +1621,71 @@ fn item_split_system(
 
                     send_to_client(*player_id, item_split_packet, &clients);
                 }
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn info_experiment_system(
+    mut events: ResMut<PlayerEvents>,
+    game_tick: ResMut<GameTick>,
+    ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    items: ResMut<Items>,
+    skills: Res<Skills>,
+    query: Query<CoreQuery>,
+    attrs_query: Query<&BaseAttrs>,
+    stats_query: Query<&Stats>,
+    structure_query: Query<&StructureAttrs>,
+    templates: Res<Templates>,
+) {
+
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::InfoExperinment {
+                player_id,
+                structure_id
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                    error!("Cannot find structure for {:?}", structure_id);
+                    break;
+                };
+
+                let Ok(structure) = query.get(structure_entity) else {
+                    error!("Cannot find structure for {:?}", structure_entity);
+                    break;
+                };
+
+                if structure.player_id.0 != *player_id {
+                    error!("Structure not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                let (experiment_source, experiment_reagents, other_resources) = Item::get_experiment_details_packet(*structure_id, &items);
+
+                let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment { 
+                    id: *structure_id, 
+                    expitem: experiment_source, 
+                    expresources: experiment_reagents,
+                    validresources: other_resources,
+                    expstate: experiment::EXP_STATE_NONE.to_owned(), 
+                    recipe: None
+                }; 
+
+                send_to_client(*player_id, info_experiment, &clients);
             }
             _ => {}
         }
@@ -2740,13 +2811,31 @@ fn set_experiment_item_system(
 
     for (event_id, event) in events.iter() {
         match event {
-            PlayerEvent::SetExperimentItem { player_id, item_id } => {
+            PlayerEvent::SetExperimentItem { player_id, item_id, is_resource } => {
                 events_to_remove.push(*event_id);
 
-                let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                let Some(item) = Item::find_by_id(*item_id, &items) else {
                     debug!("Failed to find item: {:?}", item_id);
                     continue;
                 };
+
+                if !is_resource {
+                    if Item::is_resource(item.clone()) {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Cannot set resource item as experiment source.".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        continue;                    
+                    }
+                } else {
+                    if !Item::is_resource(item.clone()) {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Can only set resource items as an experiment reagent.".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        continue;  
+                    }
+                }
 
                 // Validation checks get source entity
                 let Some(owner_entity) = ids.get_entity(item.owner) else {
@@ -2757,7 +2846,7 @@ fn set_experiment_item_system(
                 let Ok(owner) = query.get(owner_entity) else {
                     error!("Query failed to find entity {:?}", owner_entity);
                     continue;
-                };             
+                };
 
                 // Check if entity is owned by player
                 if owner.player_id.0 != *player_id {
@@ -2768,8 +2857,26 @@ fn set_experiment_item_system(
                     continue;
                 }
 
+                if !is_resource {
+                    Item::set_experiment_source(*item_id, &mut items);
+                } else {
+                    Item::set_experiment_reagent(*item_id, &mut items);
+                }
 
-              
+                let (experiment_source, 
+                    experiment_reagents, 
+                    other_resources) = Item::get_experiment_details_packet(item.owner, &items);
+
+                let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment { 
+                    id: owner.id.0, 
+                    expitem: experiment_source, 
+                    expresources: experiment_reagents,
+                    validresources: other_resources,
+                    expstate: experiment::EXP_STATE_NONE.to_owned(), 
+                    recipe: None
+                };       
+
+                send_to_client(*player_id, info_experiment, &clients);     
             }
             _ => {}
         }

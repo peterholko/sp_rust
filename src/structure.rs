@@ -188,6 +188,7 @@ impl Structure {
 
         return resource.to_string();
     }
+
 }
 
 pub struct StructurePlugin;

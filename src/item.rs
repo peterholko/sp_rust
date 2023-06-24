@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
+use crate::resource::{self};
 use crate::templates::{ItemTemplate, ItemTemplates, RecipeTemplates, ResReq};
 
 pub const DAMAGE: &str = "Damage";
@@ -18,6 +19,13 @@ pub const HEALTH: &str = "Health";
 
 pub const HEALING: &str = "Healing";
 
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExperimentItemType {
+    Source,
+    Reagent
+}
+
 #[derive(Debug, Clone)]
 pub struct Item {
     pub id: i32,
@@ -29,7 +37,7 @@ pub struct Item {
     pub image: String,
     pub weight: f32,
     pub equipped: bool,
-    pub experiment: Option<bool>,
+    pub experiment: Option<ExperimentItemType>,
     pub attrs: HashMap<&'static str, f32>,
 }
 
@@ -414,7 +422,7 @@ impl Item {
             // Immutable item to transfer
             let item_to_transfer = items[transfer_index].clone();
 
-            if Self::can_merge(item_to_transfer.class.clone()) {
+            if Item::can_merge(item_to_transfer.class.clone()) {
                 if let Some(merged_index) = items
                     .iter()
                     .position(|item| item.owner == target_id && item.name == item_to_transfer.name)
@@ -428,6 +436,9 @@ impl Item {
                     let transfer_item = &mut items[transfer_index];
                     transfer_item.owner = target_id;
                 }
+            } else {
+                let transfer_item = &mut items[transfer_index];
+                transfer_item.owner = target_id;
             }
         }
     }
@@ -526,6 +537,79 @@ impl Item {
         }
 
         panic!("Invalid item template name {:?}", item_name);
+    }
+
+    pub fn set_experiment_source(item_id: i32, items: &mut ResMut<Items>) {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            let mut item = &mut items[index];
+
+            item.experiment = Some(ExperimentItemType::Source);
+        } else {
+            error!("Cannot find item: {:?}", item_id);
+        }       
+    }
+
+    pub fn set_experiment_reagent(item_id: i32, items: &mut ResMut<Items>) {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            let mut item = &mut items[index];
+
+            item.experiment = Some(ExperimentItemType::Reagent);
+        } else {
+            error!("Cannot find item: {:?}", item_id);
+        }       
+    }
+
+    pub fn get_experiment_details_packet(structure_id: i32, items: &ResMut<Items>) -> (Vec<network::Item>, Vec<network::Item>, Vec<network::Item>) {
+        let mut experiment_source: Vec<network::Item> = Vec::new();
+        let mut experiment_reagents: Vec<network::Item> = Vec::new();
+        let mut other_resources: Vec<network::Item> = Vec::new();
+
+        for item in items.iter() {
+            if item.owner == structure_id {
+                if let Some(item_experiment_type) = &item.experiment {
+                    if *item_experiment_type == ExperimentItemType::Reagent {
+                        experiment_reagents.push(Item::to_packet(item.clone()));
+                    } else if *item_experiment_type == ExperimentItemType::Source {
+                        experiment_source.push(Item::to_packet(item.clone()));
+                    }
+                } else {
+                    other_resources.push(Item::to_packet(item.clone()));
+                }
+            }
+        }
+
+        return (experiment_source, experiment_reagents, other_resources);
+    }
+
+    pub fn get_experiment_source_reagents(structure_id: i32, items: &ResMut<Items>) -> (Option<Item>, Vec<Item>) {
+        let mut experiment_source = None;
+        let mut experiment_reagents = Vec::new();
+
+        for item in items.iter() {
+            if item.owner == structure_id {
+                if let Some(item_experiment_type) = &item.experiment {
+                    if *item_experiment_type == ExperimentItemType::Reagent {
+                        experiment_reagents.push(item.clone());
+                    } else if *item_experiment_type == ExperimentItemType::Source {
+                        experiment_source = Some(item.clone());
+                    }
+                }
+            }
+        }
+
+        return (experiment_source, experiment_reagents);
+    }
+
+    pub fn is_resource(item: Item) -> bool {
+        match item.class.as_str() {
+            resource::ORE => true,
+            resource::WOOD => true,
+            resource::STONE => true,
+            resource::INGOT => true,
+            resource::TIMBER => true,
+            resource::BLOCK => true,
+            _ => false
+        }
     }
 
     pub fn find_index_by_id(item_id: i32, items: &ResMut<Items>) -> Option<usize> {

@@ -28,7 +28,7 @@ use crate::ai::{
     VisibleTarget, VisibleTargetScorerBuilder, NO_TARGET,
 };
 use crate::encounter::Encounter;
-use crate::experiment::ExperimentPlugin;
+use crate::experiment::{ExperimentPlugin, Experiments, Experiment, self};
 use crate::item::{self, Item, ItemPlugin, Items};
 use crate::map::{Map, MapPlugin, MapTile, self};
 use crate::network::{self, network_obj, send_to_client, BroadcastEvents};
@@ -201,6 +201,7 @@ pub enum Order {
     Operate,
     Refine,
     Craft { recipe_name: String },
+    Experiment,
     Explore,
 }
 
@@ -359,6 +360,9 @@ pub enum VisibleEvent {
         structure_id: i32,
         recipe_name: String,
     },
+    ExperimentEvent {
+        structure_id: i32,        
+    },
     ExploreEvent,
     UseItemEvent {
         item_id: i32,
@@ -404,6 +408,7 @@ impl Plugin for GamePlugin {
             .add_system(gather_event_system)
             .add_system(operate_refine_event_system)
             .add_system(craft_event_system)
+            .add_system(experiment_event_system)
             .add_system(explore_event_system)
             .add_system(damage_event_system)
             .add_system(cooldown_event_system)
@@ -1192,6 +1197,61 @@ fn craft_event_system(
     for event_id in events_to_remove.iter() {
         map_events.remove(event_id);
     }
+}
+
+fn experiment_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut resources: ResMut<Resources>,
+    mut items: ResMut<Items>,
+    skills: ResMut<Skills>,
+    templates: Res<Templates>,
+    recipes: Res<Recipes>,
+    mut experiments: ResMut<Experiments>,
+    //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    mut state_query: Query<&mut State>,
+    mut map_events: ResMut<MapEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::ExperimentEvent {
+                    structure_id,
+                } => {
+                    info!("Processing ExperimentEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let mut experiment: Option<&mut Experiment> = None;
+
+                    for e in experiments.iter_mut() {
+                        if *structure_id == e.structure {
+                            experiment = Some(e);
+                        }                        
+                    }
+
+
+                    if let Some(experiment) = experiment {
+                        if experiment.recipe == experiment::EXP_RECIPE_NONE {
+
+
+                        }
+                    }
+
+
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+                  
 }
 
 fn explore_event_system(

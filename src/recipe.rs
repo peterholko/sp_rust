@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
-use crate::templates::{RecipeTemplates, ResReq};
+use crate::templates::{RecipeTemplates, ResReq, Templates, RecipeTemplate};
 
 #[derive(Debug, Clone)]
 pub struct Recipe {
@@ -70,6 +70,36 @@ impl Recipe {
 
         return None;
     }
+
+    pub fn get_by_subclass_tier(structure: String, subclass: String, tier: i32, templates: Res<Templates>) -> Vec<RecipeTemplate> {
+        let all_recipes = RecipeTemplate::get_by_structure(structure, templates);
+
+        let mut recipes_by_subclass_tier = Vec::new();
+
+        for recipe in all_recipes.iter() {
+            if let Some(recipe_tier) = recipe.tier {
+                if recipe.subclass == subclass && recipe_tier == tier {
+                    recipes_by_subclass_tier.push(recipe.clone());
+                }
+            }
+        }
+
+        return recipes_by_subclass_tier;
+    }
+
+    pub fn get_by_structure(structure_id: i32, recipes: &Res<Recipes>) -> Vec<Recipe> {
+        
+        let mut owner_recipes: Vec<Recipe> = Vec::new();
+
+        for recipe in recipes.iter() {
+            if recipe.owner == structure_id {
+                owner_recipes.push(recipe.clone());
+            }
+        }
+
+        return owner_recipes
+    }
+
 
     pub fn get_by_structure_packet(
         owner: i32,

@@ -115,7 +115,9 @@ enum NetworkPacket {
     #[serde(rename = "info_experiment")]
     InfoExperiment { structureid: i32 },
     #[serde(rename = "set_exp_item")]
-    SetExperimentItem { item: i32 },
+    SetExperimentItem { itemid: i32 },
+    #[serde(rename = "set_exp_resource")]
+    SetExperimentResource { itemid: i32 },
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -344,8 +346,12 @@ pub enum ResponsePacket {
     },
     #[serde(rename = "info_experiment")]
     InfoExperiment {
-        structure_id: i32,
-        exp_item_id: i32,
+        id: i32,
+        expitem: Vec<Item>,
+        expresources: Vec<Item>,
+        validresources: Vec<Item>,
+        expstate: String,
+        recipe: Option<Recipe>
     },
     #[serde(rename = "structure_list")]
     StructureList(StructureList),
@@ -897,9 +903,14 @@ async fn handle_connection(
                                             NetworkPacket::InfoExperiment{structureid} => {
                                                 handle_info_experiment(player_id, structureid, client_to_game_sender.clone())
                                             }
-                                            NetworkPacket::SetExperimentItem{item} => {
-                                                handle_set_experiment_item(player_id, item, client_to_game_sender.clone())
+                                            NetworkPacket::SetExperimentItem{itemid} => {  
+                                                //Setting experiment source item, is_resource = false                                                                                              
+                                                handle_set_experiment_item(player_id, itemid, false, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::SetExperimentResource{itemid} => {                                                                                                
+                                                //Setting experiment resource item, is_resource = true                                                                                              
+                                                handle_set_experiment_item(player_id, itemid, true, client_to_game_sender.clone())
+                                            } 
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -1572,7 +1583,7 @@ fn handle_info_experiment(
     client_to_game_sender
         .send(PlayerEvent::InfoExperinment {
             player_id: player_id,
-            structure_id: structureid, // sourceid should really be renamed to structure_id in the client
+            structure_id: structureid, 
         })
         .expect("Could not send message");
 
@@ -1582,13 +1593,15 @@ fn handle_info_experiment(
 
 fn handle_set_experiment_item(
     player_id: i32,
-    item: i32,
+    itemid: i32,
+    is_resource: bool,
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::SetExperimentItem {
             player_id: player_id,
-            item_id: item, // sourceid should really be renamed to structure_id in the client
+            item_id: itemid, 
+            is_resource: is_resource
         })
         .expect("Could not send message");
 

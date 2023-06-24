@@ -151,7 +151,6 @@ pub fn process_order_system(
     mut query: Query<(&Actor, &mut ActionState, &ProcessOrder, &ActionSpan)>,
 ) {
     for (Actor(actor), mut state, _process_order, span) in &mut query {
-        debug!("entity: {:?}", actor);
         if let Ok(morale) = morales.get(*actor) {
             match *state {
                 ActionState::Requested => {
@@ -202,6 +201,13 @@ pub fn process_order_system(
                             debug!("Process Craft Order {:?}", recipe_name);
                             if is_none_state(&villager.state.0) {
                                 debug!("Executing Crafting");
+                                *state = ActionState::Executing;
+                            }
+                        }
+                        Order::Experiment => {
+                            debug!("Process Experiment Order");
+                            if is_none_state(&villager.state.0) {
+                                debug!("Executing Experiment");
                                 *state = ActionState::Executing;
                             }
                         }
@@ -530,6 +536,110 @@ pub fn process_order_system(
                                 }
                             }
                         }
+                        Order::Experiment => {
+                            if is_none_state(&villager.state.0) {
+                                let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
+                                    error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                                    continue;
+                                };
+
+                                let Ok(structure_pos) = all_pos.get(structure_entity) else {
+                                    error!("Query failed to find entity {:?}", structure_entity);
+                                    continue;
+                                };
+
+                                // Check if villager is on structure
+                                if villager.pos.x != structure_pos.x
+                                    || villager.pos.y != structure_pos.y
+                                {
+                                    if let Some(path_result) = Map::find_path(
+                                        villager.pos.x,
+                                        villager.pos.y,
+                                        structure_pos.x,
+                                        structure_pos.y,
+                                        &map,
+                                    ) {
+                                        debug!("Path to structure: {:?}", path_result);
+
+                                        let (path, c) = path_result;
+                                        let next_pos = &path[1];
+
+                                        debug!("Next pos: {:?}", next_pos);
+
+                                        // Add State Change Event to Moving
+                                        let state_change_event = VisibleEvent::StateChangeEvent {
+                                            new_state: "moving".to_string(),
+                                        };
+
+                                        villager.state.0 = "moving".to_string();
+
+                                        map_events.new(
+                                            ids.new_map_event_id(),
+                                            *actor,
+                                            villager.id,
+                                            villager.player_id,
+                                            villager.pos,
+                                            game_tick.0 + 4,
+                                            state_change_event,
+                                        );
+
+                                        // Add Move Event
+                                        let move_event = VisibleEvent::MoveEvent {
+                                            dst_x: next_pos.0,
+                                            dst_y: next_pos.1,
+                                        };
+
+                                        map_events.new(
+                                            ids.new_map_event_id(),
+                                            *actor,
+                                            villager.id,
+                                            villager.player_id,
+                                            villager.pos,
+                                            game_tick.0 + 36, // in the future
+                                            move_event,
+                                        );
+
+                                        commands.entity(*actor).insert(EventInProgress);
+                                    }
+                                } else {
+                                    // Create craft event
+                                    let craft_event = VisibleEvent::ExperimentEvent {
+                                       structure_id: villager.attrs.structure
+                                    };
+
+                                    // Add State Change Event to Moving
+                                    let state_change_event = VisibleEvent::StateChangeEvent {
+                                        new_state: "experimenting".to_string(),
+                                    };
+
+                                    villager.state.0 = "experimenting".to_string();
+
+                                    map_events.new(
+                                        ids.new_map_event_id(),
+                                        *actor,
+                                        villager.id,
+                                        villager.player_id,
+                                        villager.pos,
+                                        game_tick.0 + 4,
+                                        state_change_event,
+                                    );
+
+                                    map_events.new(
+                                        ids.new_map_event_id(),
+                                        *actor,
+                                        villager.id,
+                                        villager.player_id,
+                                        villager.pos,
+                                        game_tick.0 + 200, // in the future
+                                        craft_event,
+                                    );
+
+                                    commands.entity(*actor).insert(EventInProgress);
+
+                                    *state = ActionState::Success;
+                                }
+                            }
+                        }
                         Order::Explore => {
                             if is_none_state(&villager.state.0) {
                                 let explore_event = VisibleEvent::ExploreEvent;
@@ -718,7 +828,6 @@ fn attack_target_system(
     mut query: Query<(&Actor, &mut ActionState, &ChaseAttack)>,
 ) {
     for (Actor(actor), mut state, chase_attack) in &mut query {
-        debug!("entity: {:?}", actor);
         let Ok(visible_target) = visible_target_query.get(*actor) else {
             continue;
         };
@@ -945,7 +1054,6 @@ pub fn target_scorer_system(
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorerBuilder>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
-        debug!("entity: {:?}", actor);
         if let Ok(target) = target_query.get(*actor) {
             debug!("Scorer target_id: {:?}", target);
             if target.target != NO_TARGET {
@@ -989,7 +1097,6 @@ pub fn morale_scorer_system(
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<HighMorale>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
-        debug!("entity: {:?}", actor);
         if let Ok(morale) = morales.get(*actor) {
             score.set(morale.morale / 100.0);
 

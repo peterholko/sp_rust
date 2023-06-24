@@ -123,7 +123,7 @@ pub struct SkillTemplate {
 #[derive(Debug, Resource, Deref, DerefMut)]
 pub struct RecipeTemplates(Vec<RecipeTemplate>);
 
-#[derive(Debug, Resource, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
 pub struct RecipeTemplate {
     pub name: String,
     pub image: String,
@@ -139,6 +139,20 @@ pub struct RecipeTemplate {
     pub skill_req: Option<i32>,
     pub weight: i32,
     pub req: Vec<ResReq>,
+}
+
+impl RecipeTemplate {
+    pub fn get_by_structure(structure: String, templates: Res<Templates>) -> Vec<RecipeTemplate> {
+        let mut recipe_templates = Vec::new();
+
+        for recipe_template in templates.recipe_templates.iter() {
+            if structure == recipe_template.structure {
+                recipe_templates.push(recipe_template.clone());
+            }
+        }
+
+        return recipe_templates;
+    }
 }
 
 /// The systems that make structures tick.

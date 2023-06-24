@@ -16,6 +16,10 @@ pub const WATER: &str = "Water";
 pub const FOOD: &str = "Food";
 pub const PLANT: &str = "Plant";
 
+pub const INGOT: &str = "Ingot";
+pub const TIMBER: &str = "Timber";
+pub const BLOCK: &str = "Block";
+
 pub const HIGH: &str = "high";
 pub const AVERAGE: &str = "average";
 pub const LOW: &str = "low";
