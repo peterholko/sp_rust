@@ -1,0 +1,5 @@
+### Exploring Improvements ###
+
+1.  Special Terrain features with bonuses to resources uncovered during the exploring action
+2.  Resource overlay
+3.  Multi tile exploring (could cause problems determining which tile to explore next)
