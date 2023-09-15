@@ -1,11 +1,10 @@
 use bevy::prelude::*;
 
-use std::{
-    collections::HashMap};
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use std::fs;
 use serde_json::Value;
+use std::fs;
 
 #[derive(Debug, Resource)]
 pub struct Templates {
@@ -24,11 +23,11 @@ pub struct ResReq {
     #[serde(rename = "type")]
     pub req_type: String,
     pub quantity: i32,
-    pub cquantity: Option<i32> // current quantity
+    pub cquantity: Option<i32>, // current quantity
 }
 
 #[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
-// Another way to build the struct... 
+// Another way to build the struct...
 /*pub struct ObjTemplate {
     pub name: String,
     pub class: String,
@@ -74,13 +73,10 @@ impl ObjTemplate {
             }
         }
 
-        // Cannot recover from an invalid obj template 
+        // Cannot recover from an invalid obj template
         panic!("Cannot find obj_template: {:?}", template_name);
     }
-
 }
-
-
 
 #[derive(Debug, Resource, Deref, DerefMut)]
 pub struct ItemTemplates(Vec<ItemTemplate>);
@@ -105,6 +101,8 @@ pub struct ResTemplate {
     #[serde(rename = "type")]
     pub res_type: String,
     pub terrain: Vec<String>,
+    pub yield_rate: Vec<i32>,
+    pub yield_mod: Vec<f32>,
     pub quantity_rate: Vec<i32>,
     pub quantity: Vec<i32>,
     pub skill_req: i32,
@@ -142,7 +140,7 @@ pub struct RecipeTemplate {
 }
 
 impl RecipeTemplate {
-    pub fn get_by_structure(structure: String, templates: Res<Templates>) -> Vec<RecipeTemplate> {
+    pub fn get_by_structure(structure: String, templates: &Res<Templates>) -> Vec<RecipeTemplate> {
         let mut recipe_templates = Vec::new();
 
         for recipe_template in templates.recipe_templates.iter() {
@@ -152,6 +150,16 @@ impl RecipeTemplate {
         }
 
         return recipe_templates;
+    }
+
+    pub fn get_by_name(name: String, templates: &Res<Templates>) -> Option<RecipeTemplate> {
+        for recipe_template in templates.recipe_templates.iter() {
+            if name == recipe_template.name {
+                return Some(recipe_template.clone());
+            }
+        }
+
+        return None;
     }
 }
 
@@ -177,8 +185,10 @@ impl Plugin for TemplatesPlugin {
             serde_yaml::from_reader(res_template_file).expect("Could not read values.");
 
         // Convert vector to hashmap for faster access of individual skill
-        let res_templates: HashMap<_, _> =
-            res_templates_vec.iter().map(|x| (x.name.clone(), x.clone())).collect();
+        let res_templates: HashMap<_, _> = res_templates_vec
+            .iter()
+            .map(|x| (x.name.clone(), x.clone()))
+            .collect();
 
         // Load skill template data
         let skill_template_file =
@@ -187,8 +197,10 @@ impl Plugin for TemplatesPlugin {
             serde_yaml::from_reader(skill_template_file).expect("Could not read values.");
 
         // Convert vector to hashmap for faster access of individual skill
-        let skill_templates: HashMap<_, _> =
-            skill_templates_vec.iter().map(|x| (x.name.clone(), x.clone())).collect();
+        let skill_templates: HashMap<_, _> = skill_templates_vec
+            .iter()
+            .map(|x| (x.name.clone(), x.clone()))
+            .collect();
 
         // Load skill template data
         let recipe_template_file =

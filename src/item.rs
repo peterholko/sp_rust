@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use std::collections::HashMap;
 
+use crate::game::Ids;
 use crate::network;
 use crate::resource::{self};
 use crate::templates::{ItemTemplate, ItemTemplates, RecipeTemplates, ResReq};
@@ -11,19 +12,31 @@ pub const DAMAGE: &str = "Damage";
 pub const WATER: &str = "Water";
 pub const THIRST: &str = "Thirst";
 
+pub const FOOD: &str = "Food";
+pub const FEED: &str = "Feed";
+
 pub const WEAPON: &str = "Weapon";
 pub const ARMOR: &str = "Armor";
+
+pub const GATHERING: &str = "Gathering";
 
 pub const POTION: &str = "Potion";
 pub const HEALTH: &str = "Health";
 
 pub const HEALING: &str = "Healing";
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemLocation {
+    Own,
+    OwnStructure,
+    OtherOwnUnit,
+    OtherStructure,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExperimentItemType {
     Source,
-    Reagent
+    Reagent,
 }
 
 #[derive(Debug, Clone)]
@@ -62,13 +75,11 @@ impl Item {
                 class = item_template.class.clone();
                 subclass = item_template.subclass.clone();
                 image = item_template.image.clone();
-                weight = item_template.weight * (quantity as f32);
+                weight = item_template.weight;
             }
         }
 
-        let mut attrs = HashMap::new();
-
-        //attrs.insert(THIRST, 70.0);
+        let attrs = HashMap::new();
 
         Item {
             id: id,
@@ -104,7 +115,7 @@ impl Item {
                 class = item_template.class.clone();
                 subclass = item_template.subclass.clone();
                 image = item_template.image.clone();
-                weight = item_template.weight * (quantity as f32);
+                weight = item_template.weight;
             }
         }
 
@@ -169,7 +180,7 @@ impl Item {
         items: &mut Items,
         custom_name: Option<String>,  //override
         custom_image: Option<String>, //override
-    ) {
+    ) -> Item {
         // By default the recipe name is the item name
         let mut name: String = recipe_name.clone();
 
@@ -209,7 +220,9 @@ impl Item {
             attrs: attrs,
         };
 
-        items.push(new_item);
+        items.push(new_item.clone());
+
+        return new_item;
     }
 
     pub fn get_by_owner(owner: i32, items: &ResMut<Items>) -> Vec<Item> {
@@ -366,12 +379,9 @@ impl Item {
     }
 
     fn find_by_class(owner: i32, class: String, items: &ResMut<Items>) -> Option<usize> {
-        println!("items: {:?}", items);
-
         let index = items
             .iter()
             .position(|item| item.owner == owner && item.class == class);
-        println!("index: {:?}", index);
         return index;
     }
 
@@ -417,6 +427,23 @@ impl Item {
         return None;
     }
 
+    pub fn transfer_quantity(
+        item_id: i32,
+        target_id: i32,
+        quantity: i32,
+        ids: &mut ResMut<Ids>,
+        items: &mut ResMut<Items>,
+        item_templates: &ItemTemplates,
+    ) {
+        let new_id = ids.new_item_id();
+
+        // First call split
+        Item::split(item_id, quantity, new_id, items, item_templates);
+
+        // Then transfer
+        Item::transfer(new_id, target_id, items);
+    }
+
     pub fn transfer(item_id: i32, target_id: i32, items: &mut ResMut<Items>) {
         if let Some(transfer_index) = items.iter().position(|item| item.id == item_id) {
             // Immutable item to transfer
@@ -454,15 +481,15 @@ impl Item {
             let mut item = &mut items[index];
             item.quantity -= quantity;
 
-            let new_item = Self::new(
+            Item::new_with_attrs(
                 new_id,
                 item.owner,
                 item.name.clone(),
                 quantity,
+                item.attrs.clone(),
                 item_templates,
+                items,
             );
-
-            items.push(new_item);
         }
     }
 
@@ -481,7 +508,7 @@ impl Item {
             if item.quantity == 0 {
                 items.swap_remove(index);
                 return None;
-            }                            
+            }
         }
 
         return Some(item.clone());
@@ -500,10 +527,9 @@ impl Item {
         return false;
     }
 
-    pub fn get_weight(
+    pub fn get_weight_from_template(
         item_name: String,
         item_quantity: i32,
-        items: &ResMut<Items>,
         item_templates: &ItemTemplates,
     ) -> i32 {
         let item_template = Item::get_template(item_name, item_templates);
@@ -511,18 +537,12 @@ impl Item {
         return (item_quantity as f32 * item_template.weight) as i32;
     }
 
-    pub fn get_total_weight(
-        owner: i32,
-        items: &ResMut<Items>,
-        item_templates: &ItemTemplates,
-    ) -> i32 {
+    pub fn get_total_weight(owner: i32, items: &ResMut<Items>) -> i32 {
         let mut total_weight = 0.0;
 
         for item in items.iter() {
             if item.owner == owner {
-                let item_template = Item::get_template(item.name.clone(), item_templates);
-
-                total_weight += item_template.weight * item.quantity as f32;
+                total_weight += item.weight * item.quantity as f32;
             }
         }
 
@@ -539,14 +559,26 @@ impl Item {
         panic!("Invalid item template name {:?}", item_name);
     }
 
-    pub fn set_experiment_source(item_id: i32, items: &mut ResMut<Items>) {
+    pub fn set_experiment_source(item_id: i32, items: &mut ResMut<Items>) -> Item {
         if let Some(index) = items.iter().position(|item| item.id == item_id) {
             let mut item = &mut items[index];
 
             item.experiment = Some(ExperimentItemType::Source);
+            return item.clone();
         } else {
-            error!("Cannot find item: {:?}", item_id);
-        }       
+            panic!("Cannot find item: {:?}", item_id);
+        }
+    }
+
+    pub fn remove_experiment_source(item_id: i32, items: &mut ResMut<Items>) -> Item {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            let mut item = &mut items[index];
+
+            item.experiment = None;
+            return item.clone();
+        } else {
+            panic!("Cannot find item: {:?}", item_id);
+        }
     }
 
     pub fn set_experiment_reagent(item_id: i32, items: &mut ResMut<Items>) {
@@ -556,10 +588,23 @@ impl Item {
             item.experiment = Some(ExperimentItemType::Reagent);
         } else {
             error!("Cannot find item: {:?}", item_id);
-        }       
+        }
     }
 
-    pub fn get_experiment_details_packet(structure_id: i32, items: &ResMut<Items>) -> (Vec<network::Item>, Vec<network::Item>, Vec<network::Item>) {
+    pub fn remove_experiment_reagent(item_id: i32, items: &mut ResMut<Items>) {
+        if let Some(index) = items.iter().position(|item| item.id == item_id) {
+            let mut item = &mut items[index];
+
+            item.experiment = None;
+        } else {
+            error!("Cannot find item: {:?}", item_id);
+        }
+    }
+
+    pub fn get_experiment_details_packet(
+        structure_id: i32,
+        items: &ResMut<Items>,
+    ) -> (Vec<network::Item>, Vec<network::Item>, Vec<network::Item>) {
         let mut experiment_source: Vec<network::Item> = Vec::new();
         let mut experiment_reagents: Vec<network::Item> = Vec::new();
         let mut other_resources: Vec<network::Item> = Vec::new();
@@ -581,7 +626,10 @@ impl Item {
         return (experiment_source, experiment_reagents, other_resources);
     }
 
-    pub fn get_experiment_source_reagents(structure_id: i32, items: &ResMut<Items>) -> (Option<Item>, Vec<Item>) {
+    pub fn get_experiment_source_reagents(
+        structure_id: i32,
+        items: &ResMut<Items>,
+    ) -> (Option<Item>, Vec<Item>) {
         let mut experiment_source = None;
         let mut experiment_reagents = Vec::new();
 
@@ -600,6 +648,22 @@ impl Item {
         return (experiment_source, experiment_reagents);
     }
 
+    pub fn get_experiment_reagent(
+        structure_id: i32,
+        subclass: String,
+        items: &ResMut<Items>,
+    ) -> Option<i32> {
+        for item in items.iter() {
+            if item.owner == structure_id
+                && item.subclass == subclass
+                && item.experiment == Some(ExperimentItemType::Reagent)
+            {
+                return Some(item.id);
+            }
+        }
+        return None;
+    }
+
     pub fn is_resource(item: Item) -> bool {
         match item.class.as_str() {
             resource::ORE => true,
@@ -608,7 +672,7 @@ impl Item {
             resource::INGOT => true,
             resource::TIMBER => true,
             resource::BLOCK => true,
-            _ => false
+            _ => false,
         }
     }
 

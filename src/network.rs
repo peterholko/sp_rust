@@ -4,7 +4,6 @@ use serde_with::skip_serializing_none;
 
 use std::{
     collections::HashMap,
-    collections::HashSet,
     sync::{Arc, Mutex},
 };
 
@@ -18,18 +17,19 @@ use tokio_tungstenite::{accept_async, tungstenite::Error};
 
 use serde::{Deserialize, Serialize};
 
-use crate::map::MapTile;
-use crate::templates::ResReq;
 use crate::{
-    game::{Account, Accounts, Client, Clients, HeroClassList},
+    account::{Account, Accounts},
+    templates::ResReq,
+};
+use crate::{
+    game::{Client, Clients, HeroClassList},
     player::PlayerEvent,
 };
+use crate::{map::MapTile, recipe, templates::RecipeTemplate};
 
 use std::path::Path;
 
 use glob::glob;
-
-pub type Tileset = HashMap<String, String>;
 
 //pub struct Network; // Is this needed?
 
@@ -72,6 +72,8 @@ enum NetworkPacket {
     InfoItemByName { name: String },
     #[serde(rename = "info_item_transfer")]
     InfoItemTransfer { sourceid: i32, targetid: i32 },
+    #[serde(rename = "info_exit")]
+    InfoExit { id: i32, paneltype: String },
     #[serde(rename = "item_transfer")]
     ItemTransfer { targetid: i32, item: i32 },
     #[serde(rename = "item_split")]
@@ -88,6 +90,8 @@ enum NetworkPacket {
     OrderCraft { sourceid: i32, recipe: String },
     #[serde(rename = "order_explore")]
     OrderExplore { sourceid: i32 },
+    #[serde(rename = "order_experiment")]
+    OrderExperiment { structureid: i32 },
     #[serde(rename = "structure_list")]
     StructureList {},
     #[serde(rename = "create_foundation")]
@@ -98,6 +102,8 @@ enum NetworkPacket {
     Survey { sourceid: i32 },
     #[serde(rename = "explore")]
     Explore {},
+    #[serde(rename = "nearby_resources")]
+    NearbyResources {},
     #[serde(rename = "assign_list")]
     AssignList {},
     #[serde(rename = "assign")]
@@ -118,13 +124,14 @@ enum NetworkPacket {
     SetExperimentItem { itemid: i32 },
     #[serde(rename = "set_exp_resource")]
     SetExperimentResource { itemid: i32 },
+    #[serde(rename = "reset_experiment")]
+    ResetExperiment { structureid: i32 },
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct StructureList {
     pub result: Vec<Structure>,
 }
-
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -137,6 +144,10 @@ pub enum ResponsePacket {
     #[serde(rename = "info_select_class")]
     InfoSelectClass {
         result: String,
+    },
+    #[serde(rename = "login")]
+    Login {
+        player: u32,
     },
     #[serde(rename = "map")]
     Map {
@@ -351,7 +362,16 @@ pub enum ResponsePacket {
         expresources: Vec<Item>,
         validresources: Vec<Item>,
         expstate: String,
-        recipe: Option<Recipe>
+        recipe: Option<Recipe>,
+    },
+    #[serde(rename = "info_experiment_state")]
+    InfoExperimentState {
+        id: i32,
+        expstate: String,
+    },
+    #[serde(rename = "nearby_resources")]
+    NearbyResources {
+        data: Vec<TileResourceWithPos>,
     },
     #[serde(rename = "structure_list")]
     StructureList(StructureList),
@@ -410,6 +430,12 @@ pub enum ResponsePacket {
         xp_type: String,
         xp: i32,
     },
+    #[serde(rename = "new_items")]
+    NewItems {
+        action: String,
+        sourceid: i32,
+        item_name: String,
+    },
     Ok,
     None,
     Pong,
@@ -449,8 +475,6 @@ pub enum ChangeEvents {
     },
 }
 
-
-
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct StatsData {
     pub id: i32,
@@ -462,7 +486,7 @@ pub struct StatsData {
 }
 
 #[skip_serializing_none]
-#[derive( Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "packet")]
 pub enum BroadcastEvents {
     #[serde(rename = "dmg")]
@@ -475,6 +499,8 @@ pub enum BroadcastEvents {
         combo: Option<String>,
         countered: Option<String>,
     },
+    #[serde(rename = "speech")] // TODO consider renaming
+    SoundObjEvent { source: i32, text: String },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, Hash, PartialEq)]
@@ -483,7 +509,7 @@ pub struct MapObj {
     pub player: i32,
     pub name: String,
     pub class: String,
-    pub subclass: String, 
+    pub subclass: String,
     pub template: String,
     pub image: String,
     pub x: i32,
@@ -565,7 +591,19 @@ pub struct Skill {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TileResource {
     pub name: String,
-    pub quantity: i32,
+    pub color: i32,
+    pub yield_label: String,
+    pub quantity_label: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct TileResourceWithPos {
+    pub name: String,
+    pub color: i32,
+    pub yield_label: String,
+    pub quantity_label: String,
+    pub x: i32,
+    pub y: i32,
 }
 
 pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clients>) {
@@ -742,7 +780,7 @@ async fn handle_connection(
                                             NetworkPacket::Login{username, password} => {
                                                 println!("{:?}", username);
                                                 //Retrieve player id, note will be set if authenticated
-                                                let (pid, res) = handle_login(username, password, accounts.clone());
+                                                let (pid, res) = handle_login(username, password, accounts.clone(), client_to_game_sender.clone());
 
                                                 //Set player_id
                                                 player_id = pid;
@@ -840,6 +878,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoItemTransfer{sourceid, targetid} => {
                                                 handle_info_item_transfer(player_id, sourceid, targetid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoExit{id, paneltype} => {
+                                                handle_info_exit(player_id, id, paneltype, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::ItemTransfer{targetid, item} => {
                                                 handle_item_transfer(player_id, targetid, item, client_to_game_sender.clone())
                                             }
@@ -867,6 +908,9 @@ async fn handle_connection(
                                             NetworkPacket::Survey{sourceid} => {
                                                 handle_survey(player_id, sourceid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::NearbyResources{} => {
+                                                handle_nearby_resources(player_id, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::Explore{} => {
                                                 handle_explore(player_id, client_to_game_sender.clone())
                                             }
@@ -891,6 +935,9 @@ async fn handle_connection(
                                             NetworkPacket::OrderExplore{sourceid} => {
                                                 handle_order_explore(player_id, sourceid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::OrderExperiment{structureid} => {
+                                                handle_order_experiment(player_id, structureid, client_to_game_sender.clone())
+                                            }
                                             NetworkPacket::Use{item} => {
                                                 handle_use(player_id, item, client_to_game_sender.clone())
                                             }
@@ -903,14 +950,17 @@ async fn handle_connection(
                                             NetworkPacket::InfoExperiment{structureid} => {
                                                 handle_info_experiment(player_id, structureid, client_to_game_sender.clone())
                                             }
-                                            NetworkPacket::SetExperimentItem{itemid} => {  
-                                                //Setting experiment source item, is_resource = false                                                                                              
+                                            NetworkPacket::SetExperimentItem{itemid} => {
+                                                //Setting experiment source item, is_resource = false
                                                 handle_set_experiment_item(player_id, itemid, false, client_to_game_sender.clone())
                                             }
-                                            NetworkPacket::SetExperimentResource{itemid} => {                                                                                                
-                                                //Setting experiment resource item, is_resource = true                                                                                              
+                                            NetworkPacket::SetExperimentResource{itemid} => {
+                                                //Setting experiment resource item, is_resource = true
                                                 handle_set_experiment_item(player_id, itemid, true, client_to_game_sender.clone())
-                                            } 
+                                            }
+                                            NetworkPacket::ResetExperiment{structureid} => {
+                                                handle_reset_experiment(player_id, structureid, client_to_game_sender.clone())
+                                            }
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -952,24 +1002,37 @@ async fn handle_connection(
     Ok(())
 }
 
-fn handle_login(username: String, password: String, accounts: Accounts) -> (i32, ResponsePacket) {
-    println!("handle_login");
+fn handle_login(
+    username: String,
+    password: String,
+    accounts: Accounts,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> (i32, ResponsePacket) {
+    println!("handle_login: {:?}", accounts);
 
     let mut found_account = false;
     let mut password_match = false;
     let mut player_id: i32 = -1;
     let mut account_class = HeroClassList::None;
 
-    let accounts = accounts.lock().unwrap();
+    let mut accounts = accounts.lock().unwrap();
 
     for (_, account) in accounts.iter() {
         if account.username == username {
             found_account = true;
 
-            if account.password == password {
-                password_match = true;
-                player_id = account.player_id;
-                account_class = account.class;
+            let verify_password =
+                Account::verify_password(password.clone(), account.password.clone());
+
+            match verify_password {
+                Ok(_) => {
+                    password_match = true;
+                    player_id = account.player_id;
+                    account_class = account.class;
+                }
+                Err(_) => {
+                    break;
+                }
             }
         }
     }
@@ -977,6 +1040,7 @@ fn handle_login(username: String, password: String, accounts: Accounts) -> (i32,
     println!("found_account: {:?}", found_account);
 
     let ret = if found_account && password_match {
+        println!("Found account and password matched: {:?}", account_class);
         if account_class == HeroClassList::None {
             (
                 player_id,
@@ -985,10 +1049,22 @@ fn handle_login(username: String, password: String, accounts: Accounts) -> (i32,
                 },
             )
         } else {
-            //TODO replace with initial game state login packet
-            (player_id, ResponsePacket::Ok)
+            //Send login to player
+            client_to_game_sender
+                .send(PlayerEvent::Login {
+                    player_id: player_id,
+                })
+                .expect("Could not send message");
+
+            (
+                player_id,
+                ResponsePacket::Login {
+                    player: player_id as u32,
+                },
+            )
         }
     } else if found_account && !password_match {
+        println!("Found account and password incorrect.");
         (
             player_id,
             ResponsePacket::Error {
@@ -996,7 +1072,18 @@ fn handle_login(username: String, password: String, accounts: Accounts) -> (i32,
             },
         )
     } else {
-        (player_id, ResponsePacket::Ok)
+        println!("Account not found, creating new account...");
+        let player_id = (accounts.len() + 1) as i32;
+        let account = Account::new(player_id, username, password);
+
+        accounts.insert(player_id, account);
+
+        (
+            player_id,
+            ResponsePacket::SelectClass {
+                player: player_id as u32,
+            },
+        )
     };
 
     ret
@@ -1020,14 +1107,16 @@ fn handle_selected_class(
     let mut account = accounts.get_mut(&player_id).unwrap();
 
     if account.class == HeroClassList::None {
+        println!("classname: {:?}", classname.as_str());
         let selected_class = match classname.as_str() {
-            "warrior" => HeroClassList::Warrior,
-            "ranger" => HeroClassList::Ranger,
-            "mage" => HeroClassList::Mage,
+            "Warrior" => HeroClassList::Warrior,
+            "Ranger" => HeroClassList::Ranger,
+            "Mage" => HeroClassList::Mage,
             _ => HeroClassList::None,
         };
 
         account.class = selected_class;
+        println!("Selected Class - account_class: {:?}", account.class);
 
         //Send new player event to game
         client_to_game_sender
@@ -1246,6 +1335,24 @@ fn handle_info_item_transfer(
     ResponsePacket::None
 }
 
+fn handle_info_exit(
+    player_id: i32,
+    id: i32,
+    paneltype: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoExit {
+            player_id: player_id,
+            id: id,
+            panel_type: paneltype,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
 fn handle_item_transfer(
     player_id: i32,
     targetid: i32,
@@ -1396,7 +1503,6 @@ fn handle_survey(
         })
         .expect("Could not send message");
 
-    // Response will come from game.rs
     ResponsePacket::Ok
 }
 
@@ -1407,7 +1513,19 @@ fn handle_explore(player_id: i32, client_to_game_sender: CBSender<PlayerEvent>) 
         })
         .expect("Could not send message");
 
-    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_nearby_resources(
+    player_id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::NearbyResources {
+            player_id: player_id,
+        })
+        .expect("Could not send message");
+
     ResponsePacket::Ok
 }
 
@@ -1527,6 +1645,22 @@ fn handle_order_explore(
     ResponsePacket::Ok
 }
 
+fn handle_order_experiment(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderExperiment {
+            player_id: player_id,
+            structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
 fn handle_use(
     player_id: i32,
     item: i32,
@@ -1583,7 +1717,7 @@ fn handle_info_experiment(
     client_to_game_sender
         .send(PlayerEvent::InfoExperinment {
             player_id: player_id,
-            structure_id: structureid, 
+            structure_id: structureid,
         })
         .expect("Could not send message");
 
@@ -1600,8 +1734,24 @@ fn handle_set_experiment_item(
     client_to_game_sender
         .send(PlayerEvent::SetExperimentItem {
             player_id: player_id,
-            item_id: itemid, 
-            is_resource: is_resource
+            item_id: itemid,
+            is_resource: is_resource,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_reset_experiment(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::ResetExperiment {
+            player_id: player_id,
+            structure_id: structureid,
         })
         .expect("Could not send message");
 

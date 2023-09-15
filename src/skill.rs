@@ -4,8 +4,8 @@ use bevy::utils::tracing::field::debug;
 use std::collections::HashMap;
 
 use crate::game::Position;
-use crate::network;
 use crate::templates::{SkillTemplate, SkillTemplates};
+use crate::{item, network};
 
 pub const CLASS_GATHERING: &str = "Gathering";
 pub const CLASS_CRAFTING: &str = "Crafting";
@@ -16,11 +16,15 @@ pub const STONECUTTING: &str = "Stonecutting";
 pub const GATHERING: &str = "Gathering";
 pub const FARMING: &str = "Farming";
 
+pub const WEAPONSMITHING: &str = "Weaponsmithing";
+pub const ARMORSMITHING: &str = "Armorsmithing";
+pub const TOOLMAKING: &str = "Toolmaking";
+
 pub const NOVICE_WARRIOR: &str = "Novice Warrior";
 pub const NOVICE_RANGER: &str = "Novice Ranger";
 pub const NOVICE_MAGE: &str = "Novice Mage";
 pub const SKILLED_WARRIOR: &str = "Skilled Warrior";
-pub const SKILLED_RANGER: &str = "Skilled Warrior";
+pub const SKILLED_RANGER: &str = "Skilled Ranger";
 pub const SKILLED_MAGE: &str = "Skilled Mage";
 pub const GREAT_WARRIOR: &str = "Great Warrior";
 pub const GREAT_RANGER: &str = "Great Ranger";
@@ -265,6 +269,17 @@ impl Skill {
         };
 
         return (next_template.to_string(), required_xp);
+    }
+
+    pub fn item_class_to_skill(item_class: String) -> String {
+        let skill = match item_class.as_str() {
+            item::WEAPON => WEAPONSMITHING,
+            item::ARMOR => ARMORSMITHING,
+            item::GATHERING => TOOLMAKING,
+            _ => panic!("Invalid item_class"),
+        };
+
+        return skill.to_string();
     }
 }
 

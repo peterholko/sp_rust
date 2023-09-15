@@ -34,7 +34,8 @@ itertools = "0.10.5"
 big-brain = "0.15.0"
 pathfinding = "4.1.1"
 rand = "0.8.5"
-
+argon2 = "0.5.1"
+thiserror = "1.0"
 
 
 [dev-dependencies]

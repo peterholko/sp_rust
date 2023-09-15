@@ -22,9 +22,7 @@ struct Loot {
 }
 
 impl Encounter {
-    pub fn check() {
-
-    }
+    pub fn check() {}
 
     pub fn generate_loot(
         npc_id: i32,

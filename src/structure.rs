@@ -10,10 +10,12 @@ use crate::templates::{ObjTemplate, ObjTemplates, ResReq};
 
 pub const RESOURCE: &str = "resource";
 pub const CRAFT: &str = "craft";
+pub const SHELTER: &str = "shelter";
 
 pub const MINE: &str = "Mine";
 pub const LUMBERCAMP: &str = "Lumbercamp";
 pub const QUARRY: &str = "Quarry";
+
 
 #[derive(Resource, Deref, DerefMut, Debug)]
 pub struct Plans(Vec<Plan>);
@@ -188,7 +190,6 @@ impl Structure {
 
         return resource.to_string();
     }
-
 }
 
 pub struct StructurePlugin;

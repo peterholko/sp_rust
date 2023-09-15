@@ -6,32 +6,34 @@
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::enum_glob_use)]
 
+use bevy::log::LogPlugin;
 use bevy::{
     app::{ScheduleRunnerPlugin, ScheduleRunnerSettings},
     core::CorePlugin,
     prelude::*,
     utils::Duration,
 };
-use bevy::log::LogPlugin;
 
 use game::GamePlugin;
 
-mod game;
-mod map;
-mod ai;
-mod player;
+mod account;
 mod combat;
-mod network;
-mod templates;
+mod components;
+mod encounter;
+mod experiment;
+mod game;
 mod item;
+mod map;
+mod network;
+mod obj;
+mod player;
+mod plugins;
 mod recipe;
-mod structure;
 mod resource;
 mod skill;
+mod structure;
+mod templates;
 mod villager;
-mod encounter;
-mod obj;
-mod experiment;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
@@ -45,7 +47,7 @@ pub fn setup() {
         .add_plugin(LogPlugin {
             level: bevy::log::Level::DEBUG,
             filter: "big_brain=warn,siege_perilous::ai=debug,siege_perilious::game=debug".into(),
-        })        
+        })
         .add_plugin(GamePlugin)
         .run();
 }

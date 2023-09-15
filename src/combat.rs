@@ -2,19 +2,16 @@ use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 use big_brain::thinker::{Actor, ThinkerBuilder};
 
-use std::collections::HashMap;
-
 use rand::Rng;
 
-use crate::ai::{ChaseAttack, VisibleTarget};
 use crate::game::{
     BaseAttrs, Class, Id, MapEvent, MapEvents, Misc, PlayerId, Position, State, Stats, Subclass,
     Template, VisibleEvent, VisibleEvents,
 };
 use crate::item::{Item, Items, DAMAGE};
-use crate::{network, obj};
 use crate::skill::{Skill, SkillUpdated, Skills};
-use crate::templates::{SkillTemplate, SkillTemplates, Templates, ObjTemplate};
+use crate::templates::{ObjTemplate, SkillTemplate, SkillTemplates, Templates};
+use crate::{network, obj};
 
 #[derive(WorldQuery)]
 #[world_query(mutable, derive(Debug))]
@@ -41,11 +38,10 @@ impl Combat {
         target: &mut CombatQueryItem,
         commands: &mut Commands,
         items: &mut ResMut<Items>,
-        templates: &Res<Templates>
+        templates: &Res<Templates>,
     ) -> (i32, Option<SkillUpdated>) {
-        
         let target_template = ObjTemplate::get_template(target.template.0.clone(), &templates);
-        
+
         let damage_range = attacker.stats.damage_range.unwrap();
         let base_damage = attacker.stats.base_damage.unwrap();
 
@@ -75,11 +71,10 @@ impl Combat {
             //commands.entity(target.entity).despawn();
 
             for item in attacker_weapons.iter() {
-
                 skill_updated = Some(SkillUpdated {
                     id: attacker.id.0,
                     xp_type: item.subclass.to_string(),
-                    xp: target_template.kill_xp.unwrap_or(0) 
+                    xp: target_template.kill_xp.unwrap_or(0),
                 });
             }
         }

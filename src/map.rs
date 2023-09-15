@@ -1,7 +1,7 @@
 use bevy::{ecs::query, prelude::*};
-use std::{fs::File, fmt};
 use std::io::BufReader;
 use std::path::Path;
+use std::{fmt, fs::File};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ use tiled::{parse, LayerData};
 
 use pathfinding::prelude::astar;
 
-use crate::game::{Position};
+use crate::game::Position;
 
 pub struct MapPlugin;
 
@@ -62,10 +62,9 @@ impl fmt::Display for TileType {
             TileType::Oasis => write!(f, "Oasis"),
             TileType::HillsDesert => write!(f, "Desert Hills"),
             TileType::HillsGrasslands => write!(f, "Grassland Hills"),
-            TileType::Grasslands => write!(f, "Grassland Hills"),
             TileType::Swamp => write!(f, "Swamp"),
             TileType::HillsSnow => write!(f, "Snow Hills"),
-            TileType::DeciduousForest => write!(f, "Deicduous Forest"),
+            TileType::DeciduousForest => write!(f, "Deciduous Forest"),
             TileType::Rainforest => write!(f, "Rain Forest"),
             TileType::Jungle => write!(f, "Jungle"),
             TileType::Savanna => write!(f, "Savanna"),
@@ -74,7 +73,7 @@ impl fmt::Display for TileType {
             TileType::PalmForest => write!(f, "Palm Forest"),
             TileType::Mountain => write!(f, "Mountain"),
             TileType::Volcano => write!(f, "Volcano"),
-            TileType::Unknown => write!(f, "Unknown")
+            TileType::Unknown => write!(f, "Unknown"),
         }
     }
 }
@@ -104,17 +103,17 @@ pub struct MapTile {
 pub struct MapPos(pub i32, pub i32);
 
 impl MapPos {
-  fn distance(&self, other: &MapPos) -> u32 {
-    // (self.0.abs_diff(other.0) + self.1.abs_diff(other.1)) as u32
-    Map::distance((self.0, self.1), (other.0, other.1))
-  }
+    fn distance(&self, other: &MapPos) -> u32 {
+        // (self.0.abs_diff(other.0) + self.1.abs_diff(other.1)) as u32
+        Map::distance((self.0, self.1), (other.0, other.1))
+    }
 
-  fn successors(&self, map: &Map) -> Vec<(MapPos, u32)> {
-    let &MapPos(x, y) = self;
-    let s = Map::get_neighbour_tiles(x, y, map);
+    fn successors(&self, map: &Map) -> Vec<(MapPos, u32)> {
+        let &MapPos(x, y) = self;
+        let s = Map::get_neighbour_tiles(x, y, map);
 
-    s
-  }
+        s
+    }
 }
 
 impl Map {
@@ -167,12 +166,37 @@ impl Map {
         map
     }
 
-    pub fn find_path(src_x: i32, src_y: i32, dst_x: i32, dst_y: i32, map: &Map) -> Option<(Vec<MapPos>, u32)> {
+    pub fn pos_to_tuple(pos: Position) -> (i32, i32) {
+        (pos.x, pos.y)
+    }
 
+    pub fn pos_to_index(x: i32, y: i32) -> usize {
+        let tile_index: usize = (y as usize) * (WIDTH as usize) + (x as usize);
+        return tile_index;
+    }
+
+    pub fn index_to_pos(index: usize) -> MapPos {
+        let x = (index as i32) % WIDTH;
+        let y = (index as i32) / WIDTH;
+
+        return MapPos(x, y);
+    }
+
+    pub fn find_path(
+        src_x: i32,
+        src_y: i32,
+        dst_x: i32,
+        dst_y: i32,
+        map: &Map,
+    ) -> Option<(Vec<MapPos>, u32)> {
         let goal: MapPos = MapPos(dst_x, dst_y);
-        let result = astar(&MapPos(src_x, src_y), |p| p.successors(&map), |p| p.distance(&goal),
-                           |p| *p == goal);
-     
+        let result = astar(
+            &MapPos(src_x, src_y),
+            |p| p.successors(&map),
+            |p| p.distance(&goal),
+            |p| *p == goal,
+        );
+
         return result;
     }
 
@@ -262,7 +286,7 @@ impl Map {
             TileType::HillsDesert => 3,
             TileType::DeciduousForest => 3,
             TileType::River => 6,
-            _ => 1
+            _ => 1,
         };
 
         println!("tile_type: {:?} mc: {:?}", tile_type, movement_cost);
@@ -280,10 +304,10 @@ impl Map {
             TileType::FrozenForest => 0.5,
             TileType::Jungle => 0.75,
             TileType::Swamp => 0.66,
-            _ => 0.0
+            _ => 0.0,
         };
 
-        return def_bonus
+        return def_bonus;
     }
 
     fn gid_to_tiletype(gid: u32) -> TileType {
@@ -354,7 +378,6 @@ impl Map {
     }
 
     pub fn dist(src_pos: Position, dst_pos: Position) -> u32 {
-
         let src_pos_tuple = (src_pos.x, src_pos.y);
         let dst_pos_tuple = (dst_pos.x, dst_pos.y);
 
@@ -366,6 +389,47 @@ impl Map {
         distance
     }
 
+    fn cube_direction(direction: i32) -> (i32, i32, i32) {
+        let neighbours_table: Vec<(i32, i32, i32)> = vec![
+            (1, -1, 0),
+            (1, 0, -1),
+            (0, 1, -1),
+            (-1, 1, 0),
+            (-1, 0, 1),
+            (0, -1, 1),
+        ];
+
+        return neighbours_table[direction as usize];
+    }
+
+    fn cube_neighbour(cube: (i32, i32, i32), direction: i32) -> (i32, i32, i32) {
+        return Map::cube_add(cube, Map::cube_direction(direction));
+    }
+
+    fn cube_add(cube1: (i32, i32, i32), cube2: (i32, i32, i32)) -> (i32, i32, i32) {
+        return (cube1.0 + cube2.0, cube1.1 + cube2.1, cube1.2 + cube2.2);
+    }
+
+    fn cube_scale(cube: (i32, i32, i32), factor: i32) -> (i32, i32, i32) {
+        return (cube.0 * factor, cube.1 * factor, cube.2 * factor);
+    }
+
+    pub fn ring((q, r): (i32, i32), radius: i32) -> Vec<(i32, i32)> {
+        let mut results: Vec<(i32, i32)> = Vec::new();
+
+        let center = Map::odd_q_to_cube((q, r));
+
+        let mut hex = Map::cube_add(center, Map::cube_scale(Map::cube_direction(4), radius));
+
+        for i in 0..6 {
+            for _j in 0..radius {
+                results.push(Map::cube_to_odd_q(hex));
+                hex = Map::cube_neighbour(hex, i);
+            }
+        }
+
+        return results;
+    }
 
     pub fn range((q, r): (i32, i32), num: u32) -> Vec<(i32, i32)> {
         let n = num as i32;
@@ -392,8 +456,7 @@ impl Map {
         result
     }
 
-    pub fn get_neighbour_tiles(origin_x: i32, origin_y: i32, map: &Map) -> Vec<(MapPos, u32)>{
-
+    pub fn get_neighbour_tiles(origin_x: i32, origin_y: i32, map: &Map) -> Vec<(MapPos, u32)> {
         let neighbours_table: Vec<(i32, i32, i32)> = vec![
             (1, -1, 0),
             (1, 0, -1),
@@ -421,13 +484,12 @@ impl Map {
             let movement_cost = Map::movement_cost(tile_type) as u32;
             println!("movement_cost: {:?}", movement_cost);
 
-            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map){
+            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map) {
                 result.push((MapPos(neighbour_x, neighbour_y), movement_cost));
             }
         }
 
         return result;
-
     }
 
     fn neighbours((q, r): (i32, i32)) -> Vec<(i32, i32)> {
@@ -459,10 +521,15 @@ impl Map {
     pub fn is_adjacent(source_pos: Position, target_pos: Position) -> bool {
         let neighbours = Self::neighbours((source_pos.x, source_pos.y));
 
+        // Experimenting with treating the source position as adjacent
+        if source_pos == target_pos {
+            return true;
+        }
+
         for (x, y) in neighbours {
             if x == target_pos.x && y == target_pos.y {
                 return true;
-            } 
+            }
         }
 
         return false;

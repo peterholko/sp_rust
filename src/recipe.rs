@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::network;
-use crate::templates::{RecipeTemplates, ResReq, Templates, RecipeTemplate};
+use crate::templates::{RecipeTemplate, RecipeTemplates, ResReq, Templates};
 
 #[derive(Debug, Clone)]
 pub struct Recipe {
@@ -71,7 +71,12 @@ impl Recipe {
         return None;
     }
 
-    pub fn get_by_subclass_tier(structure: String, subclass: String, tier: i32, templates: Res<Templates>) -> Vec<RecipeTemplate> {
+    pub fn get_by_subclass_tier(
+        structure: String,
+        subclass: String,
+        tier: i32,
+        templates: &Res<Templates>,
+    ) -> Vec<RecipeTemplate> {
         let all_recipes = RecipeTemplate::get_by_structure(structure, templates);
 
         let mut recipes_by_subclass_tier = Vec::new();
@@ -87,8 +92,7 @@ impl Recipe {
         return recipes_by_subclass_tier;
     }
 
-    pub fn get_by_structure(structure_id: i32, recipes: &Res<Recipes>) -> Vec<Recipe> {
-        
+    pub fn get_by_structure(structure_id: i32, recipes: &ResMut<Recipes>) -> Vec<Recipe> {
         let mut owner_recipes: Vec<Recipe> = Vec::new();
 
         for recipe in recipes.iter() {
@@ -97,9 +101,8 @@ impl Recipe {
             }
         }
 
-        return owner_recipes
+        return owner_recipes;
     }
-
 
     pub fn get_by_structure_packet(
         owner: i32,
@@ -108,7 +111,10 @@ impl Recipe {
     ) -> Vec<network::Recipe> {
         let mut owner_recipes: Vec<network::Recipe> = Vec::new();
 
-        println!("Owner: {:?} Structure: {:?} Recipes: {:?}", owner, structure, recipes);
+        println!(
+            "Owner: {:?} Structure: {:?} Recipes: {:?}",
+            owner, structure, recipes
+        );
 
         for recipe in recipes.iter() {
             // Remove all whitespaces

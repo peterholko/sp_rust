@@ -36,9 +36,11 @@
   weight: 10
   req: 
     - type: Copper Ingot
-      quantity: 40
+      # quantity: 40
+      quantity: 2
     - type: Maple Timber
-      quantity: 15
+      # quantity: 15
+      quantity: 2
 
 - name: Copper Heavy Axe
   image: heavyaxe
@@ -54,9 +56,11 @@
   weight: 10
   req: 
     - type: Copper Ingot
-      quantity: 75
+      #quantity: 75
+      quantity: 2
     - type: Maple Timber
-      quantity: 25
+      #quantity: 25
+      quantity: 2
 
 - name: Copper Training Sword
   image: sword

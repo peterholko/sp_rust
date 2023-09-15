@@ -1,30 +1,34 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 use big_brain::prelude::*;
-use pathfinding::prelude::directions::E;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::ai::{Drink, HighMorale, Morale, ProcessOrder, Thirst, Thirsty};
+use crate::components::villager::{
+    Drink, FindDrinkScorer, Drowsy, Eat, GoodMorale, Hunger, Hungry, Morale, MoveToFoodSource,
+    MoveToSleepPos, MoveToWaterSource, ProcessOrder, ShelterAvailable, Sleep, Thirst, ThirstyScorer,
+    Tired, DrinkDistanceScorer, TransferDrink, HasDrinkScorer, TransferDrinkScorer, FindDrink,
+};
+
 use crate::combat::{Combat, CombatQuery};
-use crate::experiment::{self, Experiments};
+use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
-    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick, HeroClassList,
-    Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name, NetworkReceiver, Obj, Order, PlayerId,
-    Position, State, Stats, StructureAttrs, Subclass, SubclassHero, SubclassVillager, Template,
-    Viewshed, VillagerAttrs, VisibleEvent, VisibleEvents, CREATIVITY, DEXTERITY, ENDURANCE, FOCUS,
-    INTELLECT, SPIRIT, STRENGTH, TOUGHNESS, GameEvents, GameEventType, GameEvent,
+    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
+    GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name,
+    NetworkReceiver, Obj, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
+    SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent, CREATIVITY,
+    DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
 use crate::network::{self, send_to_client, ResponsePacket, StructureList};
 use crate::obj::{self, ObjUtil};
-use crate::recipe::{Recipe, Recipes};
+use crate::recipe::{self, Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
 use crate::structure::{self, Plan, Plans, Structure};
-use crate::templates::{self, ObjTemplate, ResReq, SkillTemplate, SkillTemplates, Templates};
-use crate::villager::Villager;
+use crate::templates::{ObjTemplate, ResReq, Templates};
+use crate::villager::{self, Villager};
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct Player(pub HashMap<i32, PlayerEvent>);
@@ -35,6 +39,9 @@ pub struct PlayerEvents(pub HashMap<i32, PlayerEvent>);
 #[derive(Resource, Clone, Debug)]
 pub enum PlayerEvent {
     NewPlayer {
+        player_id: i32,
+    },
+    Login {
         player_id: i32,
     },
     Move {
@@ -96,6 +103,11 @@ pub enum PlayerEvent {
         source_id: i32,
         target_id: i32,
     },
+    InfoExit {
+        player_id: i32,
+        id: i32,
+        panel_type: String,
+    },
     ItemTransfer {
         player_id: i32,
         target_id: i32,
@@ -128,6 +140,10 @@ pub enum PlayerEvent {
         player_id: i32,
         villager_id: i32,
     },
+    OrderExperiment {
+        player_id: i32,
+        structure_id: i32,
+    },
     StructureList {
         player_id: i32,
     },
@@ -146,6 +162,9 @@ pub enum PlayerEvent {
         source_id: i32,
     },
     Explore {
+        player_id: i32,
+    },
+    NearbyResources {
         player_id: i32,
     },
     AssignList {
@@ -179,14 +198,21 @@ pub enum PlayerEvent {
     },
     InfoExperinment {
         player_id: i32,
-        structure_id: i32
+        structure_id: i32,
     },
     SetExperimentItem {
         player_id: i32,
         item_id: i32,
-        is_resource: bool //assume is source if not resource
-    }
+        is_resource: bool, //assume is source if not resource
+    },
+    ResetExperiment {
+        player_id: i32,
+        structure_id: i32,
+    },
 }
+
+#[derive(Resource, Deref, DerefMut)]
+pub struct ActiveInfos(pub HashMap<(i32, i32, String), bool>);
 
 #[derive(WorldQuery)]
 struct CoreQuery {
@@ -252,9 +278,11 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         // Initialize events
         let player_events: PlayerEvents = PlayerEvents(HashMap::new());
+        let active_infos: ActiveInfos = ActiveInfos(HashMap::new());
 
         app.add_system(message_broker_system)
             .add_system(new_player_system)
+            .add_system(login_system)
             .add_system(move_system)
             .add_system(attack_system)
             .add_system(gather_system)
@@ -271,6 +299,7 @@ impl Plugin for PlayerPlugin {
             .add_system(order_gather_system)
             .add_system(order_refine_system)
             .add_system(order_craft_system)
+            .add_system(order_experiment_system)
             .add_system(structure_list_system)
             .add_system(create_foundation_system)
             .add_system(build_system)
@@ -283,7 +312,8 @@ impl Plugin for PlayerPlugin {
             .add_system(use_item_system)
             .add_system(remove_system)
             .add_system(set_experiment_item_system)
-            .insert_resource(player_events);
+            .insert_resource(player_events)
+            .insert_resource(active_infos);
     }
 }
 
@@ -332,6 +362,41 @@ fn new_player_system(
                     &templates,
                     &game_tick,
                 );
+            }
+            _ => {}
+        }
+    }
+
+    for index in events_to_remove.iter() {
+        events.remove(index);
+    }
+}
+
+fn login_system(
+    mut events: ResMut<PlayerEvents>,
+    game_tick: ResMut<GameTick>,
+    mut game_events: ResMut<GameEvents>,
+    mut ids: ResMut<Ids>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::Login { player_id } => {
+                events_to_remove.push(*event_id);
+
+                let event_type = GameEventType::Login {
+                    player_id: *player_id,
+                };
+                let event_id = ids.new_map_event_id();
+
+                let event = GameEvent {
+                    event_id: event_id,
+                    run_tick: game_tick.0 + 4, // Add one game tick
+                    game_event_type: event_type,
+                };
+
+                game_events.insert(event.event_id, event);
             }
             _ => {}
         }
@@ -415,7 +480,7 @@ fn move_system(
                 }
 
                 let event_type = GameEventType::CancelEvents {
-                    events: events_to_remove
+                    event_ids: events_to_remove,
                 };
                 let event_id = ids.new_map_event_id();
 
@@ -502,10 +567,6 @@ fn attack_system(
                 };
 
                 let entities = [attacker_entity, target_entity];
-
-                for a in query.iter() {
-                    debug!("CombatQueryItem: {:?}", a);
-                }
 
                 let Ok([mut attacker, mut target]) = query.get_many_mut(entities) else {
                     error!("Cannot find attacker or target from entities {:?}", entities);
@@ -603,22 +664,11 @@ fn gather_system(
     mut events: ResMut<PlayerEvents>,
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
     mut map_events: ResMut<MapEvents>,
-    mut skills: ResMut<Skills>,
-    hero_query: Query<
-        (
-            Entity,
-            &Id,
-            &Position,
-            &PlayerId,
-            &Name,
-            &Template,
-            &Class,
-            &Subclass,
-            &State,
-        ),
-        With<SubclassHero>,
-    >,
+    resources: Res<Resources>,
+    skills: ResMut<Skills>,
+    hero_query: Query<CoreQuery, With<SubclassHero>>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
 
@@ -632,47 +682,71 @@ fn gather_system(
                 debug!("PlayerEvent::Gather");
                 events_to_remove.push(*event_id);
 
-                for (
-                    entity_id,
-                    obj_id,
-                    pos,
-                    obj_player_id,
-                    _name,
-                    _template,
-                    _class,
-                    _subclass,
-                    _state,
-                ) in hero_query.iter()
-                {
-                    // Check find hero from Gather event
-                    if *player_id != obj_player_id.0 {
-                        continue;
-                    }
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    break;
+                };
 
-                    let gather_event = VisibleEvent::GatherEvent {
-                        res_type: res_type.clone(),
-                    };
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find hero entity for hero {:?}", hero_id);
+                    break;
+                };
 
-                    /*Skill::update(
-                        obj_id.0,
-                        "Mining".to_string(),
-                        100,
-                        &templates.skill_templates,
-                        &mut skills,
-                    );*/
+                let Ok(hero) = hero_query.get(hero_entity) else {
+                    error!("Cannot find hero for {:?}", hero_entity);
+                    break;
+                };
 
-                    map_events.new(
-                        ids.new_map_event_id(),
-                        entity_id,
-                        obj_id,
-                        obj_player_id,
-                        pos,
-                        game_tick.0 + 8, // in the future
-                        gather_event,
-                    );
+                let gather_event = VisibleEvent::GatherEvent {
+                    res_type: res_type.clone(),
+                };
 
-                    debug!("Skills: {:?}", skills);
-                }
+                /*Skill::update(
+                    obj_id.0,
+                    "Mining".to_string(),
+                    100,
+                    &templates.skill_templates,
+                    &mut skills,
+                );*/
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    hero_entity,
+                    hero.id,
+                    hero.player_id,
+                    hero.pos,
+                    game_tick.0 + 8, // in the future
+                    gather_event,
+                );
+
+                debug!("Skills: {:?}", skills);
+            }
+            PlayerEvent::NearbyResources { player_id } => {
+                debug!("PlayerEvent::NearbyResources");
+                events_to_remove.push(*event_id);
+
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    break;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find hero entity for hero {:?}", hero_id);
+                    break;
+                };
+
+                let Ok(hero) = hero_query.get(hero_entity) else {
+                    error!("Cannot find hero for {:?}", hero_entity);
+                    break;
+                };
+
+                let nearby_resources = Resource::get_nearby_resources(*hero.pos, &resources);
+
+                let nearby_resources_packet = ResponsePacket::NearbyResources {
+                    data: nearby_resources,
+                };
+
+                send_to_client(*player_id, nearby_resources_packet, &clients);
             }
             _ => {}
         }
@@ -743,11 +817,7 @@ fn info_obj_system(
                         let mut morale = None;
                         let mut order = None;
 
-                        let mut total_weight = Some(Item::get_total_weight(
-                            obj.id.0,
-                            &items,
-                            &templates.item_templates,
-                        ));
+                        let mut total_weight = Some(Item::get_total_weight(obj.id.0, &items));
                         let mut capacity = Some(ObjUtil::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
@@ -835,11 +905,7 @@ fn info_obj_system(
                         let items_packet = Some(Item::get_by_owner_packet(*id, &items));
                         let mut effects = Some(Vec::new());
 
-                        let total_weight = Some(Item::get_total_weight(
-                            obj.id.0,
-                            &items,
-                            &templates.item_templates,
-                        ));
+                        let total_weight = Some(Item::get_total_weight(obj.id.0, &items));
                         let capacity = Some(ObjUtil::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
@@ -1170,6 +1236,7 @@ fn info_tile_system(
 
                 send_to_client(*player_id, info_tile_packet, &clients);
             }
+
             _ => {}
         }
     }
@@ -1182,10 +1249,11 @@ fn info_tile_system(
 fn info_item_system(
     mut events: ResMut<PlayerEvents>,
     clients: Res<Clients>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     items: ResMut<Items>,
     query: Query<CoreQuery>,
     templates: Res<Templates>,
+    mut active_infos: ResMut<ActiveInfos>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
 
@@ -1206,7 +1274,7 @@ fn info_item_system(
                 };
 
                 let capacity = ObjUtil::get_capacity(&obj.template.0, &templates.obj_templates);
-                let total_weight = Item::get_total_weight(*id, &items, &templates.item_templates);
+                let total_weight = Item::get_total_weight(*id, &items);
 
                 let inventory_items = Item::get_by_owner_packet(*id, &items);
 
@@ -1216,6 +1284,9 @@ fn info_item_system(
                     tw: total_weight as i32,
                     items: inventory_items,
                 };
+
+                let active_info_key = (*player_id, *id, "inventory".to_string());
+                active_infos.insert(active_info_key, true);
 
                 send_to_client(*player_id, info_inventory_packet, &clients);
             }
@@ -1261,6 +1332,20 @@ fn info_item_system(
 
                     send_to_client(*player_id, info_item_packet, &clients);
                 }
+            }
+            PlayerEvent::InfoExit {
+                player_id,
+                id,
+                panel_type,
+            } => {
+                debug!(
+                    "PlayerEvent::InfoExit {:?} {:?} {:?}",
+                    player_id, id, panel_type
+                );
+                events_to_remove.push(*event_id);
+
+                let active_info_key = (*player_id, *id, panel_type.clone());
+                active_infos.remove(&active_info_key);
             }
             _ => {}
         }
@@ -1308,6 +1393,7 @@ fn item_transfer_system(
                         continue;
                     };
 
+                    // Item has to be nearby
                     if !(owner.pos == target.pos || Map::is_adjacent(*owner.pos, *target.pos)) {
                         let packet = ResponsePacket::Error {
                             errmsg: "Item is not nearby.".to_string(),
@@ -1316,24 +1402,32 @@ fn item_transfer_system(
                         continue;
                     }
 
-                    let target_total_weight =
-                        Item::get_total_weight(target.id.0, &items, &templates.item_templates);
-                    let transfer_item_weight = Item::get_weight(
-                        item.name.clone(),
-                        item.quantity,
-                        &items,
-                        &templates.item_templates,
-                    );
-                    let target_capacity =
-                        ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
-
-                    if target_total_weight + transfer_item_weight > target_capacity {
+                    // Transfer target is not dead
+                    if target.state.0 == obj::STATE_DEAD {
                         let packet = ResponsePacket::Error {
-                            errmsg: "Transfer target does not have enough capacity".to_string(),
+                            errmsg: "Cannot transfer items to the dead or destroyed".to_string(),
                         };
                         send_to_client(*player_id, packet, &clients);
                         continue;
                     }
+
+                    // Structure is not completed
+                    if target.class.0 == "structure"
+                        && (target.state.0 == obj::STATE_PROGRESSING
+                            || target.state.0 == obj::STATE_STALLED)
+                    {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Structure is not completed.".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        continue;
+                    }
+
+                    // Transfer target does not have enough capacity
+                    let target_total_weight = Item::get_total_weight(target.id.0, &items);
+                    let transfer_item_weight = (item.quantity as f32 * item.weight) as i32;
+                    let target_capacity =
+                        ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
 
                     // Structure founded and under construction use case
                     if target.class.0 == "structure" && target.state.0 == obj::STATE_FOUNDED {
@@ -1363,8 +1457,7 @@ fn item_transfer_system(
 
                         let source_capacity =
                             ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                        let source_total_weight =
-                            Item::get_total_weight(owner.id.0, &items, &templates.item_templates);
+                        let source_total_weight = Item::get_total_weight(owner.id.0, &items);
 
                         let source_items = Item::get_by_owner_packet(item.owner, &items);
                         let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1421,11 +1514,7 @@ fn item_transfer_system(
 
                             let source_capacity =
                                 ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                            let source_total_weight = Item::get_total_weight(
-                                owner.id.0,
-                                &items,
-                                &templates.item_templates,
-                            );
+                            let source_total_weight = Item::get_total_weight(owner.id.0, &items);
 
                             let source_items = Item::get_by_owner_packet(item.owner, &items);
                             let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1459,13 +1548,20 @@ fn item_transfer_system(
                             error!("Obj is missing expected structure attributes");
                         }
                     } else {
+                        if (target_total_weight + transfer_item_weight > target_capacity) {
+                            let packet = ResponsePacket::Error {
+                                errmsg: "Transfer target does not have enough capacity".to_string(),
+                            };
+                            send_to_client(*player_id, packet, &clients);
+                            continue;
+                        }
+
                         info!("Other item transfer");
                         Item::transfer(item.id, target.id.0, &mut items);
 
                         let source_capacity =
                             ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                        let source_total_weight =
-                            Item::get_total_weight(owner.id.0, &items, &templates.item_templates);
+                        let source_total_weight = Item::get_total_weight(owner.id.0, &items);
 
                         let source_items = Item::get_by_owner_packet(item.owner, &items);
                         let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1540,13 +1636,11 @@ fn item_transfer_system(
 
                 let source_capacity =
                     ObjUtil::get_capacity(&source.template.0, &templates.obj_templates);
-                let source_total_weight =
-                    Item::get_total_weight(source.id.0, &items, &templates.item_templates);
+                let source_total_weight = Item::get_total_weight(source.id.0, &items);
 
                 let target_capacity =
                     ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
-                let target_total_weight =
-                    Item::get_total_weight(target.id.0, &items, &templates.item_templates);
+                let target_total_weight = Item::get_total_weight(target.id.0, &items);
 
                 let source_items = Item::get_by_owner_packet(*source_id, &items);
                 let target_items = Item::get_by_owner_packet(*target_id, &items);
@@ -1637,32 +1731,29 @@ fn info_experiment_system(
     ids: ResMut<Ids>,
     clients: Res<Clients>,
     items: ResMut<Items>,
-    skills: Res<Skills>,
+    experiments: Res<Experiments>,
     query: Query<CoreQuery>,
-    attrs_query: Query<&BaseAttrs>,
-    stats_query: Query<&Stats>,
-    structure_query: Query<&StructureAttrs>,
     templates: Res<Templates>,
+    mut active_infos: ResMut<ActiveInfos>,
 ) {
-
     let mut events_to_remove: Vec<i32> = Vec::new();
 
     for (event_id, event) in events.iter() {
         match event {
             PlayerEvent::InfoExperinment {
                 player_id,
-                structure_id
+                structure_id,
             } => {
                 events_to_remove.push(*event_id);
 
                 let Some(structure_entity) = ids.get_entity(*structure_id) else {
                     error!("Cannot find structure for {:?}", structure_id);
-                    break;
+                    continue;
                 };
 
                 let Ok(structure) = query.get(structure_entity) else {
                     error!("Cannot find structure for {:?}", structure_entity);
-                    break;
+                    continue;
                 };
 
                 if structure.player_id.0 != *player_id {
@@ -1671,19 +1762,35 @@ fn info_experiment_system(
                         errmsg: "Structure not owned by player".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
-                    break;
+                    continue;
                 }
 
-                let (experiment_source, experiment_reagents, other_resources) = Item::get_experiment_details_packet(*structure_id, &items);
+                let info_experiment;
+                let (experiment_source, experiment_reagents, other_resources) =
+                    Item::get_experiment_details_packet(*structure_id, &items);
 
-                let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment { 
-                    id: *structure_id, 
-                    expitem: experiment_source, 
-                    expresources: experiment_reagents,
-                    validresources: other_resources,
-                    expstate: experiment::EXP_STATE_NONE.to_owned(), 
-                    recipe: None
-                }; 
+                if let Some(experiment) = experiments.get(structure_id) {
+                    info_experiment = ResponsePacket::InfoExperiment {
+                        id: *structure_id,
+                        expitem: experiment_source,
+                        expresources: experiment_reagents,
+                        validresources: other_resources,
+                        expstate: Experiment::state_to_string(experiment.state.clone()),
+                        recipe: Experiment::recipe_to_packet(experiment.clone()),
+                    };
+                } else {
+                    info_experiment = ResponsePacket::InfoExperiment {
+                        id: *structure_id,
+                        expitem: experiment_source,
+                        expresources: experiment_reagents,
+                        validresources: other_resources,
+                        expstate: experiment::EXP_STATE_NONE.to_string(),
+                        recipe: None,
+                    };
+                }
+
+                let active_info_key = (*player_id, *structure_id, "experiment".to_string());
+                active_infos.insert(active_info_key, true);
 
                 send_to_client(*player_id, info_experiment, &clients);
             }
@@ -1697,9 +1804,11 @@ fn info_experiment_system(
 }
 
 fn order_follow_system(
-    mut events: ResMut<PlayerEvents>,
-    ids: Res<Ids>,
     mut commands: Commands,
+    game_tick: ResMut<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
     query: Query<MapObjQuery>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
@@ -1741,11 +1850,13 @@ fn order_follow_system(
 }
 
 fn order_gather_system(
-    mut events: ResMut<PlayerEvents>,
-    clients: Res<Clients>,
-    ids: Res<Ids>,
-    resources: Res<Resources>,
     mut commands: Commands,
+    clients: Res<Clients>,
+    mut ids: ResMut<Ids>,
+    game_tick: ResMut<GameTick>,
+    mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
+    resources: Res<Resources>,
     query: Query<CoreQuery, With<SubclassVillager>>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
@@ -1790,6 +1901,19 @@ fn order_gather_system(
                 commands.entity(entity).insert(Order::Gather {
                     res_type: res_type.to_string(),
                 });
+
+                ObjUtil::add_sound_obj_event(
+                    ids.new_map_event_id(),
+                    game_tick.0,
+                    Villager::order_to_speech(&Order::Gather {
+                        res_type: res_type.to_string(),
+                    }),
+                    villager.entity,
+                    villager.id,
+                    villager.player_id,
+                    villager.pos,
+                    &mut map_events,
+                );
             }
             _ => {}
         }
@@ -2031,23 +2155,36 @@ fn build_system(
                     break;
                 }
 
-                // Check if structure is missing required items
-                if !Structure::has_req(structure.id.0, &mut structure.attrs.req, &mut items) {
-                    let packet = ResponsePacket::Error {
-                        errmsg: "Structure is missing required items.".to_string(),
-                    };
-                    send_to_client(*player_id, packet, &clients);
-                    break;
+                // If structure is stalled, restart building
+                if structure.state.0 != obj::STATE_STALLED {
+                    // Check if structure is missing required items
+                    if !Structure::has_req(structure.id.0, &mut structure.attrs.req, &mut items) {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Structure is missing required items.".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        break;
+                    }
+
+                    // Consume req items
+                    Structure::consume_reqs(
+                        structure.id.0,
+                        structure.attrs.req.clone(),
+                        &mut items,
+                    );
                 }
 
-                // Consume req items
-                Structure::consume_reqs(structure.id.0, structure.attrs.req.clone(), &mut items);
-
                 // Set structure building attributes
+                let progress_ratio = (100 - structure.attrs.progress) as f32 / 100.0;
+                let build_time = (structure.attrs.build_time as f32 * progress_ratio) as i32;
+
                 structure.attrs.start_time = game_tick.0;
-                structure.attrs.end_time =
-                    game_tick.0 + (structure.attrs.build_time * (1 - structure.attrs.progress));
+                structure.attrs.end_time = game_tick.0 + build_time;
                 structure.attrs.builder = *source_id;
+
+                debug!("progress: {:?}", structure.attrs.progress);
+                debug!("start_time: {:?}", structure.attrs.start_time);
+                debug!("end_time: {:?}", structure.attrs.end_time);
 
                 // Builder State Change Event to Building
                 let state_change_event = VisibleEvent::StateChangeEvent {
@@ -2115,20 +2252,7 @@ fn explore_system(
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
-    hero_query: Query<
-        (
-            Entity,
-            &Id,
-            &Position,
-            &PlayerId,
-            &Name,
-            &Template,
-            &Class,
-            &Subclass,
-            &State,
-        ),
-        With<SubclassHero>,
-    >,
+    hero_query: Query<CoreQuery, With<SubclassHero>>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
 
@@ -2137,37 +2261,48 @@ fn explore_system(
             PlayerEvent::Explore { player_id } => {
                 events_to_remove.push(*event_id);
 
-                for (
-                    entity_id,
-                    obj_id,
-                    pos,
-                    obj_player_id,
-                    _name,
-                    _template,
-                    _class,
-                    _subclass,
-                    _state,
-                ) in hero_query.iter()
-                {
-                    if *player_id == obj_player_id.0 {
-                        // Insert explore event
-                        let explore_event = VisibleEvent::ExploreEvent;
-                        let map_event_id = ids.new_map_event_id();
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    break;
+                };
 
-                        let map_state_event = MapEvent {
-                            event_id: map_event_id,
-                            entity_id: entity_id,
-                            obj_id: obj_id.0,
-                            player_id: *player_id,
-                            pos_x: pos.x,
-                            pos_y: pos.y,
-                            run_tick: game_tick.0 + 1, // Add one game tick
-                            map_event_type: explore_event,
-                        };
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find hero entity for hero {:?}", hero_id);
+                    break;
+                };
 
-                        map_events.insert(map_event_id, map_state_event);
-                    }
-                }
+                let Ok(hero) = hero_query.get(hero_entity) else {
+                    error!("Cannot find hero for {:?}", hero_entity);
+                    break;
+                };
+
+                // Builder State Change Event to Building
+                let state_change_event = VisibleEvent::StateChangeEvent {
+                    new_state: obj::STATE_EXPLORING.to_string(),
+                };
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    hero.entity,
+                    &hero.id,
+                    hero.player_id,
+                    &hero.pos,
+                    game_tick.0 + 1, // in the future
+                    state_change_event,
+                );
+
+                // Insert explore event
+                let explore_event = VisibleEvent::ExploreEvent;
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    hero.entity,
+                    &hero.id,
+                    hero.player_id,
+                    &hero.pos,
+                    game_tick.0 + 20, // in the future
+                    explore_event,
+                );
             }
             _ => {}
         }
@@ -2426,7 +2561,7 @@ fn equip_system(
 fn recipe_list_system(
     mut events: ResMut<PlayerEvents>,
     clients: Res<Clients>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     recipes: Res<Recipes>,
     structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
@@ -2473,7 +2608,10 @@ fn recipe_list_system(
 
 fn order_refine_system(
     mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
     mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
     clients: Res<Clients>,
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
 ) {
@@ -2512,6 +2650,19 @@ fn order_refine_system(
 
                 if let Some(villager) = villager {
                     info!("Adding Order Refine to {:?}", villager.id);
+
+                    //Add speech
+                    ObjUtil::add_sound_obj_event(
+                        ids.new_map_event_id(),
+                        game_tick.0,
+                        Villager::order_to_speech(&Order::Refine),
+                        villager.entity,
+                        villager.id,
+                        villager.player_id,
+                        villager.pos,
+                        &mut map_events,
+                    );
+
                     commands.entity(villager.entity).insert(Order::Refine);
                 }
             }
@@ -2526,7 +2677,10 @@ fn order_refine_system(
 
 fn order_craft_system(
     mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
     mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
     clients: Res<Clients>,
     mut items: ResMut<Items>,
     recipes: Res<Recipes>,
@@ -2585,6 +2739,20 @@ fn order_craft_system(
                             commands.entity(villager.entity).insert(Order::Craft {
                                 recipe_name: recipe_name.clone(),
                             });
+
+                            //Add speech
+                            ObjUtil::add_sound_obj_event(
+                                ids.new_map_event_id(),
+                                game_tick.0,
+                                Villager::order_to_speech(&Order::Craft {
+                                    recipe_name: recipe_name.to_string(),
+                                }),
+                                villager.entity,
+                                villager.id,
+                                villager.player_id,
+                                villager.pos,
+                                &mut map_events,
+                            );
                         }
                     } else {
                         error!("Insufficient resources to craft {:?}", *recipe_name);
@@ -2614,8 +2782,10 @@ fn order_craft_system(
 
 fn order_explore_system(
     mut events: ResMut<PlayerEvents>,
-    ids: Res<Ids>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
     mut commands: Commands,
+    mut map_events: ResMut<MapEvents>,
     clients: Res<Clients>,
     query: Query<MapObjQuery>,
 ) {
@@ -2651,8 +2821,110 @@ fn order_explore_system(
                 // Add OrderFollow component to source and set hero_entity as target
                 for q in &query {
                     if q.id.0 == *villager_id {
+                        //Add speech
+                        ObjUtil::add_sound_obj_event(
+                            ids.new_map_event_id(),
+                            game_tick.0,
+                            Villager::order_to_speech(&Order::Explore),
+                            villager.entity,
+                            villager.id,
+                            villager.player_id,
+                            villager.pos,
+                            &mut map_events,
+                        );
+
                         commands.entity(q.entity).insert(Order::Explore);
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn order_experiment_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
+    items: ResMut<Items>,
+    mut experiments: ResMut<Experiments>,
+    templates: Res<Templates>,
+    active_infos: Res<ActiveInfos>,
+    clients: Res<Clients>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::OrderExperiment {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let mut villager = None;
+
+                //Find villager assigned to structure
+                for villager_item in villager_query.iter() {
+                    if villager_item.attrs.structure == *structure_id
+                        && villager_item.player_id.0 == *player_id
+                    {
+                        villager = Some(villager_item);
+                    }
+                }
+
+                if villager.is_none() {
+                    error!(
+                        "Cannot find a villager assigned to structure {:?}",
+                        *structure_id
+                    );
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No villager assigned to structure to refine.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                if let Some(villager) = villager {
+                    info!("Adding Order Experiment to {:?}", villager.id);
+
+                    // Update experiment state to progressing
+                    let updated_experiment = Experiment::update_state(
+                        villager.attrs.structure,
+                        experiment::ExperimentState::Waiting,
+                        &mut experiments,
+                    );
+
+                    if let Some(updated_experiment) = updated_experiment {
+                        active_info_experiment(
+                            villager.player_id.0,
+                            villager.attrs.structure,
+                            updated_experiment,
+                            &items,
+                            &active_infos,
+                            &clients,
+                        );
+                    }
+
+                    commands.entity(villager.entity).insert(Order::Experiment);
+
+                    ObjUtil::add_sound_obj_event(
+                        ids.new_map_event_id(),
+                        game_tick.0,
+                        Villager::order_to_speech(&Order::Experiment),
+                        villager.entity,
+                        villager.id,
+                        villager.player_id,
+                        villager.pos,
+                        &mut map_events,
+                    );
                 }
             }
             _ => {}
@@ -2747,19 +3019,21 @@ fn remove_system(
 
     for (event_id, event) in events.iter() {
         match event {
-            PlayerEvent::Remove { player_id, structure_id } => {
+            PlayerEvent::Remove {
+                player_id,
+                structure_id,
+            } => {
                 events_to_remove.push(*event_id);
 
                 let Some(entity) = ids.get_entity(*structure_id) else {
-                    
                     error!("Cannot find entity for {:?}", structure_id);
                     continue;
-                };            
+                };
 
                 let Ok(obj) = query.get(entity) else {
                     error!("Cannot find obj for {:?}", entity);
                     continue;
-                };                
+                };
 
                 // Check if entity is owned by player
                 if obj.player_id.0 != *player_id {
@@ -2786,7 +3060,7 @@ fn remove_system(
                     map_event_type: remove_event,
                 };
 
-                map_events.insert(map_event_id, map_state_event);                
+                map_events.insert(map_event_id, map_state_event);
             }
             _ => {}
         }
@@ -2811,7 +3085,11 @@ fn set_experiment_item_system(
 
     for (event_id, event) in events.iter() {
         match event {
-            PlayerEvent::SetExperimentItem { player_id, item_id, is_resource } => {
+            PlayerEvent::SetExperimentItem {
+                player_id,
+                item_id,
+                is_resource,
+            } => {
                 events_to_remove.push(*event_id);
 
                 let Some(item) = Item::find_by_id(*item_id, &items) else {
@@ -2825,15 +3103,16 @@ fn set_experiment_item_system(
                             errmsg: "Cannot set resource item as experiment source.".to_string(),
                         };
                         send_to_client(*player_id, packet, &clients);
-                        continue;                    
+                        continue;
                     }
                 } else {
                     if !Item::is_resource(item.clone()) {
                         let packet = ResponsePacket::Error {
-                            errmsg: "Can only set resource items as an experiment reagent.".to_string(),
+                            errmsg: "Can only set resource items as an experiment reagent."
+                                .to_string(),
                         };
                         send_to_client(*player_id, packet, &clients);
-                        continue;  
+                        continue;
                     }
                 }
 
@@ -2858,25 +3137,96 @@ fn set_experiment_item_system(
                 }
 
                 if !is_resource {
-                    Item::set_experiment_source(*item_id, &mut items);
+                    if let Some(experiment) = experiments.get_mut(&item.owner) {
+                        debug!("Experiment: {:?}", experiment);
+                        if let Some(source_item) = &experiment.source_item {
+                            if source_item.id == *item_id {
+                                // Player is transfering the item source out of experiment
+                                Item::remove_experiment_source(*item_id, &mut items);
+                                Experiment::reset(experiment);
+
+                                send_info_experiment(
+                                    *player_id,
+                                    item.owner,
+                                    experiment.clone(),
+                                    &items,
+                                    &clients,
+                                );
+                            } else {
+                                let packet = ResponsePacket::Error {
+                                    errmsg: "Experiment source item already set.".to_string(),
+                                };
+                                send_to_client(*player_id, packet, &clients);
+                                continue;
+                            }
+                        } else {
+                            let source_item = Item::set_experiment_source(*item_id, &mut items);
+                            experiment.source_item = Some(source_item);
+
+                            send_info_experiment(
+                                *player_id,
+                                item.owner,
+                                experiment.clone(),
+                                &items,
+                                &clients,
+                            );
+                        }
+                    } else {
+                        // Experiment does not exist, set experiment item source and create experiment
+                        let source_item = Item::set_experiment_source(*item_id, &mut items);
+
+                        let experiment = Experiment::create(
+                            item.owner,
+                            None,
+                            ExperimentState::None,
+                            source_item,
+                            Vec::new(),
+                            &mut experiments,
+                        );
+
+                        send_info_experiment(
+                            *player_id,
+                            item.owner,
+                            experiment.clone(),
+                            &items,
+                            &clients,
+                        );
+                    }
                 } else {
-                    Item::set_experiment_reagent(*item_id, &mut items);
+                    if let Some(experiment) = experiments.get(&item.owner) {
+                        if item.experiment.is_none() {
+                            Item::set_experiment_reagent(*item_id, &mut items);
+                        } else {
+                            Item::remove_experiment_reagent(*item_id, &mut items);
+                        }
+
+                        send_info_experiment(
+                            *player_id,
+                            item.owner,
+                            experiment.clone(),
+                            &items,
+                            &clients,
+                        );
+                    }
                 }
+            }
+            PlayerEvent::ResetExperiment {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
 
-                let (experiment_source, 
-                    experiment_reagents, 
-                    other_resources) = Item::get_experiment_details_packet(item.owner, &items);
+                if let Some(experiment) = experiments.get_mut(structure_id) {
+                    Experiment::reset(experiment);
 
-                let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment { 
-                    id: owner.id.0, 
-                    expitem: experiment_source, 
-                    expresources: experiment_reagents,
-                    validresources: other_resources,
-                    expstate: experiment::EXP_STATE_NONE.to_owned(), 
-                    recipe: None
-                };       
-
-                send_to_client(*player_id, info_experiment, &clients);     
+                    send_info_experiment(
+                        *player_id,
+                        *structure_id,
+                        experiment.clone(),
+                        &items,
+                        &clients,
+                    );
+                }
             }
             _ => {}
         }
@@ -2885,6 +3235,43 @@ fn set_experiment_item_system(
     for event_id in events_to_remove.iter() {
         events.remove(event_id);
     }
+}
+
+pub fn active_info_experiment(
+    player_id: i32,
+    structure_id: i32,
+    experiment: Experiment,
+    items: &ResMut<Items>,
+    active_infos: &Res<ActiveInfos>,
+    clients: &Res<Clients>,
+) {
+    let active_info_key = (player_id, structure_id, "experiment".to_string());
+
+    if let Some(_active_info) = active_infos.get(&active_info_key) {
+        send_info_experiment(player_id, structure_id, experiment, items, clients);
+    }
+}
+
+pub fn send_info_experiment(
+    player_id: i32,
+    structure_id: i32,
+    experiment: Experiment,
+    items: &ResMut<Items>,
+    clients: &Res<Clients>,
+) {
+    let (experiment_source, experiment_reagents, other_resources) =
+        Item::get_experiment_details_packet(structure_id, &items);
+
+    let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment {
+        id: structure_id,
+        expitem: experiment_source,
+        expresources: experiment_reagents,
+        validresources: other_resources,
+        expstate: Experiment::state_to_string(experiment.state.clone()),
+        recipe: Experiment::recipe_to_packet(experiment.clone()),
+    };
+
+    send_to_client(player_id, info_experiment, &clients);
 }
 
 fn new_player(
@@ -2939,32 +3326,19 @@ fn new_player(
     };
 
     // Create hero items
-    let berries = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Honeybell Berries".to_string(),
-        25,
-        &templates.item_templates,
-    );
-    let water = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Spring Water".to_string(),
-        25,
-        &templates.item_templates,
-    );
+
     let wood1 = Item::new(
         ids.new_item_id(),
         hero_id,
         "Cragroot Maple Wood".to_string(),
-        3,
+        10,
         &templates.item_templates,
     );
     let wood2 = Item::new(
         ids.new_item_id(),
         hero_id,
         "Cragroot Maple Wood".to_string(),
-        2,
+        5,
         &templates.item_templates,
     );
     let wood3 = Item::new(
@@ -2985,7 +3359,7 @@ fn new_player(
         ids.new_item_id(),
         hero_id,
         "Valleyrun Copper Ingot".to_string(),
-        25,
+        5,
         &templates.item_templates,
     );
 
@@ -2993,12 +3367,10 @@ fn new_player(
         ids.new_item_id(),
         hero_id,
         "Cragroot Maple Timber".to_string(),
-        50,
+        5,
         &templates.item_templates,
     );
 
-    items.push(berries);
-    items.push(water);
     items.push(wood1);
     items.push(wood2);
     items.push(wood3);
@@ -3014,7 +3386,43 @@ fn new_player(
         hero_id,
         "Copper Training Axe".to_string(),
         1,
-        item_attrs,
+        item_attrs.clone(),
+        &templates.item_templates,
+        items,
+    );
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        hero_id,
+        "Copper Training Axe".to_string(),
+        1,
+        item_attrs.clone(),
+        &templates.item_templates,
+        items,
+    );
+
+    /*let mut item_attrs = HashMap::new();
+    item_attrs.insert(item::THIRST, 100.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        hero_id,
+        "Spring Water".to_string(),
+        5,
+        item_attrs.clone(),
+        &templates.item_templates,
+        items,
+    );*/
+
+    let mut item_attrs = HashMap::new();
+    item_attrs.insert(item::FEED, 100.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        hero_id,
+        "Honeybell Berries".to_string(),
+        5,
+        item_attrs.clone(),
         &templates.item_templates,
         items,
     );
@@ -3101,17 +3509,23 @@ fn new_player(
     let villager_attrs = VillagerAttrs {
         shelter: "None".to_string(),
         structure: -1,
+        activity: villager::Activity::None,
     };
 
-    let water_villager = Item::new(
-        ids.new_item_id(),
-        villager_id,
-        "Spring Water".to_string(),
-        50,
-        &templates.item_templates,
-    );
+    let move_and_transfer = Steps::build()
+        .label("MoveAndTransfer")
+        .step(MoveToWaterSource)
+        .step(TransferDrink);
 
-    items.push(water_villager);
+    let move_and_eat = Steps::build()
+        .label("MoveAndEat")
+        .step(MoveToFoodSource)
+        .step(Eat);
+
+    let move_and_sleep = Steps::build()
+        .label("MoveAndSleep")
+        .step(MoveToSleepPos)
+        .step(Sleep);
 
     let villager_entity_id = commands
         .spawn((
@@ -3119,19 +3533,45 @@ fn new_player(
             SubclassVillager,
             base_attrs,
             villager_attrs,
-            Morale::new(100.0, 1.0),
-            Thirst::new(0.0, 0.1),
+            Thirst::new(0.0, 0.10), //0.1 before
+            Hunger::new(0.0, 0.10),
+            Tired::new(0.0, 0.10),
+            Morale::new(50.0),
             Thinker::build()
                 .label("My Thinker")
-                .picker(FirstToScore { threshold: 0.8 })
+                .picker(Highest)
                 .when(
-                    Thirsty,
-                    Drink {
-                        until: 70.0,
-                        per_tick: 10.0,
-                    },
+                    ProductOfScorers::build(0.5)
+                        .push(ThirstyScorer)
+                        .push(FindDrinkScorer),
+                        FindDrink
                 )
-                .when(HighMorale, ProcessOrder),
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(ThirstyScorer)
+                        .push(DrinkDistanceScorer),
+                        MoveToWaterSource,
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(ThirstyScorer)
+                        .push(TransferDrinkScorer),
+                    TransferDrink
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(ThirstyScorer)
+                        .push(HasDrinkScorer),
+                    Drink {until: 70.0 },                    
+                )
+                /*.when(Hungry, move_and_eat)
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(Drowsy)
+                        .push(ShelterAvailable),
+                    move_and_sleep,
+                )*/
+                .when(GoodMorale, ProcessOrder),
         ))
         .id();
 
@@ -3164,9 +3604,100 @@ fn new_player(
 
     //Starting plans
     Structure::add_plan(player_id, "Crafting Tent".to_string(), 0, 0, plans);
+    Structure::add_plan(player_id, "Blacksmith".to_string(), 0, 0, plans);
     Structure::add_plan(player_id, "Tent".to_string(), 0, 0, plans);
     Structure::add_plan(player_id, "Burrow".to_string(), 0, 0, plans);
     Structure::add_plan(player_id, "Stockade".to_string(), 0, 0, plans);
+    Structure::add_plan(player_id, "Mine".to_string(), 0, 0, plans);
+
+    let structure_id = ids.new_obj_id();
+
+    let structure_name = "Burrow".to_string();
+    let structure_template = ObjTemplate::get_template(structure_name.clone(), templates);
+
+    let structure: Obj = Obj {
+        id: Id(structure_id),
+        player_id: PlayerId(player_id),
+        position: Position { x: 16, y: 37 },
+        name: Name("Burrow".into()),
+        template: Template("Burrow".into()),
+        class: Class("structure".into()),
+        subclass: Subclass("storage".into()),
+        state: State("none".into()),
+        viewshed: Viewshed { range: 0 },
+        misc: Misc {
+            image: "burrow".into(),
+            hsl: Vec::new().into(),
+            groups: Vec::new().into(),
+        },
+        stats: Stats {
+            hp: 1,
+            base_hp: structure_template.base_hp.unwrap(), // Convert option to non-option
+            base_def: 0,
+            base_damage: None,
+            damage_range: None,
+            base_speed: None,
+            base_vision: None,
+        },
+    };
+
+    let structure_attrs = StructureAttrs {
+        start_time: 0,
+        end_time: 0,
+        build_time: structure_template.build_time.unwrap(), // Structure must have build time
+        builder: -1,
+        progress: 0,
+        req: structure_template.req.unwrap(),
+    };
+
+    let structure_entity_id = commands
+        .spawn((structure, structure_attrs, ClassStructure))
+        .id();
+
+    ids.new_entity_obj_mapping(structure_id, structure_entity_id);
+
+    // Insert new obj event
+    let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
+    let map_event_id = ids.new_map_event_id();
+
+    let map_state_event = MapEvent {
+        event_id: map_event_id,
+        entity_id: structure_entity_id,
+        obj_id: structure_id,
+        player_id: player_id,
+        pos_x: 16,
+        pos_y: 37,
+        run_tick: game_tick.0 + 1, // Add one game tick
+        map_event_type: new_obj_event,
+    };
+
+    map_events.insert(map_event_id, map_state_event);
+
+    let mut item_attrs = HashMap::new();
+    item_attrs.insert(item::THIRST, 70.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        structure_id,
+        "Spring Water".to_string(),
+        2,
+        item_attrs,
+        &templates.item_templates,
+        &mut items,
+    );
+
+    let mut item_attrs = HashMap::new();
+    item_attrs.insert(item::FEED, 70.0);
+
+    Item::new_with_attrs(
+        ids.new_item_id(),
+        structure_id,
+        "Amitanian Grape".to_string(),
+        50,
+        item_attrs,
+        &templates.item_templates,
+        &mut items,
+    );
 }
 
 fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {
