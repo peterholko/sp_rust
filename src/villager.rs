@@ -15,6 +15,7 @@ pub enum Activity {
     Following,
     Drinking,
     Eating,
+    Sleeping,
     Crafting,
     Experimenting,
 }

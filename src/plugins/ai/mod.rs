@@ -16,14 +16,19 @@ impl Plugin for AIPlugin {
             )
             .add_system_to_stage(
                 BigBrainStage::Actions,
-                villager::move_to_food_source_action_system,
+                villager::move_to_food_action_system,
             )
             // Actions
             .add_system_to_stage(BigBrainStage::Actions, villager::find_drink_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::move_to_sleep_pos_action_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::move_to_shelter_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::transfer_drink_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::drink_action_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::find_food_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::transfer_food_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::eat_action_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::sleep_action_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::find_shelter_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::move_to_shelter_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::sleep_action_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::process_order_system)
             // Thirsty scorers
@@ -37,7 +42,11 @@ impl Plugin for AIPlugin {
             .add_system_to_stage(BigBrainStage::Scorers, villager::find_food_scorer_system)
             .add_system_to_stage(BigBrainStage::Scorers, villager::food_distance_scorer_system)
             .add_system_to_stage(BigBrainStage::Scorers, villager::transfer_food_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::has_food_scorer_system)            
+            .add_system_to_stage(BigBrainStage::Scorers, villager::has_food_scorer_system)   
+            //Tired scorers
+            .add_system_to_stage(BigBrainStage::Scorers, villager::drowsy_scorer_system)
+            .add_system_to_stage(BigBrainStage::Scorers, villager::find_shelter_scorer_system)
+            .add_system_to_stage(BigBrainStage::Scorers, villager::shelter_distance_scorer_system)
 
             .add_system_to_stage(BigBrainStage::Scorers, villager::morale_scorer_system)
             .add_system_to_stage(BigBrainStage::Actions, npc::attack_target_system)

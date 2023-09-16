@@ -2573,17 +2573,17 @@ fn update_game_tick(
             }
         }
 
-        /*if let Ok(state) = state_query.get(entity) {
+        if let Ok(state) = state_query.get(entity) {
             if state.0 != obj::STATE_EATING.to_string() {
-                hunger.update_by_tick_amount(1.0);
+                hunger.update_by_tick_amount(2.0);
             }
         }        
 
         if let Ok(state) = state_query.get(entity) {
             if state.0 != obj::STATE_SLEEPING.to_string() {
-                tired.update_by_tick_amount(1.0);
+                tired.update_by_tick_amount(2.0);
             }
-        }        */
+        }
 
         if thirst.thirst > 80.0 {
             if let Ok(_dehydrated) = dehydrated.get(entity) {

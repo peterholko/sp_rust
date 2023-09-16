@@ -97,7 +97,7 @@ impl Thirst {
 
 // Hunger
 #[derive(Clone, Component, Debug)]
-pub struct Hungry;
+pub struct HungryScorer;
 
 // Starving is an tag to indicate extreme hunger
 #[derive(Clone, Component, Debug)]
@@ -111,6 +111,9 @@ pub struct MoveToFoodSource;
 
 #[derive(Clone, Component, Debug)]
 pub struct FindFood;
+
+#[derive(Clone, Component, Debug)]
+pub struct TransferFood;
 
 #[derive(Component, Debug)]
 pub struct Hunger {
@@ -138,9 +141,19 @@ impl Hunger {
     }
 }
 
+#[derive(Clone, Component, Debug)]
+pub struct FindShelterScorer;
+
+#[derive(Clone, Component, Debug)]
+pub struct ShelterDistanceScorer;
+
 // Sleep
 #[derive(Clone, Component, Debug)]
-pub struct Drowsy;
+pub struct DrowsyScorer;
+
+
+#[derive(Clone, Component, Debug)]
+pub struct FindShelter;
 
 // Tag to indicate extreme drowsinest 
 #[derive(Clone, Component, Debug)]
@@ -151,6 +164,11 @@ pub struct Sleep;
 
 #[derive(Clone, Component, Debug)]
 pub struct MoveToSleepPos;
+
+#[derive(Clone, Component, Debug)]
+pub struct MoveToShelter {
+    pub dest: Position
+}
 
 #[derive(Component, Debug)]
 pub struct Tired {

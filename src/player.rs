@@ -5,9 +5,9 @@ use big_brain::prelude::*;
 use std::collections::HashMap;
 
 use crate::components::villager::{
-    Drink, FindDrinkScorer, Drowsy, Eat, GoodMorale, Hunger, Hungry, Morale, MoveToFoodSource,
+    Drink, FindDrinkScorer, DrowsyScorer, Eat, GoodMorale, Hunger, HungryScorer, Morale, MoveToFoodSource,
     MoveToSleepPos, MoveToWaterSource, ProcessOrder, ShelterAvailable, Sleep, Thirst, ThirstyScorer,
-    Tired, DrinkDistanceScorer, TransferDrink, HasDrinkScorer, TransferDrinkScorer, FindDrink,
+    Tired, DrinkDistanceScorer, TransferDrink, HasDrinkScorer, TransferDrinkScorer, FindDrink, FindFoodScorer, FindFood, FoodDistanceScorer, TransferFoodScorer, TransferFood, HasFoodScorer, Exhausted, FindShelterScorer, FindShelter, ShelterDistanceScorer,
 };
 
 use crate::combat::{Combat, CombatQuery};
@@ -3564,6 +3564,47 @@ fn new_player(
                         .push(HasDrinkScorer),
                     Drink {until: 70.0 },                    
                 )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(HungryScorer)
+                        .push(FindFoodScorer),
+                        FindFood
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(HungryScorer)
+                        .push(FoodDistanceScorer),
+                        MoveToFoodSource,
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(HungryScorer)
+                        .push(TransferFoodScorer),
+                    TransferFood
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(HungryScorer)
+                        .push(HasFoodScorer),
+                    Eat,                    
+                )  
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(DrowsyScorer)
+                        .push(FindShelterScorer),
+                        FindShelter
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .push(DrowsyScorer)
+                        .push(ShelterDistanceScorer),
+                        MoveToFoodSource,                                        
+                )
+                .when(
+                    DrowsyScorer,              
+                    Sleep,                    
+                )  
+
                 /*.when(Hungry, move_and_eat)
                 .when(
                     ProductOfScorers::build(0.5)
