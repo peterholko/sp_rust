@@ -1769,11 +1769,7 @@ fn drink_eat_system(
 
                     // If villager reset the activity to none
                     if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
-                        if let Ok(mut villager_attr) = villager_attrs.get_mut(map_event.entity_id) {
-                            villager_attr.activity = villager::Activity::None
-                        }
-
-                        debug!("Removing DrinkEventCompleted");
+                        debug!("Inserting DrinkEventCompleted");
                         commands
                             .entity(entity)
                             .insert(DrinkEventCompleted { item: item });
@@ -1842,10 +1838,11 @@ fn drink_eat_system(
                             villager_attr.activity = villager::Activity::None
                         }
 
-                        debug!("Removing EatEventCompleted");
+                        debug!("Inserting DrinkEventCompleted");
                         commands
                             .entity(entity)
                             .insert(EatEventCompleted { item: item });
+
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
                         if let Ok(mut hunger) = hungers.get_mut(map_event.entity_id) {
                             if let Some(feed_mod) = item.attrs.get(item::FEED) {
@@ -1906,10 +1903,10 @@ fn drink_eat_system(
                             villager_attr.activity = villager::Activity::None
                         }
 
-                        debug!("Removing SleepEventCompleted");
+                        debug!("Inserting DrinkEventCompleted");
                         commands
                             .entity(entity)
-                            .insert(SleepEventCompleted );
+                            .insert(SleepEventCompleted);
                     }                                  
                 }
                 _ => {
