@@ -507,16 +507,6 @@ impl Game {
         // Initialize game tick
         let game_tick: GameTick = GameTick(0);
 
-        // Initialize indexes
-        let ids: Ids = Ids {
-            map_event: 0,
-            player_event: 0,
-            obj: 0,
-            item: 0,
-            player_hero_map: HashMap::new(),
-            obj_entity_map: HashMap::new(),
-        };
-
         // Initialize map events vector
         let map_events: MapEvents = MapEvents(HashMap::new());
         let processed_map_events: VisibleEvents = VisibleEvents(Vec::new());
@@ -574,7 +564,6 @@ impl Game {
         commands.insert_resource(processed_map_events);
         commands.insert_resource(game_events);
         commands.insert_resource(perception_updates);
-        commands.insert_resource(ids);
         commands.insert_resource(explored_map);
 
         // Initialize game world
@@ -702,7 +691,7 @@ fn move_event_system(
                             if obj.player_id.0 < 1000 {
                                 let mut rng = rand::thread_rng();
 
-                                let spawn_chance = 0.0025;
+                                let spawn_chance = 0.25;
                                 let random_num = rng.gen::<f32>();
 
                                 // TODO move to encounter module
@@ -1834,9 +1823,6 @@ fn drink_eat_system(
 
                     // If villager reset the activity to none
                     if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
-                        if let Ok(mut villager_attr) = villager_attrs.get_mut(map_event.entity_id) {
-                            villager_attr.activity = villager::Activity::None
-                        }
 
                         debug!("Inserting DrinkEventCompleted");
                         commands
@@ -1899,10 +1885,6 @@ fn drink_eat_system(
                     visible_events.push(sleep_visible_event);
 
                     if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
-                        if let Ok(mut villager_attr) = villager_attrs.get_mut(map_event.entity_id) {
-                            villager_attr.activity = villager::Activity::None
-                        }
-
                         debug!("Inserting DrinkEventCompleted");
                         commands
                             .entity(entity)
@@ -2564,7 +2546,7 @@ fn update_game_tick(
     // Update thirst
     for (entity, mut thirst, mut hunger, mut tired) in &mut attrs {
         
-        if let Ok(state) = state_query.get(entity) {
+        /*if let Ok(state) = state_query.get(entity) {
             if state.0 != obj::STATE_DRINKING.to_string() {
                 thirst.update_by_tick_amount(2.0);
             }
@@ -2604,7 +2586,7 @@ fn update_game_tick(
             } else {
                 commands.entity(entity).insert(Exhausted);
             }
-        }              
+        }     */         
 
         debug!("Thirst: {:?} Hunger: {:?} Tired: {:?}", thirst.thirst, hunger.hunger, tired.tired);
         // Is thirsty

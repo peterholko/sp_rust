@@ -3,6 +3,11 @@ use bevy::prelude::*;
 use crate::game::Position;
 
 
+#[derive(Clone, Component, Debug)]
+pub struct EnemyDistanceScorer;
+
+#[derive(Clone, Component, Debug)]
+pub struct Flee;
 
 #[derive(Clone, Component, Debug)]
 pub struct ThirstyScorer;
@@ -64,6 +69,12 @@ pub struct MoveToWaterSource;
 
 #[derive(Clone, Component, Debug)]
 pub struct FindDrink;
+
+#[derive(Clone, Component, Debug)]
+pub struct NoDrinks;
+
+#[derive(Clone, Component, Debug)]
+pub struct NoFood;
 
 
 #[derive(Clone, Component, Debug)]
@@ -146,6 +157,9 @@ pub struct FindShelterScorer;
 
 #[derive(Clone, Component, Debug)]
 pub struct ShelterDistanceScorer;
+
+#[derive(Clone, Component, Debug)]
+pub struct NearShelterScorer;
 
 // Sleep
 #[derive(Clone, Component, Debug)]

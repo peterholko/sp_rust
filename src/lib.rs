@@ -46,7 +46,7 @@ pub fn setup() {
         .add_plugin(ScheduleRunnerPlugin::default())
         .add_plugin(LogPlugin {
             level: bevy::log::Level::DEBUG,
-            filter: "big_brain=warn,siege_perilous::ai=debug,siege_perilious::game=debug".into(),
+            filter: "big_brain=trace,siege_perilous::ai=debug,siege_perilious::game=debug".into(),
         })
         .add_plugin(GamePlugin)
         .run();

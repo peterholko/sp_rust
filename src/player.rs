@@ -5,9 +5,12 @@ use big_brain::prelude::*;
 use std::collections::HashMap;
 
 use crate::components::villager::{
-    Drink, FindDrinkScorer, DrowsyScorer, Eat, GoodMorale, Hunger, HungryScorer, Morale, MoveToFoodSource,
-    MoveToSleepPos, MoveToWaterSource, ProcessOrder, ShelterAvailable, Sleep, Thirst, ThirstyScorer,
-    Tired, DrinkDistanceScorer, TransferDrink, HasDrinkScorer, TransferDrinkScorer, FindDrink, FindFoodScorer, FindFood, FoodDistanceScorer, TransferFoodScorer, TransferFood, HasFoodScorer, Exhausted, FindShelterScorer, FindShelter, ShelterDistanceScorer,
+    Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
+    FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
+    FoodDistanceScorer, GoodMorale, HasDrinkScorer, HasFoodScorer, Hunger, HungryScorer, Morale,
+    MoveToFoodSource, MoveToShelter, MoveToSleepPos, MoveToWaterSource, NearShelterScorer,
+    ProcessOrder, ShelterAvailable, ShelterDistanceScorer, Sleep, Thirst, ThirstyScorer, Tired,
+    TransferDrink, TransferDrinkScorer, TransferFood, TransferFoodScorer,
 };
 
 use crate::combat::{Combat, CombatQuery};
@@ -3542,77 +3545,93 @@ fn new_player(
                 .picker(Highest)
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("EnemyDistanceScorer")
+                        .push(EnemyDistanceScorer),
+                    Flee,
+                )
+                .when(
+                    ProductOfScorers::build(0.5)
+                        .label("FindDrinkScorer")
                         .push(ThirstyScorer)
                         .push(FindDrinkScorer),
-                        FindDrink
+                    FindDrink,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("DrinkDistanceScorer")
                         .push(ThirstyScorer)
                         .push(DrinkDistanceScorer),
-                        MoveToWaterSource,
+                    MoveToWaterSource,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("TransferDrinkScorer")
                         .push(ThirstyScorer)
                         .push(TransferDrinkScorer),
-                    TransferDrink
+                    TransferDrink,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("HasDrinkScorer")
                         .push(ThirstyScorer)
                         .push(HasDrinkScorer),
-                    Drink {until: 70.0 },                    
+                    Drink { until: 70.0 },
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("FindFoodScorer")
                         .push(HungryScorer)
                         .push(FindFoodScorer),
-                        FindFood
+                    FindFood,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("FoodDistanceScorer")
                         .push(HungryScorer)
                         .push(FoodDistanceScorer),
-                        MoveToFoodSource,
+                    MoveToFoodSource,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("TransferFoodScorer")
                         .push(HungryScorer)
                         .push(TransferFoodScorer),
-                    TransferFood
+                    TransferFood,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("HasFoodScorer")
                         .push(HungryScorer)
                         .push(HasFoodScorer),
-                    Eat,                    
-                )  
+                    Eat,
+                )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("FindShelterScorer")
                         .push(DrowsyScorer)
                         .push(FindShelterScorer),
-                        FindShelter
+                    FindShelter,
                 )
                 .when(
                     ProductOfScorers::build(0.5)
+                        .label("ShelterDistanceScorer")
                         .push(DrowsyScorer)
                         .push(ShelterDistanceScorer),
-                        MoveToFoodSource,                                        
+                    MoveToSleepPos,
                 )
                 .when(
-                    DrowsyScorer,              
-                    Sleep,                    
-                )  
-
-                /*.when(Hungry, move_and_eat)
+                    ProductOfScorers::build(0.5)
+                        .label("NearShelterScorer")
+                        .push(DrowsyScorer)
+                        .push(NearShelterScorer),
+                    Sleep,
+                )
                 .when(
                     ProductOfScorers::build(0.5)
-                        .push(Drowsy)
-                        .push(ShelterAvailable),
-                    move_and_sleep,
-                )*/
-                .when(GoodMorale, ProcessOrder),
+                        .label("GoodMoraleScorer")
+                        .push(GoodMorale),
+                    ProcessOrder,
+                ),
         ))
         .id();
 

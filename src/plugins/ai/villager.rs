@@ -9,6 +9,7 @@ use pathfinding::prelude::directions::E;
 use crate::components::villager::Dehydrated;
 use crate::components::villager::DrinkDistanceScorer;
 use crate::components::villager::DrowsyScorer;
+use crate::components::villager::EnemyDistanceScorer;
 use crate::components::villager::Exhausted;
 use crate::components::villager::FindDrink;
 use crate::components::villager::FindDrinkScorer;
@@ -16,6 +17,7 @@ use crate::components::villager::FindFood;
 use crate::components::villager::FindFoodScorer;
 use crate::components::villager::FindShelter;
 use crate::components::villager::FindShelterScorer;
+use crate::components::villager::Flee;
 use crate::components::villager::FoodDistanceScorer;
 use crate::components::villager::GoodMorale;
 use crate::components::villager::HasDrinkScorer;
@@ -24,6 +26,8 @@ use crate::components::villager::MoveToDrink;
 use crate::components::villager::MoveToFood;
 use crate::components::villager::MoveToInProgress;
 use crate::components::villager::MoveToShelter;
+use crate::components::villager::NearShelterScorer;
+use crate::components::villager::NoDrinks;
 use crate::components::villager::ProcessOrder;
 use crate::components::villager::ShelterAvailable;
 use crate::components::villager::ShelterDistanceScorer;
@@ -78,11 +82,66 @@ pub struct VillagerWithOrderQuery {
     order: &'static Order,
 }
 
+pub fn enemy_distance_scorer_system(
+    ids: ResMut<Ids>,
+    move_in_progress: Query<&MoveToInProgress>,
+    hero_query: Query<ObjQuery, With<SubclassHero>>,
+    obj_query: Query<ObjQuery, Without<SubclassHero>>,
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<EnemyDistanceScorer>>,
+) {
+    for (Actor(actor), mut score, span) in &mut query {
+        if let Ok(villager) = obj_query.get(*actor) {
+            let Some(hero_id) = ids.get_hero(villager.player_id.0) else {
+                error!("Cannot find hero for player {:?}", villager.player_id);
+                continue;
+            };
+
+            let Some(hero_entity) = ids.get_entity(hero_id) else {
+                error!("Cannot find hero entity for hero {:?}", hero_id);
+                continue;
+            };
+
+            let Ok(hero) = hero_query.get(hero_entity) else {
+                error!("Cannot find hero for {:?}", hero_entity);
+                continue;
+            };
+
+            if villager.pos == hero.pos {
+
+                // If move is in progress 
+                /*if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
+                    score.set(1.0);
+                    continue;  
+                } */
+
+                score.set(0.0);
+            } else {
+                for obj in obj_query.iter() {
+
+                    if obj.player_id.0 != villager.player_id.0 {
+                        
+                        let distance =
+                        Map::distance( (villager.pos.x, villager.pos.y), (obj.pos.x, obj.pos.y));
+
+                        if distance <= 2 {
+                            score.set(1.0);
+                        } else {
+                            score.set(0.0);
+                        }
+                    }
+                }
+            }
+
+            debug!("EnemyDistanceScorer score {:?}", score);
+        }
+    }
+}
+
 pub fn thirsty_scorer_system(
     thirsts: Query<&Thirst>,
     dehydrated: Query<&Dehydrated>,
+    no_drinks: Query<&NoDrinks>,
     villager_attrs: Query<&VillagerAttrs>,
-    drink_events_completed: Query<&DrinkEventCompleted>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<ThirstyScorer>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
@@ -100,9 +159,14 @@ pub fn thirsty_scorer_system(
 
                 let mut thirst_mod = 1.0;
 
+                debug!("Villager Activity: {:?}", villager_attrs.activity);
                 if villager_attrs.activity == villager::Activity::Drinking {
                     // Apply modifier if the villager is drinking
                     thirst_mod = 1.5;
+                }
+
+                if let Ok(_no_drinks) = no_drinks.get(*actor) {
+                    thirst_mod = 0.0;
                 }
 
                 let mut thrist_percentage = thirst.thirst * thirst_mod / 100.0;
@@ -213,6 +277,7 @@ pub fn hungry_scorer_system(
 
                 let mut hunger_mod = 1.0;
 
+                debug!("Villager Activity: {:?}", villager_attrs.activity);
                 if villager_attrs.activity == villager::Activity::Eating {
                     // Apply modifier if the villager is drinking
                     hunger_mod = 1.5;
@@ -326,6 +391,7 @@ pub fn drowsy_scorer_system(
 
                 let mut tired_mod = 1.0;
 
+                debug!("Villager Activity: {:?}", villager_attrs.activity);
                 if villager_attrs.activity == villager::Activity::Sleeping {
                     // Apply modifier if the villager is drinking
                     tired_mod = 1.5;
@@ -378,16 +444,41 @@ pub fn shelter_distance_scorer_system(
                     score.set(0.0);
                     continue;
                 }; 
-
+                
                 if villager.pos.x == move_to_shelter.dest.x && 
                    villager.pos.y == move_to_shelter.dest.y {
+                    debug!("Villager is on shelter");
                     score.set(0.0);
                 } else {
+                    debug!("Villager is not on shelter");
                     score.set(1.0);
                 }
             }
 
             debug!("{:?} shelter distance score: {:?}", actor, score);
+        }
+    }
+}
+
+pub fn near_shelter_scorer_system(
+    move_to_shelter: Query<&MoveToShelter>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<NearShelterScorer>>,
+) {
+    for (Actor(actor), mut score, span) in &mut query {
+        if let Ok(villager) = villager_query.get(*actor) {
+
+            let Ok(move_to_shelter) = move_to_shelter.get(*actor) else {
+                debug!("No move_to_shelter found");
+                score.set(0.0);
+                continue;
+            }; 
+
+            if move_to_shelter.dest == *villager.pos {
+                score.set(1.0);
+            } else {
+                score.set(0.0);
+            }
         }
     }
 }
@@ -1000,10 +1091,130 @@ pub fn process_order_system(
     }
 }
 
+pub fn flee_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,    
+    map: Res<Map>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
+    events_in_progress: Query<&EventInProgress>,
+    hero_query: Query<ObjQuery, (With<SubclassHero>, Without<SubclassVillager>)>,
+    mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    mut action_query: Query<(&Actor, &mut ActionState, &Flee, &ActionSpan)>,
+) {
+    for (Actor(actor), mut state, _find_drink, span) in &mut action_query {
+        match *state {
+            ActionState::Requested => {
+                debug!("Flee");                
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                if let Ok(event) = events_in_progress.get(*actor) {
+                    debug!("Flee Event In Progress...");
+                } else {
+                    let Ok(mut villager) = villager_query.get_mut(*actor) else {
+                        error!("Cannot find villager {:?}", *actor);
+                        continue;
+                    };                
+
+                    let Some(hero_id) = ids.get_hero(villager.player_id.0) else {
+                        error!("Cannot find hero for player {:?}", villager.player_id);
+                        continue;
+                    };
+
+                    let Some(hero_entity) = ids.get_entity(hero_id) else {
+                        error!("Cannot find hero entity for hero {:?}", hero_id);
+                        continue;
+                    };
+
+                    let Ok(hero) = hero_query.get(hero_entity) else {
+                        error!("Cannot find hero for {:?}", hero_entity);
+                        continue;
+                    };
+
+                    if hero.pos != villager.pos {
+
+                        if let Some(path_result) = Map::find_path(
+                            villager.pos.x,
+                            villager.pos.y,
+                            hero.pos.x,
+                            hero.pos.y,
+                            &map,
+                        ) {
+                            debug!("Path to structure: {:?}", path_result);
+
+                            let (path, c) = path_result;
+                            let next_pos = &path[1];
+
+                            debug!("Next pos: {:?}", next_pos);
+
+                            // Add State Change Event to Moving
+                            let state_change_event = VisibleEvent::StateChangeEvent {
+                                new_state: "moving".to_string(),
+                            };
+
+                            villager.state.0 = "moving".to_string();
+
+
+                            map_events.new(
+                                ids.new_map_event_id(),
+                                *actor,
+                                villager.id,
+                                villager.player_id,
+                                villager.pos,
+                                game_tick.0 + 1,
+                                state_change_event,
+                            );
+
+                            // Add Move Event
+                            let move_event = VisibleEvent::MoveEvent {
+                                dst_x: next_pos.0,
+                                dst_y: next_pos.1,
+                            };
+
+                            let event_id = ids.new_map_event_id();
+
+                            map_events.new(
+                                event_id,
+                                *actor,
+                                villager.id,
+                                villager.player_id,
+                                villager.pos,
+                                game_tick.0 + 48, // in the future
+                                move_event,
+                            );
+
+                            debug!("MoveToHero - Adding EventInProgress {:?}", event_id);
+                            commands
+                                .entity(*actor)
+                                .insert(EventInProgress { event_id: event_id });
+
+                            commands.entity(*actor).insert(MoveToInProgress);                        
+                        } else {
+                            //TODO randomly pick a flee location
+                        }
+                    } else {
+                        debug!("Villager has arrived at hero");
+                        commands.entity(*actor).remove::<MoveToInProgress>();
+                        *state = ActionState::Success;                    
+                    }
+                }
+            }
+            ActionState::Cancelled => { 
+                debug!("Flee cancelled...");
+                *state = ActionState::Failure;
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn find_drink_system(
     mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
     map: Res<Map>,
-    ids: ResMut<Ids>,
+    mut ids: ResMut<Ids>,
     items: ResMut<Items>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
@@ -1019,8 +1230,7 @@ pub fn find_drink_system(
             }
             ActionState::Executing => {
                 let Ok(mut villager) = villager_query.get_mut(*actor) else {
-                    debug!("Cannot get villager {:?}", actor);
-                    *state = ActionState::Failure;
+                    error!("Cannot get villager {:?}", actor);
                     continue;
                 };
 
@@ -1031,27 +1241,41 @@ pub fn find_drink_system(
                     &items,
                     &map,
                 ) else {
-                    error!("Cannot find any drinks. ");
-                    *state = ActionState::Failure;
+                    debug!("Cannot find any drinks. ");
+                    commands.entity(*actor).insert(NoDrinks);
+
+                    *state = ActionState::Success;
                     continue;
                 };
 
                 if item_location == ItemLocation::OwnStructure {
                     let Some(entity) = ids.get_entity(item.owner) else {
                         error!("Cannot find entity for {:?}", item.owner);
-                        *state = ActionState::Failure;
                         continue;
                     };
 
                     let Ok(structure) = structure_query.get(entity) else {
                         error!("Cannot get structure from entity {:?}", entity);
-                        *state = ActionState::Failure;
                         continue;
                     };
 
                     commands.entity(*actor).insert(MoveToDrink {
                         dest: *structure.pos,
                     });
+                }
+
+                // Add before changing state otherwise there will be multiple speeches
+                if villager.attrs.activity != villager::Activity::Drinking {
+                    ObjUtil::add_sound_obj_event(
+                        ids.new_map_event_id(),
+                        game_tick.0,
+                        "Time to grab a cold ale".to_owned(),
+                        *actor,
+                        villager.id,
+                        villager.player_id,
+                        villager.pos,
+                        &mut map_events,
+                    );
                 }
 
                 // Set activity to drinking
@@ -1065,6 +1289,8 @@ pub fn find_drink_system(
                 if let Ok(mut villager) = villager_query.get_mut(*actor) {
                     villager.attrs.activity = villager::Activity::None;
                 }
+
+                remove_components(&mut commands, &*actor);
 
                 *state = ActionState::Failure
             }
@@ -1122,20 +1348,6 @@ pub fn move_to_water_source_action_system(
                                 let next_pos = &path[1];
 
                                 debug!("Next pos: {:?}", next_pos);
-
-                                // Add before changing state otherwise there will be multiple speeches
-                                if villager.attrs.activity != villager::Activity::Drinking {
-                                    ObjUtil::add_sound_obj_event(
-                                        ids.new_map_event_id(),
-                                        game_tick.0,
-                                        "Time to grab a cold ale".to_owned(),
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
-                                        &mut map_events,
-                                    );
-                                }
 
                                 // Add State Change Event to Moving
                                 let state_change_event = VisibleEvent::StateChangeEvent {
@@ -1198,7 +1410,6 @@ pub fn move_to_water_source_action_system(
                 }
 
                 debug!("Cancelling MoveToWaterSource action");
-                commands.entity(*actor).remove::<MoveToInProgress>();
 
                 if let Ok(event) = events_in_progress.get(*actor) {
                     debug!(
@@ -1219,6 +1430,8 @@ pub fn move_to_water_source_action_system(
 
                     game_events.insert(event.event_id, event);
                 }
+
+                remove_components(&mut commands, &*actor);
 
                 *state = ActionState::Failure;
             }
@@ -1429,6 +1642,9 @@ pub fn drink_action_system(
 
                         game_events.insert(event.event_id, event);
                     }
+
+                    remove_components(&mut commands, &*actor);
+                    
                     *state = ActionState::Failure;
                 }
                 _ => {}
@@ -1439,8 +1655,10 @@ pub fn drink_action_system(
 
 pub fn find_food_system(
     mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
     map: Res<Map>,
-    ids: ResMut<Ids>,
+    mut ids: ResMut<Ids>,
     items: ResMut<Items>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
@@ -1491,6 +1709,20 @@ pub fn find_food_system(
                     });
                 }
 
+                // Add before changing state otherwise there will be multiple speeches
+                if villager.attrs.activity != villager::Activity::Eating {
+                    ObjUtil::add_sound_obj_event(
+                        ids.new_map_event_id(),
+                        game_tick.0,
+                        "Time to fill my stomach".to_owned(),
+                        *actor,
+                        villager.id,
+                        villager.player_id,
+                        villager.pos,
+                        &mut map_events,
+                    );
+                }
+
                 // Set activity to drinking
                 villager.attrs.activity = villager::Activity::Eating;
 
@@ -1502,6 +1734,8 @@ pub fn find_food_system(
                 if let Ok(mut villager) = villager_query.get_mut(*actor) {
                     villager.attrs.activity = villager::Activity::None;
                 }
+
+                remove_components(&mut commands, &*actor);
 
                 *state = ActionState::Failure
             }
@@ -1556,20 +1790,6 @@ pub fn move_to_food_action_system(
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
 
-                                // Add before changing state otherwise there will be multiple speeches
-                                if villager.attrs.activity != villager::Activity::Eating {
-                                    ObjUtil::add_sound_obj_event(
-                                        ids.new_map_event_id(),
-                                        game_tick.0,
-                                        "Time to fill my stomach".to_owned(),
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
-                                        &mut map_events,
-                                    );
-                                }
-
                                 // Add State Change Event to Moving
                                 let state_change_event = VisibleEvent::StateChangeEvent {
                                     new_state: "moving".to_string(),
@@ -1611,7 +1831,7 @@ pub fn move_to_food_action_system(
                                     .insert(EventInProgress { event_id: event_id });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
-                            } else {
+                            } else {  
                                 debug!("Cannot find path to food");
                                 *state = ActionState::Failure
                             }
@@ -1629,8 +1849,6 @@ pub fn move_to_food_action_system(
                 if let Ok(mut villager) = villager_query.get_mut(*actor) {
                     villager.attrs.activity = villager::Activity::None;
                 }
-
-                commands.entity(*actor).remove::<MoveToInProgress>();
 
                 if let Ok(event) = events_in_progress.get(*actor) {
                     debug!(
@@ -1651,6 +1869,8 @@ pub fn move_to_food_action_system(
 
                     game_events.insert(event.event_id, event);
                 }
+
+                remove_components(&mut commands, &*actor);
 
                 *state = ActionState::Failure;
             }
@@ -1874,6 +2094,9 @@ pub fn eat_action_system(
 pub fn find_shelter_system(
     mut commands: Commands,
     map: Res<Map>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
     mut action_query: Query<(&Actor, &mut ActionState, &FindShelter, &ActionSpan)>,
@@ -1899,12 +2122,30 @@ pub fn find_shelter_system(
                     commands.entity(*actor).insert(MoveToShelter {
                         dest: structure_pos,
                     });
+
+                    // Add before changing state otherwise there will be multiple speeches
+                    if villager.attrs.activity != villager::Activity::Sleeping {
+                        ObjUtil::add_sound_obj_event(
+                            ids.new_map_event_id(),
+                            game_tick.0,
+                            "Time to sleep".to_owned(),
+                            *actor,
+                            villager.id,
+                            villager.player_id,
+                            villager.pos,
+                            &mut map_events,
+                        );
+                    }
                     
                     villager.attrs.activity = villager::Activity::Sleeping;
                     *state = ActionState::Success;
                 } else {
-                    debug!("{:?} cannot find shelter, cancelling find shelter event", *actor);
-                    *state = ActionState::Failure;
+                    debug!("{:?} cannot find shelter, setting current location as shelter", *actor);
+                    commands.entity(*actor).insert(MoveToShelter {
+                        dest: *villager.pos,
+                    });
+
+                    *state = ActionState::Success;
                 }
             }
             ActionState::Cancelled => {
@@ -1935,7 +2176,8 @@ pub fn move_to_shelter_system(
     mut action_query: Query<(&Actor, &mut ActionState, &MoveToSleepPos, &ActionSpan)>,
 ) {
     // Loop through all actions, just like you'd loop over all entities in any other query.
-    for (Actor(actor), mut state, _move_to, span) in &mut action_query {
+    for (Actor(actor), mut state, move_to, span) in &mut action_query {
+        debug!("{:?} {:?} {:?} {:?}", actor, state, move_to, span);
         let _guard = span.span().enter();
 
         // Different behavior depending on action state.
@@ -1949,7 +2191,7 @@ pub fn move_to_shelter_system(
             ActionState::Executing => {
                 if let Ok(mut villager) = villager_query.get_mut(*actor) {
                     if let Ok(_event) = events_in_progress.get(*actor) {
-                        debug!("Move to shelter still executing...");
+                        debug!("Move to shelter still executing... {:?}", *actor);
                     } else {
                         let Ok(move_to_shelter) = move_to_shelter.get(*actor) else {
                             error!("Entity {:?} does not have MoveToShelter", *actor);
@@ -2046,8 +2288,6 @@ pub fn move_to_shelter_system(
                     villager.attrs.activity = villager::Activity::None;
                 }
 
-                commands.entity(*actor).remove::<MoveToInProgress>();
-
                 if let Ok(event) = events_in_progress.get(*actor) {
                     debug!(
                         "Event still executing, canceling event {:?}",
@@ -2067,6 +2307,8 @@ pub fn move_to_shelter_system(
 
                     game_events.insert(event.event_id, event);
                 }
+
+                remove_components(&mut commands, &*actor);
 
                 *state = ActionState::Failure;
             }
@@ -2167,7 +2409,7 @@ pub fn sleep_action_system(
                         *state = ActionState::Success;
                     } else {
                         debug!("Still waiting for the sleep event to complete...");
-                        tired.update(-1.5);
+                        tired.update(-1.0);
 
                         if tired.tired <= 80.0 {
                             commands.entity(*actor).remove::<Exhausted>();
@@ -2180,6 +2422,8 @@ pub fn sleep_action_system(
                     if let Ok(mut villager) = villager_query.get_mut(*actor) {
                         villager.attrs.activity = villager::Activity::None;
                     }
+
+                    remove_components(&mut commands, &*actor);
 
                     debug!("Cancelling Sleep action");
                     if let Ok(event) = events_in_progress.get(*actor) {
@@ -2317,4 +2561,14 @@ fn find_shelter(
     }
 
     return (nearest_structure_pos, nearest_path);
+}
+
+fn remove_components(
+    mut commands: &mut Commands,
+    entity: &Entity
+) {
+    commands.entity(*entity).remove::<MoveToDrink>();
+    commands.entity(*entity).remove::<MoveToFood>();
+    commands.entity(*entity).remove::<MoveToShelter>();
+    commands.entity(*entity).remove::<MoveToInProgress>();
 }

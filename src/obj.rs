@@ -18,6 +18,7 @@ pub const CLASS_STRUCTURE: &str = "structure";
 pub const CLASS_UNIT: &str = "unit";
 pub const SUBCLASS_HERO: &str = "hero";
 pub const SUBCLASS_VILLAGER: &str = "villager";
+pub const SUBCLASS_SHELTER: &str = "shelter";
 
 // States
 pub const STATE_NONE: &str = "none";

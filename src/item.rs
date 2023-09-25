@@ -393,25 +393,19 @@ impl Item {
     ) -> Option<Item> {
         if let Some(index) = Item::find_by_class(owner, class, items) {
             let mut item = &mut items[index];
-
-            println!(
-                "Item Quantity: {:?} Mod Quantity: {:?}",
-                item.quantity, mod_quantity
-            );
-            if item.quantity >= (-1 * mod_quantity) {
+            debug!("item quantity: {:?} mod_quantity: {:?}", item.quantity, mod_quantity);
+            if (item.quantity + mod_quantity) > 0 {
                 item.quantity += mod_quantity;
-
-                if item.quantity == 0 {
-                    items.swap_remove(index);
-                    return None;
-                } else {
-                    return Some(item.clone());
-                }
+                return Some(item.clone());
+            } else if (item.quantity + mod_quantity) == 0 {
+                debug!("Removing item {:?}", index);
+                items.swap_remove(index);
+                debug!("items: {:?}", items);
+                return None;
             } else {
                 return None;
-            }
+            }    
         } else {
-            println!("Item not found");
             return None;
         }
     }
@@ -437,11 +431,14 @@ impl Item {
     ) {
         let new_id = ids.new_item_id();
 
-        // First call split
-        Item::split(item_id, quantity, new_id, items, item_templates);
-
-        // Then transfer
-        Item::transfer(new_id, target_id, items);
+        // First call split, if successful transfer the new split item
+        if Item::split(item_id, quantity, new_id, items, item_templates) {
+            // Then transfer
+            Item::transfer(new_id, target_id, items);
+        } else {
+            // If split was not successful transfer the original item
+            Item::transfer(item_id, target_id, items);
+        }
     }
 
     pub fn transfer(item_id: i32, target_id: i32, items: &mut ResMut<Items>) {
@@ -476,21 +473,31 @@ impl Item {
         new_id: i32,
         items: &mut ResMut<Items>,
         item_templates: &ItemTemplates,
-    ) {
+    ) -> bool {
         if let Some(index) = items.iter().position(|item| item.id == item_id) {
             let mut item = &mut items[index];
-            item.quantity -= quantity;
 
-            Item::new_with_attrs(
-                new_id,
-                item.owner,
-                item.name.clone(),
-                quantity,
-                item.attrs.clone(),
-                item_templates,
-                items,
-            );
-        }
+            if (item.quantity - quantity) > 0 {
+
+                item.quantity -= quantity;
+
+                Item::new_with_attrs(
+                    new_id,
+                    item.owner,
+                    item.name.clone(),
+                    quantity,
+                    item.attrs.clone(),
+                    item_templates,
+                    items,
+                );
+                
+                return true;
+            } else {
+                return false;
+            }
+        } 
+
+        return false;
     }
 
     pub fn remove(item_id: i32, items: &mut ResMut<Items>) {

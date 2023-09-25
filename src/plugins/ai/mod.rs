@@ -1,5 +1,7 @@
 use bevy::prelude::*;
+use std::collections::HashMap;
 use big_brain::{prelude::*, evaluators::{PowerEvaluator, Evaluator, LinearEvaluator}};
+use crate::game::Ids;
 
 pub mod npc;
 pub mod villager;
@@ -8,6 +10,20 @@ pub struct AIPlugin;
 
 impl Plugin for AIPlugin {
     fn build(&self, app: &mut App) {
+
+        // Initialize indexes
+        let ids: Ids = Ids {
+            map_event: 0,
+            player_event: 0,
+            obj: 0,
+            item: 0,
+            player_hero_map: HashMap::new(),
+            obj_entity_map: HashMap::new(),
+        };
+
+        app.insert_resource(ids);
+
+
         app.add_plugin(BigBrainPlugin)
             .add_system(npc::nearby_target_system)
             .add_system_to_stage(
@@ -31,6 +47,8 @@ impl Plugin for AIPlugin {
             .add_system_to_stage(BigBrainStage::Actions, villager::move_to_shelter_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::sleep_action_system)
             .add_system_to_stage(BigBrainStage::Actions, villager::process_order_system)
+
+
             // Thirsty scorers
             .add_system_to_stage(BigBrainStage::Scorers, villager::thirsty_scorer_system)
             .add_system_to_stage(BigBrainStage::Scorers, villager::find_drink_scorer_system)
@@ -47,10 +65,15 @@ impl Plugin for AIPlugin {
             .add_system_to_stage(BigBrainStage::Scorers, villager::drowsy_scorer_system)
             .add_system_to_stage(BigBrainStage::Scorers, villager::find_shelter_scorer_system)
             .add_system_to_stage(BigBrainStage::Scorers, villager::shelter_distance_scorer_system)
+            .add_system_to_stage(BigBrainStage::Scorers, villager::near_shelter_scorer_system)
 
             .add_system_to_stage(BigBrainStage::Scorers, villager::morale_scorer_system)
             .add_system_to_stage(BigBrainStage::Actions, npc::attack_target_system)
-            .add_system_to_stage(BigBrainStage::Scorers, npc::target_scorer_system);
+            .add_system_to_stage(BigBrainStage::Scorers, npc::target_scorer_system)
+            
+            // Enemy distance scorer
+            .add_system_to_stage(BigBrainStage::Scorers, villager::enemy_distance_scorer_system)
+            .add_system_to_stage(BigBrainStage::Actions, villager::flee_system);
 
 
             let linear = LinearEvaluator::new_inversed();
