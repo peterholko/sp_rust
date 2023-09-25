@@ -4,7 +4,7 @@ use rand::Rng;
 
 use crate::combat::Combat;
 use crate::combat::CombatQuery;
-use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorerBuilder};
+use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::game::*;
 use crate::item::*;
 use crate::map::Map;
@@ -15,7 +15,7 @@ pub const NO_TARGET: i32 = -1;
 
 pub fn target_scorer_system(
     target_query: Query<&VisibleTarget>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorerBuilder>>,
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorer>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(target) = target_query.get(*actor) {

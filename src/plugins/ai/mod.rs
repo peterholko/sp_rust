@@ -26,54 +26,52 @@ impl Plugin for AIPlugin {
 
         app.add_plugin(BigBrainPlugin)
             .add_system(npc::nearby_target_system)
-            .add_system_to_stage(
-                BigBrainStage::Actions,
-                villager::move_to_water_source_action_system,
+            .add_system(
+                villager::move_to_water_source_action_system.in_set(BigBrainSet::Actions)
             )
-            .add_system_to_stage(
-                BigBrainStage::Actions,
-                villager::move_to_food_action_system,
+            .add_system(
+                villager::move_to_food_action_system.in_set(BigBrainSet::Actions)
             )
             // Actions
-            .add_system_to_stage(BigBrainStage::Actions, villager::find_drink_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::move_to_shelter_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::transfer_drink_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::drink_action_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::find_food_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::transfer_food_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::eat_action_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::sleep_action_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::find_shelter_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::move_to_shelter_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::sleep_action_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::process_order_system)
+            .add_system(villager::find_drink_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::move_to_shelter_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::transfer_drink_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::drink_action_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::find_food_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::transfer_food_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::eat_action_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::sleep_action_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::find_shelter_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::move_to_shelter_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::sleep_action_system.in_set(BigBrainSet::Actions))
+            .add_system(villager::process_order_system.in_set(BigBrainSet::Actions))
 
 
             // Thirsty scorers
-            .add_system_to_stage(BigBrainStage::Scorers, villager::thirsty_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::find_drink_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::drink_distance_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::transfer_drink_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::has_drink_scorer_system)
+            .add_system(villager::thirsty_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::find_drink_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::drink_distance_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::transfer_drink_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::has_drink_scorer_system.in_set(BigBrainSet::Scorers))
             // Hunger scorers
-            .add_system_to_stage(BigBrainStage::Scorers, villager::hungry_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::find_food_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::food_distance_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::transfer_food_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::has_food_scorer_system)   
+            .add_system(villager::hungry_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::find_food_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::food_distance_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::transfer_food_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::has_food_scorer_system.in_set(BigBrainSet::Scorers))   
             //Tired scorers
-            .add_system_to_stage(BigBrainStage::Scorers, villager::drowsy_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::find_shelter_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::shelter_distance_scorer_system)
-            .add_system_to_stage(BigBrainStage::Scorers, villager::near_shelter_scorer_system)
+            .add_system(villager::drowsy_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::find_shelter_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::shelter_distance_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::near_shelter_scorer_system.in_set(BigBrainSet::Scorers))
 
-            .add_system_to_stage(BigBrainStage::Scorers, villager::morale_scorer_system)
-            .add_system_to_stage(BigBrainStage::Actions, npc::attack_target_system)
-            .add_system_to_stage(BigBrainStage::Scorers, npc::target_scorer_system)
+            .add_system(villager::morale_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(npc::attack_target_system.in_set(BigBrainSet::Actions))
+            .add_system(npc::target_scorer_system.in_set(BigBrainSet::Scorers))
             
             // Enemy distance scorer
-            .add_system_to_stage(BigBrainStage::Scorers, villager::enemy_distance_scorer_system)
-            .add_system_to_stage(BigBrainStage::Actions, villager::flee_system);
+            .add_system(villager::enemy_distance_scorer_system.in_set(BigBrainSet::Scorers))
+            .add_system(villager::flee_system.in_set(BigBrainSet::Actions));
 
 
             let linear = LinearEvaluator::new_inversed();

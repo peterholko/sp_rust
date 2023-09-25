@@ -26,7 +26,7 @@ use async_compat::Compat;
 use crate::account::Accounts;
 
 use crate::components::villager::{Hunger, Thirst, Tired, Dehydrated, Starving, Exhausted};
-use crate::components::npc::{Chase, ChaseAttack, VisibleTarget, VisibleTargetScorerBuilder};
+use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::encounter::Encounter;
 use crate::experiment::{self, Experiment, ExperimentPlugin, ExperimentState, Experiments};
 use crate::item::{self, Item, ItemPlugin, Items};
@@ -463,7 +463,8 @@ impl Plugin for GamePlugin {
             .add_plugin(StructurePlugin)
             .init_resource::<GameTick>()
             .add_startup_system(Game::setup)
-            .add_system_to_stage(CoreStage::PreUpdate, update_game_tick)
+            //.add_system_to_stage(CoreStage::PreUpdate, update_game_tick)
+            .add_system(update_game_tick.in_base_set(CoreSet::PreUpdate))
             .add_system(new_obj_event_system)
             .add_system(remove_obj_event_system)
             .add_system(move_event_system)
@@ -2785,12 +2786,11 @@ fn spawn_npc(
             .spawn((
                 npc,
                 SubclassNPC,
-                Chase,
                 VisibleTarget::new(NO_TARGET),
                 Thinker::build()
                     .label("NPC Chase")
                     .picker(Highest)
-                    .when(VisibleTargetScorerBuilder, ChaseAttack),
+                    .when(VisibleTargetScorer, ChaseAttack),
             ))
             .id();
 

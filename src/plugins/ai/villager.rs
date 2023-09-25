@@ -2173,11 +2173,10 @@ pub fn move_to_shelter_system(
     mut game_events: ResMut<GameEvents>,
     events_in_progress: Query<&EventInProgress>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
-    mut action_query: Query<(&Actor, &mut ActionState, &MoveToSleepPos, &ActionSpan)>,
+    mut action_query: Query<(&Actor, &mut ActionState, &ActionSpan), With<MoveToSleepPos>>,
 ) {
     // Loop through all actions, just like you'd loop over all entities in any other query.
-    for (Actor(actor), mut state, move_to, span) in &mut action_query {
-        debug!("{:?} {:?} {:?} {:?}", actor, state, move_to, span);
+    for (Actor(actor), mut state, span) in &mut action_query {
         let _guard = span.span().enter();
 
         // Different behavior depending on action state.

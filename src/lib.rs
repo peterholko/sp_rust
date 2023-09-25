@@ -9,7 +9,7 @@
 use bevy::log::LogPlugin;
 use bevy::{
     app::{ScheduleRunnerPlugin, ScheduleRunnerSettings},
-    core::CorePlugin,
+    core::{TaskPoolPlugin, TypeRegistrationPlugin, FrameCountPlugin},
     prelude::*,
     utils::Duration,
 };
@@ -42,7 +42,9 @@ pub fn setup() {
         .insert_resource(ScheduleRunnerSettings::run_loop(Duration::from_secs_f64(
             TIMESTEP_10_PER_SECOND,
         )))
-        .add_plugin(CorePlugin::default())
+        .add_plugin(TaskPoolPlugin::default())
+        .add_plugin(TypeRegistrationPlugin::default())
+        .add_plugin(FrameCountPlugin::default())
         .add_plugin(ScheduleRunnerPlugin::default())
         .add_plugin(LogPlugin {
             level: bevy::log::Level::DEBUG,

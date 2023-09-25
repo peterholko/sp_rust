@@ -1,15 +1,16 @@
 use bevy::prelude::*;
+use big_brain::prelude::*;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct ChaseAttack;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct Chase;
 
-#[derive(Clone, Component, Debug)]
-pub struct VisibleTargetScorerBuilder;
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct VisibleTargetScorer;
 
-#[derive(Component, Debug)]
+#[derive(Debug, Component)]
 pub struct VisibleTarget {
     pub target: i32,
 }

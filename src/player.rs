@@ -3515,7 +3515,7 @@ fn new_player(
         activity: villager::Activity::None,
     };
 
-    let move_and_transfer = Steps::build()
+    /*let move_and_transfer = Steps::build()
         .label("MoveAndTransfer")
         .step(MoveToWaterSource)
         .step(TransferDrink);
@@ -3528,7 +3528,7 @@ fn new_player(
     let move_and_sleep = Steps::build()
         .label("MoveAndSleep")
         .step(MoveToSleepPos)
-        .step(Sleep);
+        .step(Sleep);*/
 
     let villager_entity_id = commands
         .spawn((

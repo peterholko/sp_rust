@@ -1,83 +1,88 @@
 use bevy::prelude::*;
+use big_brain::prelude::*;
 
 use crate::game::Position;
 
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct EnemyDistanceScorer;
 
-#[derive(Clone, Component, Debug)]
-pub struct Flee;
-
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct ThirstyScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct FindDrinkScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct DrinkDistanceScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct TransferDrinkScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct HasDrinkScorer;
 
-#[derive(Clone, Component, Debug)]
+// Hunger
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct HungryScorer;
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct FindFoodScorer;
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct FoodDistanceScorer;
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct TransferFoodScorer;
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct HasFoodScorer;
+
+#[derive(Debug, Clone, Component, ActionBuilder)]
+pub struct Flee;
+
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToDrink {
     pub dest: Position
 }
 
-#[derive(Clone, Component, Debug)]
-pub struct FindFoodScorer;
-
-#[derive(Clone, Component, Debug)]
-pub struct FoodDistanceScorer;
-
-#[derive(Clone, Component, Debug)]
-pub struct TransferFoodScorer;
-
-#[derive(Clone, Component, Debug)]
-pub struct HasFoodScorer;
-
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToFood {
     pub dest: Position
 }
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct ShelterAvailable;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct ShelterUnavailable;
 
 // Tag to indicate extreme thirst
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct Dehydrated;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct MoveToInProgress;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct Drink {
     pub until: f32,
 }
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToWaterSource;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct FindDrink;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct NoDrinks;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct NoFood;
 
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct TransferDrink;
 
 #[derive(Component, Debug)]
@@ -106,24 +111,22 @@ impl Thirst {
     }
 }
 
-// Hunger
-#[derive(Clone, Component, Debug)]
-pub struct HungryScorer;
+
 
 // Starving is an tag to indicate extreme hunger
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct Starving;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct Eat;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToFoodSource;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct FindFood;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct TransferFood;
 
 #[derive(Component, Debug)]
@@ -152,34 +155,34 @@ impl Hunger {
     }
 }
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct FindShelterScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct ShelterDistanceScorer;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct NearShelterScorer;
 
 // Sleep
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct DrowsyScorer;
 
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct FindShelter;
 
 // Tag to indicate extreme drowsinest 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct Exhausted;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct Sleep;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToSleepPos;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component)]
 pub struct MoveToShelter {
     pub dest: Position
 }
@@ -211,10 +214,10 @@ impl Tired {
     }
 }
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct ProcessOrder;
 
-#[derive(Clone, Component, Debug)]
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct GoodMorale;
 
 #[derive(Component, Debug)]
