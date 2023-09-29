@@ -1,4 +1,5 @@
 use bevy::{ecs::query, prelude::*};
+use tokio::task::spawn_blocking;
 use std::io::BufReader;
 use std::path::Path;
 use std::{fmt, fs::File};
@@ -9,7 +10,7 @@ use tiled::{parse, LayerData};
 
 use pathfinding::prelude::astar;
 
-use crate::game::Position;
+use crate::game::{PlayerId, Position};
 
 pub struct MapPlugin;
 
@@ -108,10 +109,9 @@ impl MapPos {
         Map::distance((self.0, self.1), (other.0, other.1))
     }
 
-    fn successors(&self, map: &Map) -> Vec<(MapPos, u32)> {
+    fn successors(&self, map: &Map, blocking_list: &Vec<MapPos>) -> Vec<(MapPos, u32)> {
         let &MapPos(x, y) = self;
-        let s = Map::get_neighbour_tiles(x, y, map);
-
+        let s = Map::get_neighbour_tiles(x, y, map, blocking_list);
         s
     }
 }
@@ -183,16 +183,15 @@ impl Map {
     }
 
     pub fn find_path(
-        src_x: i32,
-        src_y: i32,
-        dst_x: i32,
-        dst_y: i32,
+        src_pos: Position,
+        dst_pos: Position,
         map: &Map,
+        blocking_list: &Vec<MapPos>,
     ) -> Option<(Vec<MapPos>, u32)> {
-        let goal: MapPos = MapPos(dst_x, dst_y);
+        let goal: MapPos = MapPos(dst_pos.x, dst_pos.y);
         let result = astar(
-            &MapPos(src_x, src_y),
-            |p| p.successors(&map),
+            &MapPos(src_pos.x, src_pos.y),
+            |p| p.successors(&map, &blocking_list),
             |p| p.distance(&goal),
             |p| *p == goal,
         );
@@ -456,7 +455,12 @@ impl Map {
         result
     }
 
-    pub fn get_neighbour_tiles(origin_x: i32, origin_y: i32, map: &Map) -> Vec<(MapPos, u32)> {
+    pub fn get_neighbour_tiles(
+        origin_x: i32,
+        origin_y: i32,
+        map: &Map,
+        blocking_list: &Vec<MapPos>,
+    ) -> Vec<(MapPos, u32)> {
         let neighbours_table: Vec<(i32, i32, i32)> = vec![
             (1, -1, 0),
             (1, 0, -1),
@@ -484,12 +488,22 @@ impl Map {
             let movement_cost = Map::movement_cost(tile_type) as u32;
             println!("movement_cost: {:?}", movement_cost);
 
-            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map) {
+            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map) && Map::is_not_blocked(neighbour, blocking_list) {
                 result.push((MapPos(neighbour_x, neighbour_y), movement_cost));
             }
         }
 
         return result;
+    }
+
+    fn is_not_blocked((x, y): (i32, i32), blocking_list: &Vec<MapPos>) -> bool {        
+        for block_pos in blocking_list {
+            if x == block_pos.0 && y == block_pos.1 {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     fn neighbours((q, r): (i32, i32)) -> Vec<(i32, i32)> {

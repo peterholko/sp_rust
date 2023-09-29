@@ -92,7 +92,7 @@ pub fn attack_target_system(
 
                 if target_id == NO_TARGET {
                     debug!("No target to chase, start wandering...");
-                    let wander_pos_list = Map::get_neighbour_tiles(npc.pos.x, npc.pos.y, &map);
+                    let wander_pos_list = Map::get_neighbour_tiles(npc.pos.x, npc.pos.y, &map, &Vec::new());
 
                     if is_none_state(&npc.state.0) {
                         let mut rng = rand::thread_rng();
@@ -205,11 +205,10 @@ pub fn attack_target_system(
                     } else {
                         if is_none_state(&npc.state.0) {
                             if let Some(path_result) = Map::find_path(
-                                npc.pos.x,
-                                npc.pos.y,
-                                target.pos.x,
-                                target.pos.y,
+                                *npc.pos,
+                                *target.pos,
                                 &map,
+                                &Vec::new()
                             ) {
                                 debug!("Follower path: {:?}", path_result);
 

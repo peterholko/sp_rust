@@ -82,11 +82,21 @@ pub struct VillagerWithOrderQuery {
     order: &'static Order,
 }
 
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct BaseQuery {
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub state: &'static State,
+}
+
 pub fn enemy_distance_scorer_system(
     ids: ResMut<Ids>,
-    move_in_progress: Query<&MoveToInProgress>,
-    hero_query: Query<ObjQuery, With<SubclassHero>>,
-    obj_query: Query<ObjQuery, Without<SubclassHero>>,
+    hero_query: Query<MapObjQuery, With<SubclassHero>>,
+    obj_query: Query<MapObjQuery, Without<SubclassHero>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<EnemyDistanceScorer>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
@@ -106,33 +116,30 @@ pub fn enemy_distance_scorer_system(
                 continue;
             };
 
-            if villager.pos == hero.pos {
+            let mut nearby_enemies = false;
 
-                // If move is in progress 
-                /*if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
-                    score.set(1.0);
-                    continue;  
-                } */
+            for obj in obj_query.iter() {
 
-                score.set(0.0);
-            } else {
-                for obj in obj_query.iter() {
+                if obj.state.0 == obj::STATE_DEAD.to_string() {
+                    continue;
+                }
+                
+                if obj.player_id.0 != villager.player_id.0 {
+                    
+                    let distance =
+                    Map::distance( (villager.pos.x, villager.pos.y), (obj.pos.x, obj.pos.y));
 
-                    if obj.player_id.0 != villager.player_id.0 {
-                        
-                        let distance =
-                        Map::distance( (villager.pos.x, villager.pos.y), (obj.pos.x, obj.pos.y));
-
-                        if distance <= 2 {
-                            score.set(1.0);
-                        } else {
-                            score.set(0.0);
-                        }
-                    }
+                    if distance <= 2 {
+                        nearby_enemies = true;
+                    } 
                 }
             }
 
-            debug!("EnemyDistanceScorer score {:?}", score);
+            if nearby_enemies {
+                score.set(1.0);
+            } else {
+                score.set(0.0);
+            }
         }
     }
 }
@@ -148,7 +155,7 @@ pub fn thirsty_scorer_system(
         if let Ok(thirst) = thirsts.get(*actor) {
             // For now just set score to 1.0 if dehydrated
             if let Ok(_dehydrated) = dehydrated.get(*actor) {
-                score.set(1.0);
+                score.set(0.99);
             } else {
                 //let evaluator = PowerEvaluator::new(2.0);
                 //evaluator.evaluate(thrist_percentage)
@@ -174,7 +181,7 @@ pub fn thirsty_scorer_system(
                 if thrist_percentage < 0.0 {
                     thrist_percentage = 0.0;
                 } else if thrist_percentage > 1.0 {
-                    thrist_percentage = 1.0;
+                    thrist_percentage = 0.99;
                 }
 
                 debug!("thirst score: {:?}", thrist_percentage);
@@ -268,7 +275,7 @@ pub fn hungry_scorer_system(
         if let Ok(hunger) = hungers.get(*actor) {
             // For now just set score to 1.0 if starving
             if let Ok(_starving) = starving.get(*actor) {
-                score.set(1.0);
+                score.set(0.99);
             } else {
                 let Ok(villager_attrs) = villager_attrs.get(*actor) else {
                     error!("No villager attrs {:?}", *actor);
@@ -288,7 +295,7 @@ pub fn hungry_scorer_system(
                 if hunger_percentage < 0.0 {
                     hunger_percentage = 0.0;
                 } else if hunger_percentage > 1.0 {
-                    hunger_percentage = 1.0;
+                    hunger_percentage = 0.99;
                 }
 
                 debug!("hungry score: {:?}", hunger_percentage);
@@ -382,7 +389,7 @@ pub fn drowsy_scorer_system(
         if let Ok(tired) = tired_query.get(*actor) {
             // For now just set score to 1.0 if exhausted
             if let Ok(_exhausted) = exhausted.get(*actor) {
-                score.set(1.0);
+                score.set(0.99);
             } else {
                 let Ok(villager_attrs) = villager_attrs.get(*actor) else {
                     error!("No villager attrs component for {:?}", *actor);
@@ -402,7 +409,7 @@ pub fn drowsy_scorer_system(
                 if tired_percentage < 0.0 {
                     tired_percentage = 0.0;
                 } else if tired_percentage > 1.0 {
-                    tired_percentage = 1.0;
+                    tired_percentage = 0.99;
                 }
 
                 debug!("drowsy score: {:?}", tired_percentage);
@@ -615,11 +622,10 @@ pub fn process_order_system(
                                 {
                                     if is_none_state(&villager.state.0) {
                                         if let Some(path_result) = Map::find_path(
-                                            villager.pos.x,
-                                            villager.pos.y,
-                                            target_pos.x,
-                                            target_pos.y,
+                                            *villager.pos,                                        
+                                            *target_pos,                                            
                                             &map,
+                                            &Vec::new()
                                         ) {
                                             debug!("Follower path: {:?}", path_result);
 
@@ -713,11 +719,10 @@ pub fn process_order_system(
                                     || villager.pos.y != structure_pos.y
                                 {
                                     if let Some(path_result) = Map::find_path(
-                                        villager.pos.x,
-                                        villager.pos.y,
-                                        structure_pos.x,
-                                        structure_pos.y,
+                                        *villager.pos,                                        
+                                        *structure_pos,                                        
                                         &map,
+                                        &Vec::new()
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -836,11 +841,10 @@ pub fn process_order_system(
                                     || villager.pos.y != structure_pos.y
                                 {
                                     if let Some(path_result) = Map::find_path(
-                                        villager.pos.x,
-                                        villager.pos.y,
-                                        structure_pos.x,
-                                        structure_pos.y,
+                                        *villager.pos,                                        
+                                        *structure_pos,                                        
                                         &map,
+                                        &Vec::new()
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -949,11 +953,10 @@ pub fn process_order_system(
                                     || villager.pos.y != structure_pos.y
                                 {
                                     if let Some(path_result) = Map::find_path(
-                                        villager.pos.x,
-                                        villager.pos.y,
-                                        structure_pos.x,
-                                        structure_pos.y,
+                                        *villager.pos,                                        
+                                        *structure_pos,                                        
                                         &map,
+                                        &Vec::new()
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -1097,9 +1100,10 @@ pub fn flee_system(
     map: Res<Map>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
-    events_in_progress: Query<&EventInProgress>,
-    hero_query: Query<ObjQuery, (With<SubclassHero>, Without<SubclassVillager>)>,
-    mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    events_in_progress: Query<&EventInProgress>,    
+    hero_query: Query<BaseQuery, (With<SubclassHero>, Without<SubclassVillager>)>,
+    villager_query: Query<BaseQuery, With<SubclassVillager>>,
+    blocking_query: Query<BaseQuery>,
     mut action_query: Query<(&Actor, &mut ActionState, &Flee, &ActionSpan)>,
 ) {
     for (Actor(actor), mut state, _find_drink, span) in &mut action_query {
@@ -1112,7 +1116,7 @@ pub fn flee_system(
                 if let Ok(event) = events_in_progress.get(*actor) {
                     debug!("Flee Event In Progress...");
                 } else {
-                    let Ok(mut villager) = villager_query.get_mut(*actor) else {
+                    let Ok(mut villager) = villager_query.get(*actor) else {
                         error!("Cannot find villager {:?}", *actor);
                         continue;
                     };                
@@ -1134,12 +1138,22 @@ pub fn flee_system(
 
                     if hero.pos != villager.pos {
 
+                        let mut blocking_list = Vec::new();
+
+                        for blocking_obj in blocking_query.iter() {
+                            if blocking_obj.state.0 != obj::STATE_DEAD.to_string() {
+                                if blocking_obj.player_id.0 != villager.player_id.0 {
+                                    let map_pos = MapPos(blocking_obj.pos.x, blocking_obj.pos.y);
+                                    blocking_list.push(map_pos);
+                                }
+                            }
+                        }
+
                         if let Some(path_result) = Map::find_path(
-                            villager.pos.x,
-                            villager.pos.y,
-                            hero.pos.x,
-                            hero.pos.y,
+                            *villager.pos,
+                            *hero.pos,
                             &map,
+                            &blocking_list
                         ) {
                             debug!("Path to structure: {:?}", path_result);
 
@@ -1152,9 +1166,6 @@ pub fn flee_system(
                             let state_change_event = VisibleEvent::StateChangeEvent {
                                 new_state: "moving".to_string(),
                             };
-
-                            villager.state.0 = "moving".to_string();
-
 
                             map_events.new(
                                 ids.new_map_event_id(),
@@ -1336,11 +1347,10 @@ pub fn move_to_water_source_action_system(
                         // Check if villager is on structure
                         if !Map::is_adjacent(*villager.pos, Position { x: 16, y: 37 }) {
                             if let Some(path_result) = Map::find_path(
-                                villager.pos.x,
-                                villager.pos.y,
-                                move_to_drink.dest.x,
-                                move_to_drink.dest.y,
+                                *villager.pos,                                
+                                move_to_drink.dest,
                                 &map,
+                                &Vec::new()
                             ) {
                                 debug!("Path to structure: {:?}", path_result);
 
@@ -1781,11 +1791,10 @@ pub fn move_to_food_action_system(
                         // Check if villager is on structure
                         if !Map::is_adjacent(*villager.pos, Position { x: 16, y: 37 }) {
                             if let Some(path_result) = Map::find_path(
-                                villager.pos.x,
-                                villager.pos.y,
-                                move_to_food.dest.x,
-                                move_to_food.dest.y,
+                                *villager.pos,
+                                move_to_food.dest,
                                 &map,
+                                &Vec::new()
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -2201,11 +2210,10 @@ pub fn move_to_shelter_system(
                         if villager.pos.x != move_to_shelter.dest.x &&
                            villager.pos.y != move_to_shelter.dest.y  {
                             if let Some(path_result) = Map::find_path(
-                                villager.pos.x,
-                                villager.pos.y,
-                                move_to_shelter.dest.x,
-                                move_to_shelter.dest.y,
+                                *villager.pos,
+                                move_to_shelter.dest,
                                 &map,
+                                &Vec::new()
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -2481,11 +2489,10 @@ fn find_item_location_by_class(
             };
 
             let Some(path_result) = Map::find_path(
-                villager.pos.x,
-                villager.pos.y,
-                structure.pos.x,
-                structure.pos.y,
+                *villager.pos,
+                *structure.pos,
                 &map,
+                &Vec::new()
             ) else {
                 debug!("Not path found to structure...");
                 continue;
@@ -2538,11 +2545,10 @@ fn find_shelter(
         }
 
         let Some(path_result) = Map::find_path(
-            villager.pos.x,
-            villager.pos.y,
-            structure.pos.x,
-            structure.pos.y,
+            *villager.pos,
+            *structure.pos,
             &map,
+            &Vec::new()
         ) else {
             debug!("No path found to structure...");
             continue;

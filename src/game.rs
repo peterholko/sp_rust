@@ -25,8 +25,8 @@ use async_compat::Compat;
 
 use crate::account::Accounts;
 
-use crate::components::villager::{Hunger, Thirst, Tired, Dehydrated, Starving, Exhausted};
 use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
+use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
 use crate::encounter::Encounter;
 use crate::experiment::{self, Experiment, ExperimentPlugin, ExperimentState, Experiments};
 use crate::item::{self, Item, ItemPlugin, Items};
@@ -120,12 +120,11 @@ pub struct State(pub String);
 #[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
 pub struct StateEnum(pub States);
 
-
 #[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
 pub enum States {
     None,
     Eating,
-    Sleeping
+    Sleeping,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -226,7 +225,6 @@ pub struct EatEventCompleted {
     pub item: Item,
 }
 
-
 #[derive(Debug, Component)]
 pub struct SleepEventCompleted;
 
@@ -246,6 +244,7 @@ pub struct Obj {
 }
 
 #[derive(WorldQuery)]
+#[world_query(derive(Debug))]
 pub struct MapObjQuery {
     pub entity: Entity,
     // It is required that all reference lifetimes are explicitly annotated, just like in any
@@ -451,38 +450,37 @@ pub enum GameEventType {
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(MapPlugin)
-            .add_plugin(AIPlugin)
-            .add_plugin(PlayerPlugin)
-            .add_plugin(TemplatesPlugin)
-            .add_plugin(ItemPlugin)
-            .add_plugin(ResourcePlugin)
-            .add_plugin(SkillPlugin)
-            .add_plugin(RecipePlugin)
-            .add_plugin(ExperimentPlugin)
-            .add_plugin(StructurePlugin)
+        app.add_plugins(MapPlugin)
+            .add_plugins(AIPlugin)
+            .add_plugins(PlayerPlugin)
+            .add_plugins(TemplatesPlugin)
+            .add_plugins(ItemPlugin)
+            .add_plugins(ResourcePlugin)
+            .add_plugins(SkillPlugin)
+            .add_plugins(RecipePlugin)
+            .add_plugins(ExperimentPlugin)
+            .add_plugins(StructurePlugin)
             .init_resource::<GameTick>()
-            .add_startup_system(Game::setup)
-            //.add_system_to_stage(CoreStage::PreUpdate, update_game_tick)
-            .add_system(update_game_tick.in_base_set(CoreSet::PreUpdate))
-            .add_system(new_obj_event_system)
-            .add_system(remove_obj_event_system)
-            .add_system(move_event_system)
-            .add_system(state_change_event_system)
-            .add_system(update_obj_event_system)
-            .add_system(build_event_system)
-            .add_system(gather_event_system)
-            .add_system(operate_refine_event_system)
-            .add_system(craft_event_system)
-            .add_system(experiment_event_system)
-            .add_system(explore_event_system)
-            .add_system(broadcast_event_system)
-            .add_system(cooldown_event_system)
-            .add_system(use_item_system)
-            .add_system(drink_eat_system)
-            .add_system(visible_event_system)
-            .add_system(game_event_system)
-            .add_system(perception_system);
+            .add_systems(Startup, Game::setup)
+            .add_systems(PreUpdate, update_game_tick)
+            .add_systems(Update, new_obj_event_system)
+            .add_systems(Update, remove_obj_event_system)
+            .add_systems(Update, move_event_system)
+            .add_systems(Update, state_change_event_system)
+            .add_systems(Update, update_obj_event_system)
+            .add_systems(Update, build_event_system)
+            .add_systems(Update, gather_event_system)
+            .add_systems(Update, operate_refine_event_system)
+            .add_systems(Update, craft_event_system)
+            .add_systems(Update, experiment_event_system)
+            .add_systems(Update, explore_event_system)
+            .add_systems(Update, broadcast_event_system)
+            .add_systems(Update, cooldown_event_system)
+            .add_systems(Update, use_item_system)
+            .add_systems(Update, drink_eat_system)
+            .add_systems(Update, visible_event_system)
+            .add_systems(Update, game_event_system)
+            .add_systems(Update, perception_system);
         // .add_system(task_move_to_target_system);
     }
 }
@@ -557,7 +555,18 @@ impl Game {
 
         let network_receiver = NetworkReceiver(client_to_game_receiver);
 
+        // Initialize indexes
+        let ids: Ids = Ids {
+            map_event: 0,
+            player_event: 0,
+            obj: 0,
+            item: 0,
+            player_hero_map: HashMap::new(),
+            obj_entity_map: HashMap::new(),
+        };
+
         //Insert the clients and client to game channel into the Bevy resources
+        commands.insert_resource(ids);
         commands.insert_resource(clients);
         commands.insert_resource(network_receiver);
         commands.insert_resource(game_tick);
@@ -644,7 +653,7 @@ fn move_event_system(
     mut map_events: ResMut<MapEvents>,
     mut game_events: ResMut<GameEvents>,
     mut visible_events: ResMut<VisibleEvents>,
-    mut query: Query<ObjQueryMut>, 
+    mut query: Query<ObjQueryMut>,
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -660,7 +669,9 @@ fn move_event_system(
                     let mut all_obj_pos: Vec<(PlayerId, Position)> = Vec::new();
 
                     debug!("MoveEvent - Removing EventInProgress...");
-                    commands.entity(map_event.entity_id).remove::<EventInProgress>();
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
 
                     for obj in query.iter() {
                         debug!(
@@ -673,17 +684,18 @@ fn move_event_system(
                             is_dst_open = false;
                         }
 
-                        all_obj_pos.push((obj.player_id.clone(), obj.pos.clone())); 
+                        all_obj_pos.push((obj.player_id.clone(), obj.pos.clone()));
                     }
 
-                    if is_dst_open {
-                        // Get entity and update state
-                        if let Ok(mut obj) =
-                            query.get_mut(map_event.entity_id)
-                        {
+                    // Get entity and update state
+                    if let Ok(mut obj) = query.get_mut(map_event.entity_id) {
+
+                        // Reset state
+                        obj.state.0 = obj::STATE_NONE.to_string();
+
+                        if is_dst_open {
                             obj.pos.x = *dst_x;
                             obj.pos.y = *dst_y;
-                            obj.state.0 = obj::STATE_NONE.to_string();
 
                             // Adding processed map event
                             visible_events.push(map_event.clone());
@@ -731,7 +743,8 @@ fn move_event_system(
                                 }
 
                                 // Getting new map tiles
-                                let viewshed_tiles_pos = Map::range((obj.pos.x, obj.pos.y), obj.viewshed.range);
+                                let viewshed_tiles_pos =
+                                    Map::range((obj.pos.x, obj.pos.y), obj.viewshed.range);
 
                                 // Adding new maps to explored map
                                 // Assume player has some explored map tiles
@@ -1062,13 +1075,22 @@ fn operate_refine_event_system(
                         continue;
                     };
 
-                    let Some(structure_template) = Structure::get_template(structure.template.0.clone(), &templates.obj_templates) else {
-                        error!("Query failed to find structure template {:?}", structure.template.0);
+                    let Some(structure_template) = Structure::get_template(
+                        structure.template.0.clone(),
+                        &templates.obj_templates,
+                    ) else {
+                        error!(
+                            "Query failed to find structure template {:?}",
+                            structure.template.0
+                        );
                         continue;
                     };
 
                     let Some(structure_refine_list) = structure_template.refine else {
-                        error!("Missing refine list on structure template {:?}", structure.template.0);
+                        error!(
+                            "Missing refine list on structure template {:?}",
+                            structure.template.0
+                        );
                         continue;
                     };
 
@@ -1085,7 +1107,10 @@ fn operate_refine_event_system(
                             Item::get_template(item_to_refine.name, &templates.item_templates);
 
                         let Some(produces_list) = item_template.produces.clone() else {
-                            error!("Missing item produces attribute for item template {:?}", item_template);
+                            error!(
+                                "Missing item produces attribute for item template {:?}",
+                                item_template
+                            );
                             continue;
                         };
 
@@ -1754,7 +1779,10 @@ fn drink_eat_system(
                         map_event_type: state_change_event.clone(),
                     };
 
-                    debug!("Removed EventInProgress {:?} and set State back to None", map_event_id);
+                    debug!(
+                        "Removed EventInProgress {:?} and set State back to None",
+                        map_event_id
+                    );
                     visible_events.push(drinking_visible_event);
 
                     // If villager reset the activity to none
@@ -1819,17 +1847,18 @@ fn drink_eat_system(
                         map_event_type: state_change_event.clone(),
                     };
 
-                    debug!("Removed EventInProgress {:?} and set State back to None", map_event_id);
+                    debug!(
+                        "Removed EventInProgress {:?} and set State back to None",
+                        map_event_id
+                    );
                     visible_events.push(eating_visible_event);
 
                     // If villager reset the activity to none
                     if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
-
                         debug!("Inserting DrinkEventCompleted");
                         commands
                             .entity(entity)
                             .insert(EatEventCompleted { item: item });
-
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
                         if let Ok(mut hunger) = hungers.get_mut(map_event.entity_id) {
                             if let Some(feed_mod) = item.attrs.get(item::FEED) {
@@ -1846,7 +1875,6 @@ fn drink_eat_system(
                     }
                 }
                 VisibleEvent::SleepEvent { obj_id } => {
-           
                     debug!("Processing SleepEvent {:?}", obj_id);
                     events_to_remove.push(*map_event_id);
 
@@ -1880,20 +1908,20 @@ fn drink_eat_system(
                         pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         map_event_type: state_change_event.clone(),
-                    };      
-                    
-                    debug!("Removed EventInProgress {:?} and set State back to None", map_event_id);
+                    };
+
+                    debug!(
+                        "Removed EventInProgress {:?} and set State back to None",
+                        map_event_id
+                    );
                     visible_events.push(sleep_visible_event);
 
                     if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
                         debug!("Inserting DrinkEventCompleted");
-                        commands
-                            .entity(entity)
-                            .insert(SleepEventCompleted);
-                    }                                  
+                        commands.entity(entity).insert(SleepEventCompleted);
+                    }
                 }
-                _ => {
-                }
+                _ => {}
             }
         }
     }
@@ -2427,7 +2455,10 @@ fn game_event_system(
                                 //TODO: should be able to change state without the need for entity, playerid and position
 
                                 let Some(structure_entity) = ids.get_entity(structure_id) else {
-                                    error!("Cannot find entity from structure_id: {:?}", structure_id);
+                                    error!(
+                                        "Cannot find entity from structure_id: {:?}",
+                                        structure_id
+                                    );
                                     continue;
                                 };
 
@@ -2437,11 +2468,15 @@ fn game_event_system(
                                     continue;
                                 };
 
-                                let Ok(mut structure_attrs) = structure_attrs_query.get_mut(structure_entity) else {
-                                    error!("Cannot query structure attrs of {:?}", structure_entity);
+                                let Ok(mut structure_attrs) =
+                                    structure_attrs_query.get_mut(structure_entity)
+                                else {
+                                    error!(
+                                        "Cannot query structure attrs of {:?}",
+                                        structure_entity
+                                    );
                                     continue;
                                 };
-
 
                                 structure.state.0 = obj::STATE_STALLED.to_string();
                                 let ratio = (game_tick.0 - structure_attrs.start_time) as f32
@@ -2473,19 +2508,25 @@ fn game_event_system(
                             }
                             _ => {
                                 let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                                    error!("Cannot find item owner entity from id: {:?}", map_event.obj_id);
+                                    error!(
+                                        "Cannot find item owner entity from id: {:?}",
+                                        map_event.obj_id
+                                    );
                                     continue;
                                 };
-            
+
                                 let Ok(mut obj) = query.get_mut(entity) else {
                                     error!("Query failed to find entity {:?}", entity);
                                     continue;
                                 };
-            
+
                                 debug!("Cancel event - reseting obj state to none.");
                                 obj.state.0 = obj::STATE_NONE.to_string();
-            
-                                debug!("Cancel event - removing EventInProgress for entity: {:?}", map_event.entity_id);
+
+                                debug!(
+                                    "Cancel event - removing EventInProgress for entity: {:?}",
+                                    map_event.entity_id
+                                );
                                 commands
                                     .entity(map_event.entity_id)
                                     .remove::<EventInProgress>();
@@ -2495,13 +2536,13 @@ fn game_event_system(
                                     .entity(map_event.entity_id)
                                     .remove::<DrinkEventCompleted>()
                                     .remove::<EatEventCompleted>()
-                                    .remove::<SleepEventCompleted>();  */                           
-            
+                                    .remove::<SleepEventCompleted>();  */
+
                                 // None visible state change
                                 let state_change_event = VisibleEvent::StateChangeEvent {
                                     new_state: obj::STATE_NONE.to_string(),
                                 };
-            
+
                                 let visible_event = MapEvent {
                                     event_id: ids.new_map_event_id(),
                                     entity_id: map_event.entity_id,
@@ -2512,7 +2553,7 @@ fn game_event_system(
                                     run_tick: game_tick.0 + 1,
                                     map_event_type: state_change_event.clone(),
                                 };
-            
+
                                 visible_events.push(visible_event);
                             }
                         }
@@ -2540,14 +2581,13 @@ fn update_game_tick(
     dehydrated: Query<&Dehydrated>,
     starving: Query<&Starving>,
     exhausted: Query<&Exhausted>,
-    state_query: Query<&State>
+    state_query: Query<&State>,
 ) {
     game_tick.0 = game_tick.0 + 1;
 
     // Update thirst
     for (entity, mut thirst, mut hunger, mut tired) in &mut attrs {
-        
-        /*if let Ok(state) = state_query.get(entity) {
+        if let Ok(state) = state_query.get(entity) {
             if state.0 != obj::STATE_DRINKING.to_string() {
                 thirst.update_by_tick_amount(2.0);
             }
@@ -2557,7 +2597,7 @@ fn update_game_tick(
             if state.0 != obj::STATE_EATING.to_string() {
                 hunger.update_by_tick_amount(2.0);
             }
-        }        
+        }
 
         if let Ok(state) = state_query.get(entity) {
             if state.0 != obj::STATE_SLEEPING.to_string() {
@@ -2579,7 +2619,7 @@ fn update_game_tick(
             } else {
                 commands.entity(entity).insert(Starving);
             }
-        }    
+        }
 
         if tired.tired > 80.0 {
             if let Ok(_exhausted) = exhausted.get(entity) {
@@ -2587,9 +2627,12 @@ fn update_game_tick(
             } else {
                 commands.entity(entity).insert(Exhausted);
             }
-        }     */         
+        }
 
-        debug!("Thirst: {:?} Hunger: {:?} Tired: {:?}", thirst.thirst, hunger.hunger, tired.tired);
+        debug!(
+            "Thirst: {:?} Hunger: {:?} Tired: {:?}",
+            thirst.thirst, hunger.hunger, tired.tired
+        );
         // Is thirsty
         /*if thirst.thirst >= 80.0 {
             morale.morale -= morale.per_tick;
