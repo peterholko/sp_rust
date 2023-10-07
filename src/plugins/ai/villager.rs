@@ -93,6 +93,18 @@ pub struct BaseQuery {
     pub state: &'static State,
 }
 
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct VillagerBaseQuery {
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub state: &'static State,
+    pub attrs: &'static VillagerAttrs
+}
+
 pub fn enemy_distance_scorer_system(
     ids: ResMut<Ids>,
     hero_query: Query<MapObjQuery, With<SubclassHero>>,
@@ -120,7 +132,7 @@ pub fn enemy_distance_scorer_system(
 
             for obj in obj_query.iter() {
 
-                if obj.state.0 == obj::STATE_DEAD.to_string() {
+                if *obj.state == State::Dead {
                     continue;
                 }
                 
@@ -538,7 +550,7 @@ pub fn process_order_system(
                             if let Ok(target_pos) = all_pos.get(*target) {
                                 if villager.pos.x != target_pos.x || villager.pos.y != target_pos.y
                                 {
-                                    if is_none_state(&villager.state.0) {
+                                    if *villager.state == State::None {
                                         debug!("Executing Following");
                                         ObjUtil::add_sound_obj_event(
                                             ids.new_map_event_id(),
@@ -562,42 +574,42 @@ pub fn process_order_system(
                         }
                         Order::Gather { res_type } => {
                             debug!("Process Gather Order");
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Gathering");
                                 *state = ActionState::Executing;
                             }
                         }
                         Order::Operate => {
                             debug!("Process Operate Order");
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Operate");
                                 *state = ActionState::Executing;
                             }
                         }
                         Order::Refine => {
                             debug!("Process Refine Order");
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Refining");
                                 *state = ActionState::Executing;
                             }
                         }
                         Order::Craft { recipe_name } => {
                             debug!("Process Craft Order {:?}", recipe_name);
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Crafting");
                                 *state = ActionState::Executing;
                             }
                         }
                         Order::Experiment => {
                             debug!("Process Experiment Order");
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Experiment");
                                 *state = ActionState::Executing;
                             }
                         }
                         Order::Explore => {
                             debug!("Process Explore Order");
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 debug!("Executing Explore");
                                 *state = ActionState::Executing;
                             }
@@ -620,7 +632,7 @@ pub fn process_order_system(
                             if let Ok(target_pos) = all_pos.get(*target) {
                                 if villager.pos.x != target_pos.x || villager.pos.y != target_pos.y
                                 {
-                                    if is_none_state(&villager.state.0) {
+                                    if *villager.state == State::None {
                                         if let Some(path_result) = Map::find_path(
                                             *villager.pos,                                        
                                             *target_pos,                                            
@@ -640,7 +652,7 @@ pub fn process_order_system(
                                                     new_state: "moving".to_string(),
                                                 };
 
-                                            villager.state.0 = "moving".to_string();
+                                            *villager.state = State::Moving;
 
                                             map_events.new(
                                                 ids.new_map_event_id(),
@@ -686,7 +698,7 @@ pub fn process_order_system(
                             }
                         }
                         Order::Gather { res_type } => {
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 let gather_event = VisibleEvent::GatherEvent {
                                     res_type: res_type.clone(),
                                 };
@@ -703,7 +715,7 @@ pub fn process_order_system(
                             }
                         }
                         Order::Refine | Order::Operate => {
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
                                     error!("Cannot find structure entity for {:?}", villager.attrs.structure);
                                     continue;
@@ -736,7 +748,7 @@ pub fn process_order_system(
                                             new_state: "moving".to_string(),
                                         };
 
-                                        villager.state.0 = "moving".to_string();
+                                        *villager.state = State::Moving;
 
                                         map_events.new(
                                             ids.new_map_event_id(),
@@ -780,7 +792,7 @@ pub fn process_order_system(
                                                 structure_id: villager.attrs.structure,
                                             };
 
-                                            villager.state.0 = obj::STATE_REFINING.to_string();
+                                            *villager.state = State::Refining;
 
                                             map_events.new(
                                                 event_id,
@@ -798,7 +810,7 @@ pub fn process_order_system(
                                             };
 
                                             //TODO look up subclass of structure and replace operating with mining, lumberjacking, etc...
-                                            villager.state.0 = "operating".to_string();
+                                            *villager.state = State::Operating;
 
                                             map_events.new(
                                                 event_id,
@@ -825,7 +837,7 @@ pub fn process_order_system(
                             }
                         }
                         Order::Craft { recipe_name } => {
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
                                     error!("Cannot find structure entity for {:?}", villager.attrs.structure);
                                     continue;
@@ -858,7 +870,7 @@ pub fn process_order_system(
                                             new_state: "moving".to_string(),
                                         };
 
-                                        villager.state.0 = "moving".to_string();
+                                        *villager.state = State::Moving;                                    
 
                                         map_events.new(
                                             ids.new_map_event_id(),
@@ -904,7 +916,7 @@ pub fn process_order_system(
                                         new_state: "crafting".to_string(),
                                     };
 
-                                    villager.state.0 = "crafting".to_string();
+                                    *villager.state = State::Crafting; 
 
                                     map_events.new(
                                         ids.new_map_event_id(),
@@ -937,7 +949,7 @@ pub fn process_order_system(
                             }
                         }
                         Order::Experiment => {
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
                                     error!("Cannot find structure entity for {:?}", villager.attrs.structure);
                                     continue;
@@ -970,7 +982,7 @@ pub fn process_order_system(
                                             new_state: "moving".to_string(),
                                         };
 
-                                        villager.state.0 = "moving".to_string();
+                                        *villager.state = State::Moving;
 
                                         map_events.new(
                                             ids.new_map_event_id(),
@@ -1015,7 +1027,7 @@ pub fn process_order_system(
                                         new_state: "experimenting".to_string(),
                                     };
 
-                                    villager.state.0 = "experimenting".to_string();
+                                    *villager.state = State::Experimenting;
 
                                     map_events.new(
                                         ids.new_map_event_id(),
@@ -1066,7 +1078,7 @@ pub fn process_order_system(
                             }
                         }
                         Order::Explore => {
-                            if is_none_state(&villager.state.0) {
+                            if *villager.state == State::None {
                                 let explore_event = VisibleEvent::ExploreEvent;
 
                                 map_events.new(
@@ -1104,6 +1116,7 @@ pub fn flee_system(
     hero_query: Query<BaseQuery, (With<SubclassHero>, Without<SubclassVillager>)>,
     villager_query: Query<BaseQuery, With<SubclassVillager>>,
     blocking_query: Query<BaseQuery>,
+    mut villager_attrs_query: Query<&mut VillagerAttrs>,
     mut action_query: Query<(&Actor, &mut ActionState, &Flee, &ActionSpan)>,
 ) {
     for (Actor(actor), mut state, _find_drink, span) in &mut action_query {
@@ -1136,12 +1149,34 @@ pub fn flee_system(
                         continue;
                     };
 
+                    let Ok(mut villager_attrs) = villager_attrs_query.get_mut(*actor) else {
+                        error!("Cannot find villager attrs for {:?}", *actor);
+                        continue;
+                    };
+
+                    // Add before changing state otherwise there will be multiple speeches
+                    if villager_attrs.activity != villager::Activity::Fleeing {
+                        ObjUtil::add_sound_obj_event(
+                            ids.new_map_event_id(),
+                            game_tick.0,
+                            "Run for your lives!!!".to_owned(),
+                            *actor,
+                            villager.id,
+                            villager.player_id,
+                            villager.pos,
+                            &mut map_events,
+                        );
+                    }             
+
+                    // Set activity to fleeing
+                    villager_attrs.activity = villager::Activity::Fleeing;       
+
                     if hero.pos != villager.pos {
 
                         let mut blocking_list = Vec::new();
 
                         for blocking_obj in blocking_query.iter() {
-                            if blocking_obj.state.0 != obj::STATE_DEAD.to_string() {
+                            if *blocking_obj.state != State::Dead {
                                 if blocking_obj.player_id.0 != villager.player_id.0 {
                                     let map_pos = MapPos(blocking_obj.pos.x, blocking_obj.pos.y);
                                     blocking_list.push(map_pos);
@@ -1364,8 +1399,7 @@ pub fn move_to_water_source_action_system(
                                     new_state: "moving".to_string(),
                                 };
 
-                                villager.state.0 = "moving".to_string();
-
+                                *villager.state = State::Moving;
 
                                 map_events.new(
                                     ids.new_map_event_id(),
@@ -1555,7 +1589,7 @@ pub fn drink_action_system(
                         new_state: obj::STATE_DRINKING.to_string(),
                     };
 
-                    villager.state.0 = obj::STATE_DRINKING.to_string();
+                    *villager.state = State::Drinking;
 
                     map_events.new(
                         ids.new_map_event_id(),
@@ -1804,7 +1838,7 @@ pub fn move_to_food_action_system(
                                     new_state: "moving".to_string(),
                                 };
 
-                                villager.state.0 = "moving".to_string();
+                                *villager.state = State::Moving;
 
                                 map_events.new(
                                     ids.new_map_event_id(),
@@ -1995,7 +2029,7 @@ pub fn eat_action_system(
                         new_state: obj::STATE_EATING.to_string(),
                     };
 
-                    villager.state.0 = obj::STATE_EATING.to_string();
+                    *villager.state = State::Eating;
 
                     map_events.new(
                         ids.new_map_event_id(),
@@ -2237,7 +2271,7 @@ pub fn move_to_shelter_system(
                                     new_state: "moving".to_string(),
                                 };
 
-                                villager.state.0 = "moving".to_string();
+                                *villager.state = State::Moving;
 
                                 map_events.new(
                                     ids.new_map_event_id(),
@@ -2360,7 +2394,7 @@ pub fn sleep_action_system(
                         new_state: obj::STATE_SLEEPING.to_string(),
                     };
 
-                    villager.state.0 = obj::STATE_SLEEPING.to_string();
+                    *villager.state = State::Sleeping;
 
                     map_events.new(
                         ids.new_map_event_id(),
@@ -2539,7 +2573,7 @@ fn find_shelter(
             continue;
         }
 
-        if structure.state.0 != obj::STATE_NONE.to_string() {
+        if *structure.state != State::None {
             debug!("Structure is not completed");
             continue;
         }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use rand::{random, Rng};
 
-use crate::game::{BaseAttrs, Id, Ids, MapEvents, PlayerId, Position, VisibleEvent};
+use crate::game::{BaseAttrs, Id, MapEvents, PlayerId, Position, State, VisibleEvent};
 use crate::item::{Item, Items};
 use crate::map::TileType;
 use crate::skill::{Skill, Skills};
@@ -38,6 +38,48 @@ pub const STATE_EATING: &str = "eating";
 pub const STATE_SLEEPING: &str = "sleeping";
 
 impl ObjUtil {
+    pub fn state_to_enum(state: String) -> State {
+        match state.as_str() {
+            STATE_NONE => State::None,
+            STATE_MOVING => State::Moving,
+            STATE_DEAD => State::Dead,
+            STATE_FOUNDED => State::Founded,
+            STATE_PROGRESSING => State::Progressing,
+            STATE_BUILDING => State::Building,
+            STATE_STALLED => State::Stalled,
+            STATE_GATHERING => State::Gathering,
+            STATE_REFINING => State::Refining,
+            STATE_CRAFTING => State::Crafting,
+            STATE_EXPLORING => State::Exploring,
+            STATE_DRINKING => State::Drinking,
+            STATE_EATING => State::Eating,
+            STATE_SLEEPING => State::Sleeping,
+            _ => State::None,
+        }
+    }
+
+    pub fn state_to_str(state: State) -> String {
+        let state_string = match state {
+            State::None => STATE_NONE,
+            State::Moving => STATE_MOVING,
+            State::Dead => STATE_DEAD,
+            State::Founded => STATE_FOUNDED,
+            State::Progressing => STATE_PROGRESSING,
+            State::Building => STATE_BUILDING,
+            State::Stalled => STATE_STALLED,
+            State::Gathering => STATE_GATHERING,
+            State::Refining => STATE_REFINING,
+            State::Crafting => STATE_CRAFTING,
+            State::Exploring => STATE_EXPLORING,
+            State::Drinking => STATE_DRINKING,
+            State::Eating => STATE_EATING,
+            State::Sleeping => STATE_SLEEPING,
+            _ => STATE_NONE,
+        };
+
+        return state_string.to_string();
+    }
+
     pub fn get_capacity(template: &String, obj_templates: &ObjTemplates) -> i32 {
         for obj_template in obj_templates.iter() {
             if obj_template.template == *template {

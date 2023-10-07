@@ -95,6 +95,7 @@ impl Experiment {
         experiment: &mut Experiment,
         items: &ResMut<Items>,
     ) -> bool {
+        
         // Check source item is set
         if experiment.source_item.is_none() {
             return false;
@@ -181,6 +182,8 @@ impl Experiment {
 
                 // Remove source
                 Item::remove(source_item.id, items);
+
+                items.remove_item(source_item.id);
 
                 // Set experiment to discovery
                 experiment.source_item = None;

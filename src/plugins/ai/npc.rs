@@ -6,6 +6,7 @@ use crate::combat::Combat;
 use crate::combat::CombatQuery;
 use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::game::*;
+use crate::game::State;    
 use crate::item::*;
 use crate::map::Map;
 use crate::templates::Templates;
@@ -94,7 +95,7 @@ pub fn attack_target_system(
                     debug!("No target to chase, start wandering...");
                     let wander_pos_list = Map::get_neighbour_tiles(npc.pos.x, npc.pos.y, &map, &Vec::new());
 
-                    if is_none_state(&npc.state.0) {
+                    if *npc.state == State::None {
                         let mut rng = rand::thread_rng();
 
                         let random_index = rng.gen_range(0..wander_pos_list.len());
@@ -110,7 +111,7 @@ pub fn attack_target_system(
                                 new_state: "moving".to_string(),
                             };
 
-                            npc.state.0 = "moving".to_string();
+                            *npc.state = State::Moving;
 
                             map_events.new(
                                 ids.new_map_event_id(),
@@ -203,7 +204,7 @@ pub fn attack_target_system(
                             .entity(*actor)
                             .insert(EventInProgress { event_id: event_id });
                     } else {
-                        if is_none_state(&npc.state.0) {
+                        if *npc.state == State::None {
                             if let Some(path_result) = Map::find_path(
                                 *npc.pos,
                                 *target.pos,
@@ -222,7 +223,7 @@ pub fn attack_target_system(
                                     new_state: "moving".to_string(),
                                 };
 
-                                npc.state.0 = "moving".to_string();
+                                *npc.state = State::Moving;
 
                                 map_events.new(
                                     ids.new_map_event_id(),

@@ -115,17 +115,34 @@ pub struct Class(pub String);
 pub struct Subclass(pub String);
 
 #[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
-pub struct State(pub String);
+pub enum State {
+    None,
+    Dead,
+    Moving,
+    Founded,
+    Progressing,
+    Building,
+    Stalled,
+    Gathering,
+    Refining,
+    Operating,
+    Crafting,
+    Exploring,
+    Experimenting,
+    Drinking,
+    Eating,
+    Sleeping,
+}
 
-#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
-pub struct StateEnum(pub States);
+/*#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
+pub struct StateEnum(pub States);*/
 
-#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
+/*#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
 pub enum States {
     None,
     Eating,
     Sleeping,
-}
+}*/
 
 #[derive(Debug, Component, Clone)]
 pub struct Viewshed {
@@ -181,7 +198,7 @@ pub struct Misc {
 pub struct VillagerAttrs {
     pub shelter: String,
     pub structure: i32,
-    pub activity: villager::Activity,
+    pub activity: villager::Activity, //Todo turn into solo component
 }
 
 #[derive(Debug, Component, Clone)]
@@ -247,8 +264,6 @@ pub struct Obj {
 #[world_query(derive(Debug))]
 pub struct MapObjQuery {
     pub entity: Entity,
-    // It is required that all reference lifetimes are explicitly annotated, just like in any
-    // struct. Each lifetime should be 'static.
     pub id: &'static Id,
     pub player_id: &'static PlayerId,
     pub pos: &'static Position,
@@ -689,9 +704,9 @@ fn move_event_system(
 
                     // Get entity and update state
                     if let Ok(mut obj) = query.get_mut(map_event.entity_id) {
-
                         // Reset state
-                        obj.state.0 = obj::STATE_NONE.to_string();
+                        //obj.state.0 = obj::STATE_NONE.to_string();
+                        *obj.state = State::None;
 
                         if is_dst_open {
                             obj.pos.x = *dst_x;
@@ -805,7 +820,7 @@ fn state_change_event_system(
                         continue;
                     };
 
-                    obj.state.0 = new_state.to_string();
+                    *obj.state = ObjUtil::state_to_enum(new_state.to_string());
 
                     println!("Adding processed map event");
                     visible_events.push(map_event.clone());
@@ -896,7 +911,7 @@ fn build_event_system(
                         continue;
                     };
 
-                    builder.state.0 = obj::STATE_NONE.to_string();
+                    *builder.state = State::None;
 
                     // None visible state change
                     let state_change_event = VisibleEvent::StateChangeEvent {
@@ -928,7 +943,7 @@ fn build_event_system(
                     };
 
                     // Set structure state to none
-                    structure.state.0 = obj::STATE_NONE.to_string();
+                    *structure.state = State::None;
                     structure.stats.hp = structure.stats.base_hp;
 
                     let structure_state_event = MapEvent {
@@ -1057,7 +1072,7 @@ fn operate_refine_event_system(
                     };
 
                     // Reset villager state to None
-                    villager.state.0 = obj::STATE_NONE.to_string();
+                    *villager.state = State::None;
 
                     // Remove Event In Progress
                     commands
@@ -1209,14 +1224,13 @@ fn operate_refine_event_system(
                     };
 
                     // Reset villager state to None
-                    villager.state.0 = "none".to_string();
+                    *villager.state = State::None;
 
                     let Some(structure_entity) = ids.get_entity(*structure_id) else {
                         error!("Cannot find entity from structure_id: {:?}", structure_id);
                         continue;
                     };
 
-                    // Set state back to none
                     let Ok(mut structure) = query.get(structure_entity) else {
                         error!("Query failed to find entity {:?}", map_event.entity_id);
                         continue;
@@ -1310,7 +1324,7 @@ fn craft_event_system(
                             Structure::consume_reqs(*structure_id, recipe.req, &mut items);
 
                             // Reset villager state to None
-                            villager_state.0 = obj::STATE_NONE.to_string();
+                            *villager_state = State::None;
 
                             // Remove Event In Progress
                             commands
@@ -1427,7 +1441,7 @@ fn experiment_event_system(
                     };
 
                     // Reset villager state
-                    villager.state.0 = obj::STATE_NONE.to_string();
+                    *villager.state = State::None;
 
                     // Remove Event In Progress
                     commands
@@ -1536,7 +1550,7 @@ fn explore_event_system(
 
                     if revealed_resources.len() > 0 {
                         // Set explorer state to none
-                        explorer_state.0 = obj::STATE_NONE.to_string();
+                        *explorer_state = State::None;
 
                         // None visible state change
                         let state_change_event = VisibleEvent::StateChangeEvent {
@@ -1757,7 +1771,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    obj.state.0 = obj::STATE_NONE.to_string();
+                    *obj.state = State::None;
 
                     commands
                         .entity(map_event.entity_id)
@@ -1825,7 +1839,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    obj.state.0 = obj::STATE_NONE.to_string();
+                    *obj.state = State::None;
 
                     commands
                         .entity(map_event.entity_id)
@@ -1888,7 +1902,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    obj.state.0 = obj::STATE_NONE.to_string();
+                    *obj.state = State::None;
 
                     commands
                         .entity(map_event.entity_id)
@@ -1983,7 +1997,7 @@ fn visible_event_system(
                     eo_template.0.to_owned(),
                     eo_class.0.to_owned(),
                     eo_subclass.0.to_owned(),
-                    eo_state.0.to_owned(),
+                    ObjUtil::state_to_str(eo_state.to_owned()),
                     eo_viewshed.range,
                     eo_misc.image.to_owned(),
                     eo_misc.hsl.to_owned(),
@@ -2261,7 +2275,7 @@ fn perception_system(
                         template2.0.to_owned(),
                         class2.0.to_owned(),
                         subclass2.0.to_owned(),
-                        state2.0.to_owned(),
+                        ObjUtil::state_to_str(state2.to_owned()),
                         viewshed2.range,
                         misc2.image.to_owned(),
                         misc2.hsl.to_owned(),
@@ -2311,7 +2325,7 @@ fn perception_system(
                         template1.0.to_owned(),
                         class1.0.to_owned(),
                         subclass1.0.to_owned(),
-                        state1.0.to_owned(),
+                        ObjUtil::state_to_str(state1.to_owned()),
                         viewshed1.range,
                         misc1.image.to_owned(),
                         misc1.hsl.to_owned(),
@@ -2478,7 +2492,7 @@ fn game_event_system(
                                     continue;
                                 };
 
-                                structure.state.0 = obj::STATE_STALLED.to_string();
+                                *structure.state = State::Stalled;
                                 let ratio = (game_tick.0 - structure_attrs.start_time) as f32
                                     / structure_attrs.build_time as f32;
 
@@ -2521,7 +2535,7 @@ fn game_event_system(
                                 };
 
                                 debug!("Cancel event - reseting obj state to none.");
-                                obj.state.0 = obj::STATE_NONE.to_string();
+                                *obj.state = State::None;
 
                                 debug!(
                                     "Cancel event - removing EventInProgress for entity: {:?}",
@@ -2588,19 +2602,19 @@ fn update_game_tick(
     // Update thirst
     for (entity, mut thirst, mut hunger, mut tired) in &mut attrs {
         if let Ok(state) = state_query.get(entity) {
-            if state.0 != obj::STATE_DRINKING.to_string() {
+            if *state != State::Drinking {
                 thirst.update_by_tick_amount(2.0);
             }
         }
 
         if let Ok(state) = state_query.get(entity) {
-            if state.0 != obj::STATE_EATING.to_string() {
+            if *state != State::Eating {
                 hunger.update_by_tick_amount(2.0);
             }
         }
 
         if let Ok(state) = state_query.get(entity) {
-            if state.0 != obj::STATE_SLEEPING.to_string() {
+            if *state != State::Sleeping {
                 tired.update_by_tick_amount(2.0);
             }
         }
@@ -2662,7 +2676,7 @@ pub fn is_pos_empty(player_id: i32, x: i32, y: i32, query: &Query<MapObjQuery>) 
     let mut objs = Vec::new();
 
     for q in query {
-        let is_blocking = is_blocking_state(&q.state.0);
+        let is_blocking = is_blocking_state(q.state.to_owned());
 
         if player_id != q.player_id.0 && x == q.pos.x && y == q.pos.y && is_blocking {
             objs.push(q.entity);
@@ -2672,22 +2686,13 @@ pub fn is_pos_empty(player_id: i32, x: i32, y: i32, query: &Query<MapObjQuery>) 
     return objs.len() == 0;
 }
 
-pub fn is_blocking_state(state_str: &str) -> bool {
-    let result = match state_str {
-        obj::STATE_DEAD => false,
-        obj::STATE_FOUNDED => false,
-        obj::STATE_PROGRESSING => false,
+pub fn is_blocking_state(state: State) -> bool {
+    match state {
+        State::Dead => false,
+        State::Founded => false,
+        State::Progressing => false,
         _ => true,
-    };
-
-    result
-}
-
-//TODO remove this function, state == obj::STATE_NONE is much simpler
-pub fn is_none_state(state_str: &str) -> bool {
-    let is_none_state = state_str == obj::STATE_NONE;
-
-    return is_none_state;
+    }
 }
 
 impl Ids {
@@ -2807,7 +2812,7 @@ fn spawn_npc(
             template: Template(npc_template.template.clone()),
             class: Class(npc_template.class.clone()),
             subclass: Subclass(npc_template.subclass.clone()),
-            state: State("none".into()),
+            state: State::None,
             viewshed: Viewshed { range: 2 },
             misc: Misc {
                 image: image,

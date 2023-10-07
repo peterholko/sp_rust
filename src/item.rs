@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use pathfinding::prelude::directions::S;
 
 use std::collections::HashMap;
 
@@ -54,8 +55,105 @@ pub struct Item {
     pub attrs: HashMap<&'static str, f32>,
 }
 
+#[derive(Resource, Debug)]
+pub struct Items2 {
+    items: Vec<Item>,
+    item_templates: Vec<ItemTemplate>
+}
+
+impl Items2 {
+    pub fn new(
+        &mut self,
+        owner: i32,
+        name: String,
+        quantity: i32,
+    ) {
+        let mut class = "Invalid".to_string();
+        let mut subclass = "Invalid".to_string();
+        let mut image = "Invalid".to_string();
+        let mut weight = 0.0;
+
+        for item_template in self.item_templates.iter() {
+            if name == item_template.name {
+                class = item_template.class.clone();
+                subclass = item_template.subclass.clone();
+                image = item_template.image.clone();
+                weight = item_template.weight;
+            }
+        }
+
+        let attrs = HashMap::new();
+
+        let new_item = Item {
+            id: self.items.len() as i32 + 1,
+            owner: owner,
+            name: name,
+            quantity: quantity,
+            class: class,
+            subclass: subclass,
+            image: image,
+            weight: weight,
+            equipped: false,
+            experiment: None,
+            attrs: attrs,
+        };
+
+        self.items.push(new_item);
+    }
+} 
+
 #[derive(Resource, Deref, DerefMut, Debug)]
 pub struct Items(Vec<Item>);
+
+impl Items {
+    pub fn new(
+        &mut self,
+        owner: i32,
+        name: String,
+        quantity: i32,
+        item_templates: &ItemTemplates,    
+    ) {
+        let mut class = "Invalid".to_string();
+        let mut subclass = "Invalid".to_string();
+        let mut image = "Invalid".to_string();
+        let mut weight = 0.0;
+
+        for item_template in item_templates.iter() {
+            if name == item_template.name {
+                class = item_template.class.clone();
+                subclass = item_template.subclass.clone();
+                image = item_template.image.clone();
+                weight = item_template.weight;
+            }
+        }
+
+        let attrs = HashMap::new();
+
+        let new_item = Item {
+            id: self.len() as i32 + 1,
+            owner: owner,
+            name: name,
+            quantity: quantity,
+            class: class,
+            subclass: subclass,
+            image: image,
+            weight: weight,
+            equipped: false,
+            experiment: None,
+            attrs: attrs,
+        };
+
+        self.push(new_item);
+    } 
+
+    pub fn remove_item(&mut self, item_id: i32) {
+        if let Some(index) = self.iter().position(|item| item.id == item_id) {
+            self.remove(index);
+        } else {
+            error!("Item does not exist");
+        }
+    }
+}
 
 impl Item {
     pub fn new(

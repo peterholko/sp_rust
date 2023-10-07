@@ -595,7 +595,7 @@ fn attack_system(
                 }
 
                 // Check if target is dead
-                if target.state.0 == obj::STATE_DEAD {
+                if *target.state == State::Dead {
                     let packet = ResponsePacket::Error {
                         errmsg: "Target is dead.".to_string(),
                     };
@@ -855,7 +855,7 @@ fn info_obj_system(
                                 template: obj.template.0.to_string(),
                                 class: obj.class.0.to_string(),
                                 subclass: obj.subclass.0.to_string(),
-                                state: obj.state.0.to_string(),
+                                state: ObjUtil::state_to_str(obj.state.to_owned()),
                                 image: obj.misc.image.clone(),
                                 hsl: obj.misc.hsl.clone(),
                                 items: items_packet,
@@ -879,7 +879,7 @@ fn info_obj_system(
                                 template: obj.template.0.to_string(),
                                 class: obj.class.0.to_string(),
                                 subclass: obj.subclass.0.to_string(),
-                                state: obj.state.0.to_string(),
+                                state: ObjUtil::state_to_str(obj.state.to_owned()),
                                 image: obj.misc.image.clone(),
                                 hsl: obj.misc.hsl.clone(),
                                 items: items_packet,
@@ -933,14 +933,14 @@ fn info_obj_system(
                         }
 
                         if let Ok(structure_attrs) = structure_query.get(obj.entity) {
-                            if obj.state.0 == obj::STATE_PROGRESSING {
+                            if *obj.state == State::Progressing {
                                 let diff_time = structure_attrs.end_time - game_tick.0;
                                 let ratio = diff_time as f32
                                     / structure_template.build_time.unwrap() as f32;
                                 let percentage = ((1.0 - ratio) * 100.0).round() as i32;
 
                                 progress = Some(percentage);
-                            } else if obj.state.0 == obj::STATE_STALLED {
+                            } else if *obj.state == State::Stalled {
                                 progress = Some(structure_attrs.progress);
                             }
                         }
@@ -951,7 +951,7 @@ fn info_obj_system(
                             template: obj.template.0.to_string(),
                             class: obj.class.0.to_string(),
                             subclass: obj.subclass.0.to_string(),
-                            state: obj.state.0.to_string(),
+                            state: ObjUtil::state_to_str(obj.state.to_owned()),
                             image: obj.misc.image.clone(),
                             hsl: obj.misc.hsl.clone(),
                             items: items_packet,
@@ -971,7 +971,7 @@ fn info_obj_system(
                     let mut items_packet = None;
 
                     // Add items if object is dead
-                    if obj.state.0 == obj::STATE_DEAD {
+                    if *obj.state == State::Dead {
                         items_packet = Some(Item::get_by_owner_packet(*id, &items));
                     }
 
@@ -982,7 +982,7 @@ fn info_obj_system(
                         template: obj.template.0.to_string(),
                         class: obj.class.0.to_string(),
                         subclass: obj.subclass.0.to_string(),
-                        state: obj.state.0.to_string(),
+                        state: ObjUtil::state_to_str(obj.state.to_owned()),
                         image: obj.misc.image.clone(),
                         hsl: obj.misc.hsl.clone(),
                         items: items_packet,
@@ -1406,7 +1406,7 @@ fn item_transfer_system(
                     }
 
                     // Transfer target is not dead
-                    if target.state.0 == obj::STATE_DEAD {
+                    if *target.state == State::Dead {
                         let packet = ResponsePacket::Error {
                             errmsg: "Cannot transfer items to the dead or destroyed".to_string(),
                         };
@@ -1416,8 +1416,8 @@ fn item_transfer_system(
 
                     // Structure is not completed
                     if target.class.0 == "structure"
-                        && (target.state.0 == obj::STATE_PROGRESSING
-                            || target.state.0 == obj::STATE_STALLED)
+                        && (*target.state == State::Progressing
+                            || *target.state == State::Stalled)
                     {
                         let packet = ResponsePacket::Error {
                             errmsg: "Structure is not completed.".to_string(),
@@ -1433,7 +1433,7 @@ fn item_transfer_system(
                         ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
 
                     // Structure founded and under construction use case
-                    if target.class.0 == "structure" && target.state.0 == obj::STATE_FOUNDED {
+                    if target.class.0 == "structure" && *target.state == State::Founded {
                         info!("Transfering to target structure with state founded.");
                         let attrs = target.structure_attrs;
 
@@ -1489,7 +1489,7 @@ fn item_transfer_system(
                         };
 
                         send_to_client(*player_id, item_transfer_packet, &clients);
-                    } else if owner.class.0 == "structure" && owner.state.0 == obj::STATE_FOUNDED {
+                    } else if owner.class.0 == "structure" && *owner.state == State::Founded {
                         info!("Transfering from owner structure with state founded.");
                         let attrs = target.structure_attrs;
 
@@ -1627,8 +1627,7 @@ fn item_transfer_system(
                     continue;
                 };
 
-                if target.player_id.0 != *player_id && target.state.0 != obj::STATE_DEAD.to_string()
-                {
+                if target.player_id.0 != *player_id && *target.state != State::Dead {
                     error!("Cannot transfer items from alive entity {:?}", target.id.0);
                     let packet = ResponsePacket::Error {
                         errmsg: "Cannot transfer items from alive entity".to_string(),
@@ -2023,7 +2022,7 @@ fn create_foundation_system(
                     template: Template(structure_template.template.clone()),
                     class: Class(structure_template.class),
                     subclass: Subclass(structure_template.subclass),
-                    state: State("founded".into()),
+                    state: State::Founded,
                     viewshed: Viewshed { range: 0 },
                     misc: Misc {
                         image: structure_template.template.to_string().to_lowercase(),
@@ -2159,7 +2158,7 @@ fn build_system(
                 }
 
                 // If structure is stalled, restart building
-                if structure.state.0 != obj::STATE_STALLED {
+                if *structure.state != State::Stalled {
                     // Check if structure is missing required items
                     if !Structure::has_req(structure.id.0, &mut structure.attrs.req, &mut items) {
                         let packet = ResponsePacket::Error {
@@ -2520,7 +2519,7 @@ fn equip_system(
                 }
 
                 // Check if object is busy
-                if &owner.state.0 != obj::STATE_NONE {
+                if *owner.state != State::None {
                     let packet = ResponsePacket::Error {
                         errmsg: "Item owner is busy".to_string(),
                     };
@@ -3310,7 +3309,7 @@ fn new_player(
         template: Template(hero_template_name),
         class: Class("unit".into()),
         subclass: Subclass("hero".into()),
-        state: State("none".into()),
+        state: State::None,
         viewshed: Viewshed { range: range },
         misc: Misc {
             image: "novicewarrior".into(),
@@ -3329,14 +3328,13 @@ fn new_player(
     };
 
     // Create hero items
-
-    let wood1 = Item::new(
-        ids.new_item_id(),
+    items.new(
         hero_id,
         "Cragroot Maple Wood".to_string(),
         10,
         &templates.item_templates,
     );
+
     let wood2 = Item::new(
         ids.new_item_id(),
         hero_id,
@@ -3374,7 +3372,6 @@ fn new_player(
         &templates.item_templates,
     );
 
-    items.push(wood1);
     items.push(wood2);
     items.push(wood3);
     items.push(hide);
@@ -3485,7 +3482,7 @@ fn new_player(
         template: Template("Human Villager".into()),
         class: Class("unit".into()),
         subclass: Subclass("villager".into()),
-        state: State("none".into()),
+        state: State::None,
         viewshed: Viewshed { range: 2 },
         misc: Misc {
             image: "humanvillager1".into(),
@@ -3683,7 +3680,7 @@ fn new_player(
         template: Template("Burrow".into()),
         class: Class("structure".into()),
         subclass: Subclass("storage".into()),
-        state: State("none".into()),
+        state: State::None,
         viewshed: Viewshed { range: 0 },
         misc: Misc {
             image: "burrow".into(),
@@ -3761,7 +3758,7 @@ fn new_player(
 }
 
 fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {
-    if target.class.0 == "structure" && target.state.0 == obj::STATE_FOUNDED {
+    if target.class.0 == "structure" && *target.state == State::Founded {
         if let Some(attrs) = target.structure_attrs {
             let target_items = Item::get_by_owner(target.id.0, &items);
             let mut req_items = attrs.req.clone();

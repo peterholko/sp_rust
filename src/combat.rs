@@ -9,9 +9,11 @@ use crate::game::{
     Template, VisibleEvent, VisibleEvents,
 };
 use crate::item::{Item, Items, DAMAGE};
+use crate::obj::ObjUtil;
 use crate::skill::{Skill, SkillUpdated, Skills};
 use crate::templates::{ObjTemplate, SkillTemplate, SkillTemplates, Templates};
 use crate::{network, obj};
+
 
 #[derive(WorldQuery)]
 #[world_query(mutable, derive(Debug))]
@@ -65,8 +67,9 @@ impl Combat {
 
         let mut skill_updated = None;
 
+        debug!("Target HP: {:?}", target.stats.hp);
         if target.stats.hp <= 0 {
-            target.state.0 = obj::STATE_DEAD.to_string();
+            *target.state = State::Dead;
             commands.entity(target.entity).remove::<ThinkerBuilder>();
             //commands.entity(target.entity).despawn();
 
@@ -93,12 +96,16 @@ impl Combat {
         target: &CombatQueryItem,
         map_events: &mut ResMut<MapEvents>,
     ) {
+        debug!("target state: {:?}", target.state);
+        let target_state_str = ObjUtil::state_to_str(target.state.clone());
+        debug!("target state str: {:?}", target_state_str);
+
         let damage_event = VisibleEvent::DamageEvent {
             target_id: target.id.0,
             target_pos: target.pos.clone(),
             attack_type: attack_type.clone(),
             damage: damage,
-            state: target.state.0.clone(),
+            state: target_state_str,
         };
 
         map_events.new(
