@@ -4,9 +4,6 @@ use big_brain::prelude::*;
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct ChaseAttack;
 
-#[derive(Debug, Clone, Component)]
-pub struct Chase;
-
 #[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct VisibleTargetScorer;
 
@@ -20,3 +17,9 @@ impl VisibleTarget {
         Self { target }
     }
 }
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct MerchantScorer;
+
+#[derive(Debug, Clone, Component, ActionBuilder)]
+pub struct SailToPort;

@@ -47,7 +47,7 @@ pub fn setup() {
         )))
         .add_plugins(LogPlugin {
             level: bevy::log::Level::DEBUG,
-            filter: "big_brain=info,siege_perilous::ai=info,siege_perilous::plugins::ai=info,siege_perilious::game=debug".into(),
+            filter: "big_brain=debug,siege_perilous::ai=debug,siege_perilous::plugins::ai=debug,siege_perilious::game=debug".into(),
         })
         .add_plugins(GamePlugin)
         .run();

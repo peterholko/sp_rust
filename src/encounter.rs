@@ -40,13 +40,10 @@ impl Encounter {
             if loot.drop_rate > random_num {
                 let item_quantity = rng.gen_range(loot.min..loot.max);
 
-                Item::create(
-                    ids.new_item_id(),
+                items.create(
                     npc_id,
                     loot.item_name.clone(),
                     item_quantity, //TODO should this be only 1 ?
-                    &templates.item_templates,
-                    &mut items,
                 );
             }
         }

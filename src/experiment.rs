@@ -95,7 +95,6 @@ impl Experiment {
         experiment: &mut Experiment,
         items: &ResMut<Items>,
     ) -> bool {
-        
         // Check source item is set
         if experiment.source_item.is_none() {
             return false;
@@ -103,7 +102,7 @@ impl Experiment {
 
         // Check reagents of experiment
         let (_experiment_source, experiment_reagents) =
-            Item::get_experiment_source_reagents(structure_id, items);
+            items.get_experiment_source_reagents(structure_id);
         let mut all_reqs_match = true;
 
         for res_req in experiment.req.iter() {
@@ -144,7 +143,7 @@ impl Experiment {
 
         let mut res_reqs_reached = true;
         let (_exp_source, experiment_reagents) =
-            Item::get_experiment_source_reagents(structure_id, items);
+            items.get_experiment_source_reagents(structure_id);
 
         for res_req in experiment.req.iter_mut() {
             debug!("exp res_req: {:?}", res_req);
@@ -155,7 +154,7 @@ impl Experiment {
                         res_req.quantity -= 1;
                     }
 
-                    Item::remove_quantity(reagent.id, 1, items);
+                    items.remove_quantity(reagent.id, 1);
                 }
             }
         }
@@ -178,11 +177,9 @@ impl Experiment {
                 debug!("Discovered new recipe!");
 
                 // Add new recipe
-                Recipe::create(player_id, recipe.name.clone(), recipe_templates, recipes);
+                recipes.create(player_id, recipe.name.clone());
 
                 // Remove source
-                Item::remove(source_item.id, items);
-
                 items.remove_item(source_item.id);
 
                 // Set experiment to discovery
@@ -204,30 +201,39 @@ impl Experiment {
         templates: &Res<Templates>,
     ) -> Option<RecipeTemplate> {
         let (experiment_source, experiment_reagents) =
-            Item::get_experiment_source_reagents(structure_id, items);
+            items.get_experiment_source_reagents(structure_id);
 
         let Some(experiment_source) = experiment_source else {
-            debug!("Experiment source is not set, structure id: {:?}", structure_id);
+            debug!(
+                "Experiment source is not set, structure id: {:?}",
+                structure_id
+            );
             return None;
         };
 
         let source_recipe = RecipeTemplate::get_by_name(experiment_source.name.clone(), templates);
 
         let Some(source_recipe) = source_recipe else {
-            debug!("Source item recipe cannot be found, experiment source name: {:?}", experiment_source.name);
+            debug!(
+                "Source item recipe cannot be found, experiment source name: {:?}",
+                experiment_source.name
+            );
             return None;
         };
 
         let Some(source_recipe_tier) = source_recipe.tier else {
-            debug!("Source recipe does not have a tier attribute {:?}", source_recipe);
+            debug!(
+                "Source recipe does not have a tier attribute {:?}",
+                source_recipe
+            );
             return None;
         };
 
-        let player_recipes = Recipe::get_by_structure(structure_id, recipes);
+        let player_recipes = recipes.get_by_structure(structure_id);
         debug!("player_recipes: {:?}", player_recipes);
 
         // Find matching recipes to the source by tier and subclass
-        let matching_recipe_templates = Recipe::get_by_subclass_tier(
+        let matching_recipe_templates = Recipes::get_by_subclass_tier(
             structure_name,
             source_recipe.subclass,
             source_recipe_tier,

@@ -17,9 +17,6 @@ pub const LUMBERCAMP: &str = "Lumbercamp";
 pub const QUARRY: &str = "Quarry";
 
 
-#[derive(Resource, Deref, DerefMut, Debug)]
-pub struct Plans(Vec<Plan>);
-
 #[derive(Debug, Clone)]
 pub struct Plan {
     player_id: i32,
@@ -28,15 +25,16 @@ pub struct Plan {
     tier: i32,
 }
 
-pub struct Structure;
+#[derive(Resource, Deref, DerefMut, Debug)]
+pub struct Plans(Vec<Plan>);
 
-impl Structure {
-    pub fn add_plan(
+impl Plans {
+    pub fn add(
+        &mut self,
         player_id: i32,
         structure: String,
         level: i32,
-        tier: i32,
-        plans: &mut ResMut<Plans>,
+        tier: i32
     ) {
         let plan = Plan {
             player_id: player_id,
@@ -45,8 +43,13 @@ impl Structure {
             tier: tier,
         };
 
-        plans.push(plan);
+        self.push(plan);
     }
+}
+
+pub struct Structure;
+
+impl Structure {
 
     pub fn available_to_build(
         player_id: i32,
@@ -101,7 +104,7 @@ impl Structure {
     }
 
     pub fn has_req(structure_id: i32, req_items: &mut Vec<ResReq>, items: &ResMut<Items>) -> bool {
-        let structure_items = Item::get_by_owner(structure_id, items);
+        let structure_items = items.get_by_owner(structure_id);
 
         for req_item in req_items.iter_mut() {
             let mut req_quantity = req_item.quantity;
@@ -137,7 +140,7 @@ impl Structure {
     }
 
     pub fn consume_reqs(structure_id: i32, req_items: Vec<ResReq>, items: &mut ResMut<Items>) {
-        let structure_items = Item::get_by_owner(structure_id, &items).clone();
+        let structure_items = items.get_by_owner(structure_id).clone();
 
         for req_item in req_items.iter() {
             for structure_item in structure_items.iter() {
@@ -145,7 +148,7 @@ impl Structure {
                     || req_item.req_type == structure_item.class
                     || req_item.req_type == structure_item.subclass
                 {
-                    Item::remove_quantity(structure_item.id, req_item.quantity, items);
+                    items.remove_quantity(structure_item.id, req_item.quantity);
                 }
             }
         }

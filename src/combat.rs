@@ -48,13 +48,13 @@ impl Combat {
         let base_damage = attacker.stats.base_damage.unwrap();
 
         //TODO get item and weapons
-        let attacker_items = Item::get_equipped(attacker.id.0, &items);
+        let attacker_items = items.get_equipped(attacker.id.0);
         debug!("Attacker Items: {:?}", attacker_items);
         let damage_from_items = Item::get_items_value_by_attr(DAMAGE, attacker_items);
         debug!("Damage From Items: {:?}", damage_from_items);
 
         //TODO get equiped weapons
-        let attacker_weapons = Item::get_equipped_weapons(attacker.id.0, &items);
+        let attacker_weapons = items.get_equipped_weapons(attacker.id.0);
 
         //TODO get effect modifications
 

@@ -14,11 +14,13 @@ use crate::templates::{ObjTemplate, ObjTemplates, SkillTemplate, SkillTemplates,
 pub struct ObjUtil;
 
 pub const TEMPLATE: &str = "template";
+pub const POSITION: &str = "position";
 pub const CLASS_STRUCTURE: &str = "structure";
 pub const CLASS_UNIT: &str = "unit";
 pub const SUBCLASS_HERO: &str = "hero";
 pub const SUBCLASS_VILLAGER: &str = "villager";
 pub const SUBCLASS_SHELTER: &str = "shelter";
+pub const SUBCLASS_MERCHANT: &str = "merchant";
 
 // States
 pub const STATE_NONE: &str = "none";

@@ -8,7 +8,7 @@ use std::fs;
 
 #[derive(Debug, Resource)]
 pub struct Templates {
-    pub item_templates: ItemTemplates,
+    pub item_templates: Vec<ItemTemplate>,
     pub res_templates: ResTemplates,
     pub skill_templates: SkillTemplates,
     pub obj_templates: ObjTemplates,
@@ -78,10 +78,10 @@ impl ObjTemplate {
     }
 }
 
-#[derive(Debug, Resource, Deref, DerefMut)]
-pub struct ItemTemplates(Vec<ItemTemplate>);
+/*#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct ItemTemplates(Vec<ItemTemplate>);*/
 
-#[derive(Debug, Resource, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Resource, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemTemplate {
     pub name: String,
     pub class: String,
@@ -209,7 +209,7 @@ impl Plugin for TemplatesPlugin {
             serde_yaml::from_reader(recipe_template_file).expect("Could not read values.");
 
         let templates = Templates {
-            item_templates: ItemTemplates(item_templates),
+            item_templates: item_templates,
             res_templates: ResTemplates(res_templates),
             skill_templates: SkillTemplates(skill_templates),
             obj_templates: ObjTemplates(obj_templates),

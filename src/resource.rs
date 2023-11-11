@@ -13,7 +13,7 @@ use crate::map::Map;
 use crate::network;
 use crate::obj::ObjUtil;
 use crate::skill::{self, Skill, Skills};
-use crate::templates::{ItemTemplates, ResReq, ResTemplate, ResTemplates};
+use crate::templates::{ResReq, ResTemplate, ResTemplates, ItemTemplate};
 
 pub const ORE: &str = "Ore";
 pub const WOOD: &str = "Wood";
@@ -278,7 +278,7 @@ impl Resource {
         skills: &Skills,
         capacity: i32,
         mut items: &mut ResMut<Items>,
-        item_templates: &ItemTemplates,
+        item_templates: &Vec<ItemTemplate>,
         resources: &Resources,
         res_templates: &ResTemplates,
         ids: &mut Ids,
@@ -311,7 +311,7 @@ impl Resource {
                 if random_num < gather_chance {
                     let resource_quantity = 1;
 
-                    let current_total_weight = Item::get_total_weight(dest_obj_id, &items);
+                    let current_total_weight = items.get_total_weight(dest_obj_id);
 
                     let new_item_weight = Item::get_weight_from_template(
                         resource.name.clone(),
@@ -320,13 +320,10 @@ impl Resource {
                     );
 
                     if (current_total_weight + new_item_weight) < capacity {
-                        let (new_item, _merged) = Item::create(
-                            ids.new_item_id(),
+                        let (new_item, _merged) = items.create(
                             dest_obj_id,
                             resource.name.clone(),
                             1, //TODO should this be only 1 ?
-                            item_templates,
-                            &mut items,
                         );
 
                         info!("Gather item created: {:?}", new_item);

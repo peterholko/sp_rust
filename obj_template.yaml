@@ -230,7 +230,7 @@
 
 - name: Meager Merchant
   class: unit
-  subclass: npc
+  subclass: merchant
   template: Meager Merchant
   base_hp: 2000
   base_stamina: 10000

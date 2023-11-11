@@ -1,9 +1,11 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 use big_brain::prelude::*;
+use pathfinding::prelude::directions::E;
 
 use std::collections::HashMap;
 
+use crate::components::npc::{MerchantScorer, SailToPort};
 use crate::components::villager::{
     Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
     FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
@@ -17,8 +19,8 @@ use crate::combat::{Combat, CombatQuery};
 use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
     is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
-    GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Misc, Name,
-    NetworkReceiver, Obj, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
+    GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Merchant, Misc,
+    Name, NetworkReceiver, Obj, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
     SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent, CREATIVITY,
     DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
 };
@@ -96,6 +98,8 @@ pub enum PlayerEvent {
     InfoItem {
         player_id: i32,
         id: i32,
+        merchant_id: i32, 
+        merchant_action: String,
     },
     InfoItemByName {
         player_id: i32,
@@ -110,6 +114,10 @@ pub enum PlayerEvent {
         player_id: i32,
         id: i32,
         panel_type: String,
+    },
+    InfoHire {
+        player_id: i32,
+        source_id: i32,
     },
     ItemTransfer {
         player_id: i32,
@@ -212,6 +220,22 @@ pub enum PlayerEvent {
         player_id: i32,
         structure_id: i32,
     },
+    Hire {
+        player_id: i32,
+        merchant_id: i32,
+        target_id: i32,
+    },
+    BuyItem {
+        player_id: i32,
+        item_id: i32,
+        quantity: i32,
+    },
+    SellItem {
+        player_id: i32,
+        item_id: i32,
+        target_id: i32,
+        quantity: i32,
+    },
 }
 
 #[derive(Resource, Deref, DerefMut)]
@@ -295,6 +319,7 @@ impl Plugin for PlayerPlugin {
             .add_system(info_advance_system)
             .add_system(info_tile_system)
             .add_system(info_item_system)
+            .add_system(info_hire_system)
             .add_system(info_experiment_system)
             .add_system(item_transfer_system)
             .add_system(item_split_system)
@@ -315,6 +340,8 @@ impl Plugin for PlayerPlugin {
             .add_system(use_item_system)
             .add_system(remove_system)
             .add_system(set_experiment_item_system)
+            .add_system(hire_system)
+            .add_system(buy_sell_system)
             .insert_resource(player_events)
             .insert_resource(active_infos);
     }
@@ -572,7 +599,10 @@ fn attack_system(
                 let entities = [attacker_entity, target_entity];
 
                 let Ok([mut attacker, mut target]) = query.get_many_mut(entities) else {
-                    error!("Cannot find attacker or target from entities {:?}", entities);
+                    error!(
+                        "Cannot find attacker or target from entities {:?}",
+                        entities
+                    );
                     continue;
                 };
 
@@ -794,7 +824,7 @@ fn info_obj_system(
 
                 if obj.player_id.0 == *player_id {
                     if obj.class.0 == obj::CLASS_UNIT {
-                        let items_packet = Some(Item::get_by_owner_packet(*id, &items));
+                        let items_packet = Some(items.get_by_owner_packet(*id));
                         let skills_packet = Some(Skill::get_levels_by_owner(*id, &skills));
 
                         let mut attributes: HashMap<String, i32> = HashMap::new();
@@ -820,7 +850,7 @@ fn info_obj_system(
                         let mut morale = None;
                         let mut order = None;
 
-                        let mut total_weight = Some(Item::get_total_weight(obj.id.0, &items));
+                        let mut total_weight = Some(items.get_total_weight(obj.id.0));
                         let mut capacity = Some(ObjUtil::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
@@ -905,10 +935,10 @@ fn info_obj_system(
                             };
                         }
                     } else if obj.class.0 == obj::CLASS_STRUCTURE {
-                        let items_packet = Some(Item::get_by_owner_packet(*id, &items));
+                        let items_packet = Some(items.get_by_owner_packet(*id));
                         let mut effects = Some(Vec::new());
 
-                        let total_weight = Some(Item::get_total_weight(obj.id.0, &items));
+                        let total_weight = Some(items.get_total_weight(obj.id.0));
                         let capacity = Some(ObjUtil::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
@@ -972,7 +1002,7 @@ fn info_obj_system(
 
                     // Add items if object is dead
                     if *obj.state == State::Dead {
-                        items_packet = Some(Item::get_by_owner_packet(*id, &items));
+                        items_packet = Some(items.get_by_owner_packet(*id));
                     }
 
                     // Non player owned object
@@ -992,6 +1022,7 @@ fn info_obj_system(
 
                 send_to_client(*player_id, response_packet, &clients);
             }
+
             _ => {}
         }
     }
@@ -1277,9 +1308,9 @@ fn info_item_system(
                 };
 
                 let capacity = ObjUtil::get_capacity(&obj.template.0, &templates.obj_templates);
-                let total_weight = Item::get_total_weight(*id, &items);
+                let total_weight = items.get_total_weight(*id);
 
-                let inventory_items = Item::get_by_owner_packet(*id, &items);
+                let inventory_items = items.get_by_owner_packet(*id);
 
                 let info_inventory_packet: ResponsePacket = ResponsePacket::InfoInventory {
                     id: *id,
@@ -1293,32 +1324,78 @@ fn info_item_system(
 
                 send_to_client(*player_id, info_inventory_packet, &clients);
             }
-            PlayerEvent::InfoItem { player_id, id } => {
+            PlayerEvent::InfoItem {
+                player_id,
+                id,
+                merchant_id,
+                merchant_action,
+            } => {
                 events_to_remove.push(*event_id);
 
-                let item = Item::get_packet(*id, &items);
+                if merchant_action == "merchantsell" {
+                    let item = items.get_packet(*id);
 
-                if let Some(item) = item {
-                    let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
-                        id: item.id,
-                        owner: item.owner,
-                        name: item.name,
-                        quantity: item.quantity,
-                        class: item.class,
-                        subclass: item.subclass,
-                        image: item.image,
-                        weight: item.weight,
-                        equipped: item.equipped,
-                    };
+                    if let Some(item) = item {
+                        let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
+                            id: item.id,
+                            owner: item.owner,
+                            name: item.name,
+                            quantity: item.quantity,
+                            class: item.class,
+                            subclass: item.subclass,
+                            image: item.image,
+                            weight: item.weight,
+                            equipped: item.equipped,
+                            price: Some(10)
+                        };
 
-                    send_to_client(*player_id, info_item_packet, &clients);
+                        send_to_client(*player_id, info_item_packet, &clients);
+                    } 
+                } else if merchant_action == "merchantbuy" {
+                    let item = items.get_packet(*id);
+
+                    if let Some(item) = item {
+                        let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
+                            id: item.id,
+                            owner: item.owner,
+                            name: item.name,
+                            quantity: item.quantity,
+                            class: item.class,
+                            subclass: item.subclass,
+                            image: item.image,
+                            weight: item.weight,
+                            equipped: item.equipped,
+                            price: Some(10)
+                        };
+
+                        send_to_client(*player_id, info_item_packet, &clients);
+                    }                     
+                } else {
+                    let item = items.get_packet(*id);
+
+                    if let Some(item) = item {
+                        let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
+                            id: item.id,
+                            owner: item.owner,
+                            name: item.name,
+                            quantity: item.quantity,
+                            class: item.class,
+                            subclass: item.subclass,
+                            image: item.image,
+                            weight: item.weight,
+                            equipped: item.equipped,
+                            price: None
+                        };
+
+                        send_to_client(*player_id, info_item_packet, &clients);
+                    }
                 }
             }
             PlayerEvent::InfoItemByName { player_id, name } => {
                 debug!("PlayerEvent::InfoItemByName name: {:?}", name.clone());
                 events_to_remove.push(*event_id);
 
-                let item = Item::get_by_name_packet(name.clone(), &items);
+                let item = items.get_by_name_packet(name.clone());
 
                 if let Some(item) = item {
                     let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
@@ -1331,6 +1408,7 @@ fn info_item_system(
                         image: item.image,
                         weight: item.weight,
                         equipped: item.equipped,
+                        price: None
                     };
 
                     send_to_client(*player_id, info_item_packet, &clients);
@@ -1378,7 +1456,7 @@ fn item_transfer_system(
             } => {
                 events_to_remove.push(*event_id);
 
-                if let Some(item) = Item::find_by_id(*item_id, &items) {
+                if let Some(item) = items.find_by_id(*item_id) {
                     let Some(owner_entity) = ids.get_entity(item.owner) else {
                         error!("Cannot find owner entity from id: {:?}", item.owner);
                         continue;
@@ -1416,8 +1494,7 @@ fn item_transfer_system(
 
                     // Structure is not completed
                     if target.class.0 == "structure"
-                        && (*target.state == State::Progressing
-                            || *target.state == State::Stalled)
+                        && (*target.state == State::Progressing || *target.state == State::Stalled)
                     {
                         let packet = ResponsePacket::Error {
                             errmsg: "Structure is not completed.".to_string(),
@@ -1427,7 +1504,7 @@ fn item_transfer_system(
                     }
 
                     // Transfer target does not have enough capacity
-                    let target_total_weight = Item::get_total_weight(target.id.0, &items);
+                    let target_total_weight = items.get_total_weight(target.id.0);
                     let transfer_item_weight = (item.quantity as f32 * item.weight) as i32;
                     let target_capacity =
                         ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
@@ -1460,10 +1537,10 @@ fn item_transfer_system(
 
                         let source_capacity =
                             ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                        let source_total_weight = Item::get_total_weight(owner.id.0, &items);
+                        let source_total_weight = items.get_total_weight(owner.id.0);
 
-                        let source_items = Item::get_by_owner_packet(item.owner, &items);
-                        let target_items = Item::get_by_owner_packet(*target_id, &items);
+                        let source_items = items.get_by_owner_packet(item.owner);
+                        let target_items = items.get_by_owner_packet(*target_id);
 
                         let source_inventory = network::Inventory {
                             id: item.owner,
@@ -1506,9 +1583,9 @@ fn item_transfer_system(
                         }
 
                         if let Some(structure_attrs) = owner.structure_attrs {
-                            Item::transfer(item.id, target.id.0, &mut items);
+                            items.transfer(item.id, target.id.0);
 
-                            let structure_items = Item::get_by_owner(owner.id.0, &items);
+                            let structure_items = items.get_by_owner(owner.id.0);
 
                             let req_items = Structure::process_req_items(
                                 structure_items,
@@ -1517,10 +1594,10 @@ fn item_transfer_system(
 
                             let source_capacity =
                                 ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                            let source_total_weight = Item::get_total_weight(owner.id.0, &items);
+                            let source_total_weight = items.get_total_weight(owner.id.0);
 
-                            let source_items = Item::get_by_owner_packet(item.owner, &items);
-                            let target_items = Item::get_by_owner_packet(*target_id, &items);
+                            let source_items = items.get_by_owner_packet(item.owner);
+                            let target_items = items.get_by_owner_packet(*target_id);
 
                             let source_inventory = network::Inventory {
                                 id: item.owner,
@@ -1560,14 +1637,14 @@ fn item_transfer_system(
                         }
 
                         info!("Other item transfer");
-                        Item::transfer(item.id, target.id.0, &mut items);
+                        items.transfer(item.id, target.id.0);
 
                         let source_capacity =
                             ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
-                        let source_total_weight = Item::get_total_weight(owner.id.0, &items);
+                        let source_total_weight = items.get_total_weight(owner.id.0);
 
-                        let source_items = Item::get_by_owner_packet(item.owner, &items);
-                        let target_items = Item::get_by_owner_packet(*target_id, &items);
+                        let source_items = items.get_by_owner_packet(item.owner);
+                        let target_items = items.get_by_owner_packet(*target_id);
 
                         let source_inventory = network::Inventory {
                             id: item.owner,
@@ -1627,7 +1704,10 @@ fn item_transfer_system(
                     continue;
                 };
 
-                if target.player_id.0 != *player_id && *target.state != State::Dead {
+                if target.player_id.0 != *player_id
+                    && *target.state != State::Dead
+                    && *target.subclass.0 != obj::SUBCLASS_MERCHANT.to_string()
+                {
                     error!("Cannot transfer items from alive entity {:?}", target.id.0);
                     let packet = ResponsePacket::Error {
                         errmsg: "Cannot transfer items from alive entity".to_string(),
@@ -1638,14 +1718,24 @@ fn item_transfer_system(
 
                 let source_capacity =
                     ObjUtil::get_capacity(&source.template.0, &templates.obj_templates);
-                let source_total_weight = Item::get_total_weight(source.id.0, &items);
+                let source_total_weight = items.get_total_weight(source.id.0);                
+                
+                let mut target_capacity = -1; // -1 representing unknown 
+                let mut target_total_weight = -1; // -1 representing unknown 
 
-                let target_capacity =
-                    ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
-                let target_total_weight = Item::get_total_weight(target.id.0, &items);
+                if target.player_id.0 == *player_id {                
+                    target_capacity = ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
+                    target_total_weight = items.get_total_weight(target.id.0);
+                }
 
-                let source_items = Item::get_by_owner_packet(*source_id, &items);
-                let target_items = Item::get_by_owner_packet(*target_id, &items);
+                let mut target_filter = Vec::new();
+
+                if *target.subclass.0 == obj::SUBCLASS_MERCHANT.to_string() {
+                    target_filter.push(item::GOLD.to_string());
+                }
+
+                let source_items = items.get_by_owner_packet(*source_id);
+                let target_items = items.get_by_owner_packet_filter(*target_id, target_filter);
 
                 let source_inventory = network::Inventory {
                     id: *source_id,
@@ -1700,15 +1790,9 @@ fn item_split_system(
             } => {
                 events_to_remove.push(*event_id);
 
-                if let Some(item) = Item::find_by_id(*item_id, &items) {
+                if let Some(item) = items.find_by_id(*item_id) {
                     // TODO add checks if item_id is owned by player and if quantity is more than item quantity
-                    Item::split(
-                        *item_id,
-                        *quantity,
-                        ids.new_item_id(),
-                        &mut items,
-                        &templates.item_templates,
-                    );
+                    items.split(*item_id, *quantity);
 
                     let item_split_packet: ResponsePacket = ResponsePacket::ItemSplit {
                         result: "success".to_string(),
@@ -1769,7 +1853,7 @@ fn info_experiment_system(
 
                 let info_experiment;
                 let (experiment_source, experiment_reagents, other_resources) =
-                    Item::get_experiment_details_packet(*structure_id, &items);
+                    items.get_experiment_details_packet(*structure_id);
 
                 if let Some(experiment) = experiments.get(structure_id) {
                     info_experiment = ResponsePacket::InfoExperiment {
@@ -1795,6 +1879,87 @@ fn info_experiment_system(
                 active_infos.insert(active_info_key, true);
 
                 send_to_client(*player_id, info_experiment, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn info_hire_system(
+    mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
+    ids: ResMut<Ids>,
+    skills: Res<Skills>,
+    merchant_query: Query<&Merchant>,
+    query: Query<CoreQuery>,
+    attrs_query: Query<&BaseAttrs>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::InfoHire {
+                player_id,
+                source_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(merchant_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find entity for {:?}", source_id);
+                    break;
+                };
+
+                let Ok(merchant) = merchant_query.get(merchant_entity) else {
+                    error!("Cannot find obj for {:?}", merchant_entity);
+                    break;
+                };
+
+                let mut hire_data: Vec<network::HireData> = Vec::new();
+
+                for obj_id in merchant.hauling.iter() {
+                    let Some(entity) = ids.get_entity(*obj_id) else {
+                        error!("Cannot find entity for {:?}", obj_id);
+                        break;
+                    };
+
+                    let Ok(obj) = query.get(entity) else {
+                        error!("Cannot find obj for {:?}", entity);
+                        break;
+                    };
+
+                    let Ok(attrs) = attrs_query.get(entity) else {
+                        error!("Cannot find attrs for {:?}", entity);
+                        break;
+                    };
+
+                    let skills = Skill::get_levels_by_owner(*obj_id, &skills);
+
+                    let villager_data = network::HireData {
+                        id: obj.id.0,
+                        name: obj.name.0.clone(),
+                        image: obj.misc.image.clone(),
+                        wage: 25,
+                        creativity: attrs.creativity,
+                        dexterity: attrs.dexterity,
+                        endurance: attrs.endurance,
+                        focus: attrs.focus,
+                        intellect: attrs.intellect,
+                        spirit: attrs.spirit,
+                        strength: attrs.strength,
+                        toughness: attrs.toughness,
+                        skills: skills,
+                    };
+
+                    hire_data.push(villager_data);
+                }
+
+                let info_hire = ResponsePacket::InfoHire { data: hire_data };
+
+                send_to_client(*player_id, info_hire, &clients);
             }
             _ => {}
         }
@@ -2001,7 +2166,10 @@ fn create_foundation_system(
                 }
 
                 // Get structure template
-                let Some(structure_template) = Structure::get_template_by_name(structure_name.clone(), &templates.obj_templates) else {
+                let Some(structure_template) = Structure::get_template_by_name(
+                    structure_name.clone(),
+                    &templates.obj_templates,
+                ) else {
                     let packet = ResponsePacket::Error {
                         errmsg: "Invalid structure name".to_string(),
                     };
@@ -2336,8 +2504,12 @@ fn assign_list_system(
                         let mut structure_name = "None".to_string();
 
                         if villager.attrs.structure != -1 {
-                            let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
-                                error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                            let Some(structure_entity) = ids.get_entity(villager.attrs.structure)
+                            else {
+                                error!(
+                                    "Cannot find structure entity for {:?}",
+                                    villager.attrs.structure
+                                );
                                 continue;
                             };
 
@@ -2484,7 +2656,7 @@ fn equip_system(
             } => {
                 events_to_remove.push(*event_id);
 
-                let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                let Some(mut item) = items.find_by_id(*item_id) else {
                     debug!("Failed to find item: {:?}", item_id);
                     continue;
                 };
@@ -2530,9 +2702,9 @@ fn equip_system(
                 debug!("Equip packet: {:?}", status);
                 // Equip if status is true
                 if *status {
-                    Item::equip(*item_id, *status, &mut items);
+                    items.equip(*item_id, *status);
                 } else {
-                    Item::equip(*item_id, *status, &mut items);
+                    items.equip(*item_id, *status);
                 }
 
                 let success_packet = ResponsePacket::Equip {
@@ -2541,7 +2713,7 @@ fn equip_system(
 
                 send_to_client(*player_id, success_packet, &clients);
 
-                let item_packet = Item::get_packet(item.id, &items).unwrap();
+                let item_packet = items.get_packet(item.id).unwrap();
 
                 let item_update_packet: ResponsePacket = ResponsePacket::InfoItemsUpdate {
                     id: item.owner,
@@ -2587,11 +2759,8 @@ fn recipe_list_system(
                     continue;
                 };
 
-                let structure_recipes = Recipe::get_by_structure_packet(
-                    *player_id,
-                    structure.template.0.clone(),
-                    &recipes,
-                );
+                let structure_recipes =
+                    recipes.get_by_structure_packet(*player_id, structure.template.0.clone());
 
                 let packet = ResponsePacket::RecipeList {
                     result: structure_recipes,
@@ -2722,7 +2891,7 @@ fn order_craft_system(
                     break;
                 }
 
-                let recipe = Recipe::get_by_name(recipe_name.clone(), &recipes);
+                let recipe = recipes.get_by_name(recipe_name.clone());
 
                 if recipe.is_none() {
                     error!("Invalid recipe name {:?}", *recipe_name);
@@ -2955,7 +3124,7 @@ fn use_item_system(
             PlayerEvent::Use { player_id, item_id } => {
                 events_to_remove.push(*event_id);
 
-                let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                let Some(mut item) = items.find_by_id(*item_id) else {
                     debug!("Failed to find item: {:?}", item_id);
                     continue;
                 };
@@ -3094,7 +3263,7 @@ fn set_experiment_item_system(
             } => {
                 events_to_remove.push(*event_id);
 
-                let Some(item) = Item::find_by_id(*item_id, &items) else {
+                let Some(item) = items.find_by_id(*item_id) else {
                     debug!("Failed to find item: {:?}", item_id);
                     continue;
                 };
@@ -3144,7 +3313,7 @@ fn set_experiment_item_system(
                         if let Some(source_item) = &experiment.source_item {
                             if source_item.id == *item_id {
                                 // Player is transfering the item source out of experiment
-                                Item::remove_experiment_source(*item_id, &mut items);
+                                items.remove_experiment_source(*item_id);
                                 Experiment::reset(experiment);
 
                                 send_info_experiment(
@@ -3162,7 +3331,7 @@ fn set_experiment_item_system(
                                 continue;
                             }
                         } else {
-                            let source_item = Item::set_experiment_source(*item_id, &mut items);
+                            let source_item = items.set_experiment_source(*item_id);
                             experiment.source_item = Some(source_item);
 
                             send_info_experiment(
@@ -3175,7 +3344,7 @@ fn set_experiment_item_system(
                         }
                     } else {
                         // Experiment does not exist, set experiment item source and create experiment
-                        let source_item = Item::set_experiment_source(*item_id, &mut items);
+                        let source_item = items.set_experiment_source(*item_id);
 
                         let experiment = Experiment::create(
                             item.owner,
@@ -3197,9 +3366,9 @@ fn set_experiment_item_system(
                 } else {
                     if let Some(experiment) = experiments.get(&item.owner) {
                         if item.experiment.is_none() {
-                            Item::set_experiment_reagent(*item_id, &mut items);
+                            items.set_experiment_reagent(*item_id);
                         } else {
-                            Item::remove_experiment_reagent(*item_id, &mut items);
+                            items.remove_experiment_reagent(*item_id);
                         }
 
                         send_info_experiment(
@@ -3239,6 +3408,402 @@ fn set_experiment_item_system(
     }
 }
 
+fn hire_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut events: ResMut<PlayerEvents>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    items: Res<Items>,
+    mut map_events: ResMut<MapEvents>,
+    mut pos_query: Query<&mut Position>,
+    merchant_query: Query<&Merchant>,
+    mut player_query: Query<&mut PlayerId>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::Hire {
+                player_id,
+                merchant_id,
+                target_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    break;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find entity for {:?}", hero_id);
+                    continue;
+                };
+
+                let Ok(hero_pos) = pos_query.get(hero_entity).copied() else {
+                    error!("Cannot find obj for {:?}", hero_entity);
+                    continue;
+                };
+
+                let Some(merchant_entity) = ids.get_entity(*merchant_id) else {
+                    error!("Cannot find entity for {:?}", merchant_id);
+                    continue;
+                };
+
+                let Ok(merchant_pos) = pos_query.get(merchant_entity).copied() else {
+                    error!("Cannot find obj for {:?}", merchant_entity);
+                    continue;
+                };
+
+                let Ok(merchant) = merchant_query.get(merchant_entity) else {
+                    error!("Cannot find merchant component for {:?}", merchant_entity);
+                    continue;
+                };
+
+                // Check if merchant is hauling target
+                let mut hauling_target = false;
+
+                for hauling_id in merchant.hauling.iter() {
+                    debug!("hauling id: {:?}", hauling_id);
+                    if hauling_id == target_id {
+                        hauling_target = true;
+                        break;
+                    }
+                }
+
+                if !hauling_target {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Hire target is not being hauled".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                debug!("hero gold: {:?}", items.get_total_gold(hero_id));
+
+                if items.get_total_gold(hero_id) < 25 {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Insufficient gold".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                if !Map::is_adjacent(hero_pos, merchant_pos) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Merchant is not nearby".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let Some(target_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find entity for {:?}", target_id);
+                    continue;
+                };
+
+                let mut target_player_id = player_query.get_mut(target_entity).unwrap();
+
+                *target_player_id = PlayerId(*player_id);
+
+                let Ok(mut target_pos) = pos_query.get_mut(target_entity) else {
+                    error!("Cannot find pos for {:?}", target_entity);
+                    continue;
+                };
+
+                *target_pos = hero_pos;
+
+                // Add Move Event
+                let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    target_entity,
+                    &Id(*target_id),
+                    &PlayerId(*player_id),
+                    &target_pos,
+                    game_tick.0 + 1, // in the future
+                    new_obj_event,
+                );
+
+                commands.entity(target_entity).insert((
+                    Thirst::new(0.0, 0.10), //0.1 before
+                    Hunger::new(0.0, 0.10),
+                    Tired::new(0.0, 0.10),
+                    Morale::new(50.0),
+                    Thinker::build()
+                        .label("My Thinker")
+                        .picker(Highest)
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("EnemyDistanceScorer")
+                                .push(EnemyDistanceScorer),
+                            Flee,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("FindDrinkScorer")
+                                .push(ThirstyScorer)
+                                .push(FindDrinkScorer),
+                            FindDrink,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("DrinkDistanceScorer")
+                                .push(ThirstyScorer)
+                                .push(DrinkDistanceScorer),
+                            MoveToWaterSource,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("TransferDrinkScorer")
+                                .push(ThirstyScorer)
+                                .push(TransferDrinkScorer),
+                            TransferDrink,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("HasDrinkScorer")
+                                .push(ThirstyScorer)
+                                .push(HasDrinkScorer),
+                            Drink { until: 70.0 },
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("FindFoodScorer")
+                                .push(HungryScorer)
+                                .push(FindFoodScorer),
+                            FindFood,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("FoodDistanceScorer")
+                                .push(HungryScorer)
+                                .push(FoodDistanceScorer),
+                            MoveToFoodSource,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("TransferFoodScorer")
+                                .push(HungryScorer)
+                                .push(TransferFoodScorer),
+                            TransferFood,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("HasFoodScorer")
+                                .push(HungryScorer)
+                                .push(HasFoodScorer),
+                            Eat,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("FindShelterScorer")
+                                .push(DrowsyScorer)
+                                .push(FindShelterScorer),
+                            FindShelter,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("ShelterDistanceScorer")
+                                .push(DrowsyScorer)
+                                .push(ShelterDistanceScorer),
+                            MoveToSleepPos,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("NearShelterScorer")
+                                .push(DrowsyScorer)
+                                .push(NearShelterScorer),
+                            Sleep,
+                        )
+                        .when(
+                            ProductOfScorers::build(0.5)
+                                .label("GoodMoraleScorer")
+                                .push(GoodMorale),
+                            ProcessOrder,
+                        ),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn buy_sell_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut events: ResMut<PlayerEvents>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    mut items: ResMut<Items>,
+    mut map_events: ResMut<MapEvents>,
+    mut pos_query: Query<&mut Position>,
+    merchant_query: Query<&Merchant>,
+    mut player_query: Query<&mut PlayerId>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::BuyItem {
+                player_id,
+                item_id,
+                quantity,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    break;
+                };
+
+                let Some(item) = items.find_by_id(*item_id) else {
+                    debug!("Failed to find item: {:?}", item_id);
+                    continue;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find entity for {:?}", hero_id);
+                    continue;
+                };
+
+                let Ok(hero_pos) = pos_query.get(hero_entity).copied() else {
+                    error!("Cannot find obj for {:?}", hero_entity);
+                    continue;
+                };
+
+                let Some(merchant_entity) = ids.get_entity(item.owner) else {
+                    error!("Cannot find entity for {:?}", item.owner);
+                    continue;
+                };
+
+                let Ok(merchant_pos) = pos_query.get(merchant_entity).copied() else {
+                    error!("Cannot find obj for {:?}", merchant_entity);
+                    continue;
+                };
+
+                if items.get_total_gold(hero_id) < 10 {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Insufficient gold".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                if !Map::is_adjacent(hero_pos, merchant_pos) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Merchant is not nearby".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let merchant_id = item.owner;
+
+                items.transfer_gold(hero_id, merchant_id, 25);
+                items.transfer_quantity(item.id, hero_id, *quantity);
+
+                let mut item_filter = Vec::new();
+                item_filter.push(item::GOLD.to_string());                
+
+                let source_items = items.get_by_owner_packet(hero_id);
+                let target_items = items.get_by_owner_packet_filter(merchant_id, item_filter);
+
+                let source_inventory = network::Inventory {
+                    id: hero_id,
+                    cap: 0,
+                    tw: 0,
+                    items: source_items.clone(),
+                };
+
+                let target_inventory = network::Inventory {
+                    id: merchant_id,
+                    cap: 0,
+                    tw: 0,
+                    items: target_items.clone(),
+                };
+
+                let item_transfer_packet: ResponsePacket = ResponsePacket::BuyItem {
+                    sourceid: hero_id,
+                    sourceitems: source_inventory,
+                    targetid: merchant_id,
+                    targetitems: target_inventory,
+                };
+
+                send_to_client(*player_id, item_transfer_packet, &clients);
+            }            
+            PlayerEvent::SellItem {
+                player_id,
+                item_id,
+                target_id,
+                quantity,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(item) = items.find_by_id(*item_id) else {
+                    debug!("Failed to find item: {:?}", item_id);
+                    continue;
+                };
+
+                if item.owner != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Item is not owned by you.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // TOOD check if owner has room for the gold coins
+
+                // TODO check if target has the space to hold the item
+
+                items.transfer_gold(*target_id, item.owner, 25);
+                items.transfer_quantity(*item_id, *target_id, *quantity);
+
+                let mut item_filter = Vec::new();
+                item_filter.push(item::GOLD.to_string());    
+
+                let source_items = items.get_by_owner_packet(item.owner);
+                let target_items = items.get_by_owner_packet_filter(*target_id, item_filter);
+
+                let source_inventory = network::Inventory {
+                    id: item.owner,
+                    cap: 0,
+                    tw: 0,
+                    items: source_items.clone(),
+                };
+
+                let target_inventory = network::Inventory {
+                    id: *target_id,
+                    cap: 0,
+                    tw: 0,
+                    items: target_items.clone(),
+                };
+
+                let item_transfer_packet: ResponsePacket = ResponsePacket::SellItem {
+                    sourceid: item.owner,
+                    sourceitems: source_inventory,
+                    targetid: *target_id,
+                    targetitems: target_inventory,
+                };
+
+                send_to_client(*player_id, item_transfer_packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
 pub fn active_info_experiment(
     player_id: i32,
     structure_id: i32,
@@ -3262,7 +3827,7 @@ pub fn send_info_experiment(
     clients: &Res<Clients>,
 ) {
     let (experiment_source, experiment_reagents, other_resources) =
-        Item::get_experiment_details_packet(structure_id, &items);
+        items.get_experiment_details_packet(structure_id);
 
     let info_experiment: ResponsePacket = ResponsePacket::InfoExperiment {
         id: structure_id,
@@ -3278,13 +3843,13 @@ pub fn send_info_experiment(
 
 fn new_player(
     player_id: i32,
-    mut commands: &mut Commands,
-    mut ids: &mut ResMut<Ids>,
-    mut map_events: &mut ResMut<MapEvents>,
-    mut items: &mut ResMut<Items>,
-    mut skills: &mut ResMut<Skills>,
-    mut recipes: &mut ResMut<Recipes>,
-    mut plans: &mut ResMut<Plans>,
+    commands: &mut Commands,
+    ids: &mut ResMut<Ids>,
+    map_events: &mut ResMut<MapEvents>,
+    items: &mut ResMut<Items>,
+    skills: &mut ResMut<Skills>,
+    recipes: &mut ResMut<Recipes>,
+    plans: &mut ResMut<Plans>,
     templates: &Res<Templates>,
     game_tick: &ResMut<GameTick>,
 ) {
@@ -3328,117 +3893,45 @@ fn new_player(
     };
 
     // Create hero items
-    items.new(
-        hero_id,
-        "Cragroot Maple Wood".to_string(),
-        10,
-        &templates.item_templates,
-    );
-
-    let wood2 = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Cragroot Maple Wood".to_string(),
-        5,
-        &templates.item_templates,
-    );
-    let wood3 = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Cragroot Maple Wood".to_string(),
-        5,
-        &templates.item_templates,
-    );
-    let hide = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Windstride Raw Hide".to_string(),
-        5,
-        &templates.item_templates,
-    );
-    let ingot = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Valleyrun Copper Ingot".to_string(),
-        5,
-        &templates.item_templates,
-    );
-
-    let timber = Item::new(
-        ids.new_item_id(),
-        hero_id,
-        "Cragroot Maple Timber".to_string(),
-        5,
-        &templates.item_templates,
-    );
-
-    items.push(wood2);
-    items.push(wood3);
-    items.push(hide);
-    items.push(ingot);
-    items.push(timber);
+    items.new(hero_id, "Cragroot Maple Wood".to_string(), 10);
+    items.new(hero_id, "Cragroot Maple Wood".to_string(), 5);
+    items.new(hero_id, "Cragroot Maple Wood".to_string(), 5);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 5);
+    items.new(hero_id, "Valleyrun Copper Ingot".to_string(), 5);
+    items.new(hero_id, "Cragroot Maple Timber".to_string(), 5);
+    items.new(hero_id, "Gold Coins".to_string(), 50);
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::DAMAGE, 11.0);
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
+    items.new_with_attrs(
         hero_id,
         "Copper Training Axe".to_string(),
         1,
         item_attrs.clone(),
-        &templates.item_templates,
-        items,
     );
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
+    items.new_with_attrs(
         hero_id,
         "Copper Training Axe".to_string(),
         1,
         item_attrs.clone(),
-        &templates.item_templates,
-        items,
     );
-
-    /*let mut item_attrs = HashMap::new();
-    item_attrs.insert(item::THIRST, 100.0);
-
-    Item::new_with_attrs(
-        ids.new_item_id(),
-        hero_id,
-        "Spring Water".to_string(),
-        5,
-        item_attrs.clone(),
-        &templates.item_templates,
-        items,
-    );*/
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::FEED, 100.0);
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
+    items.new_with_attrs(
         hero_id,
         "Honeybell Berries".to_string(),
         5,
         item_attrs.clone(),
-        &templates.item_templates,
-        items,
     );
 
     let mut item_attrs2 = HashMap::new();
     item_attrs2.insert(item::HEALING, 10.0);
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
-        hero_id,
-        "Health Potion".to_string(),
-        1,
-        item_attrs2,
-        &templates.item_templates,
-        items,
-    );
+    items.new_with_attrs(hero_id, "Health Potion".to_string(), 1, item_attrs2);
 
     // Spawn hero
     let hero_entity_id = commands
@@ -3453,7 +3946,8 @@ fn new_player(
 
     // Insert new obj event
     let new_obj_event = VisibleEvent::NewObjEvent { new_player: true };
-    let map_event_id = ids.new_map_event_id();
+
+    /*let map_event_id = ids.new_map_event_id();
 
     let map_state_event = MapEvent {
         event_id: map_event_id,
@@ -3466,7 +3960,17 @@ fn new_player(
         map_event_type: new_obj_event,
     };
 
-    map_events.insert(map_event_id, map_state_event);
+    map_events.insert(map_event_id, map_state_event);*/
+
+    map_events.add(
+        new_obj_event,
+        hero_entity_id,
+        hero_id,
+        player_id,
+        start_x,
+        start_y,
+        game_tick.0 + 1,
+    );
 
     // Villager obj
     let villager_id = ids.new_obj_id();
@@ -3527,7 +4031,7 @@ fn new_player(
         .step(MoveToSleepPos)
         .step(Sleep);*/
 
-    let villager_entity_id = commands
+    /*let villager_entity_id = commands
         .spawn((
             villager,
             SubclassVillager,
@@ -3538,7 +4042,7 @@ fn new_player(
             Tired::new(0.0, 0.10),
             Morale::new(50.0),
             Thinker::build()
-                .label("My Thinker")
+                .label("Villager")
                 .picker(Highest)
                 .when(
                     ProductOfScorers::build(0.5)
@@ -3649,23 +4153,18 @@ fn new_player(
         map_event_type: new_obj_event,
     };
 
-    map_events.insert(map_event_id, map_state_event);
+    map_events.insert(map_event_id, map_state_event);*/
 
     // Starting recipes
-    Recipe::create(
-        player_id,
-        "Training Pick Axe".to_string(),
-        &templates.recipe_templates,
-        recipes,
-    );
+    recipes.create(player_id, "Training Pick Axe".to_string());
 
     //Starting plans
-    Structure::add_plan(player_id, "Crafting Tent".to_string(), 0, 0, plans);
-    Structure::add_plan(player_id, "Blacksmith".to_string(), 0, 0, plans);
-    Structure::add_plan(player_id, "Tent".to_string(), 0, 0, plans);
-    Structure::add_plan(player_id, "Burrow".to_string(), 0, 0, plans);
-    Structure::add_plan(player_id, "Stockade".to_string(), 0, 0, plans);
-    Structure::add_plan(player_id, "Mine".to_string(), 0, 0, plans);
+    plans.add(player_id, "Crafting Tent".to_string(), 0, 0);
+    plans.add(player_id, "Blacksmith".to_string(), 0, 0);
+    plans.add(player_id, "Tent".to_string(), 0, 0);
+    plans.add(player_id, "Burrow".to_string(), 0, 0);
+    plans.add(player_id, "Stockade".to_string(), 0, 0);
+    plans.add(player_id, "Mine".to_string(), 0, 0);
 
     let structure_id = ids.new_obj_id();
 
@@ -3733,34 +4232,133 @@ fn new_player(
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::THIRST, 70.0);
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
-        structure_id,
-        "Spring Water".to_string(),
-        2,
-        item_attrs,
-        &templates.item_templates,
-        &mut items,
-    );
+     
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::FEED, 70.0);
 
-    Item::new_with_attrs(
-        ids.new_item_id(),
-        structure_id,
-        "Amitanian Grape".to_string(),
-        50,
-        item_attrs,
-        &templates.item_templates,
-        &mut items,
-    );
+    items.new_with_attrs(structure_id, "Amitanian Grape".to_string(), 50, item_attrs);
+
+    let merchant_template = ObjTemplate::get_template("Meager Merchant".to_string(), templates);
+    let merchant_id = ids.new_obj_id();
+    let merchant_player_id = 2000;
+
+    items.new(merchant_id, "Gold Coins".to_string(), 500);
+
+    let merchant = Obj {
+        id: Id(merchant_id),
+        player_id: PlayerId(merchant_player_id),
+        position: Position { x: 15, y: 37},
+        name: Name("Meager Merchant".to_string()),
+        template: Template(merchant_template.template.to_string()),
+        class: Class(merchant_template.class.to_string()),
+        subclass: Subclass(merchant_template.subclass.to_string()),
+        state: State::None,
+        viewshed: Viewshed { range: 2 },
+        misc: Misc {
+            image: "meagermerchant".to_string(),
+            hsl: Vec::new().into(),
+            groups: Vec::new().into(),
+        },
+        stats: Stats {
+            hp: merchant_template.base_hp.unwrap(),
+            base_hp: merchant_template.base_hp.unwrap(),
+            base_def: merchant_template.base_def.unwrap(),
+            base_damage: merchant_template.base_dmg,
+            damage_range: merchant_template.dmg_range,
+            base_speed: merchant_template.base_speed,
+            base_vision: merchant_template.base_vision,
+        },
+    };
+
+    // Villager obj
+    let villager_id2 = ids.new_obj_id();
+
+    let merchant_entity_id = commands
+        .spawn((
+            merchant,
+            Merchant {
+                home_port: Position{x: 1, y: 37},
+                target_port: Position{x: 15, y: 37},
+                dest: Position{x: 15, y: 37},
+                in_port_at: game_tick.0,
+                hauling: vec![villager_id2],
+            },
+            Thinker::build()
+            .label("Merchant")
+            .picker(Highest)
+            .when(MerchantScorer, SailToPort ),
+        ))
+        .id();
+
+    ids.new_entity_obj_mapping(merchant_id, merchant_entity_id);
+
+    // Insert new obj event
+    let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
+    let map_event_id = ids.new_map_event_id();
+
+    let map_state_event = MapEvent {
+        event_id: map_event_id,
+        entity_id: merchant_entity_id,
+        obj_id: merchant_id,
+        player_id: merchant_player_id,
+        pos_x: 14,
+        pos_y: 37,
+        run_tick: game_tick.0 + 1, // Add one game tick
+        map_event_type: new_obj_event,
+    };
+
+    map_events.insert(map_event_id, map_state_event);
+
+    let villager2 = Obj {
+        id: Id(villager_id2),
+        player_id: PlayerId(merchant_player_id),
+        position: Position { x: -50, y: -50 },
+        name: Name("Villager 2".into()),
+        template: Template("Human Villager".into()),
+        class: Class("unit".into()),
+        subclass: Subclass("villager".into()),
+        state: State::Aboard,
+        viewshed: Viewshed { range: 2 },
+        misc: Misc {
+            image: "humanvillager2".into(),
+            hsl: Vec::new().into(),
+            groups: Vec::new().into(),
+        },
+        stats: Stats {
+            hp: villager_template.base_hp.unwrap(),
+            base_hp: villager_template.base_hp.unwrap(),
+            base_def: villager_template.base_def.unwrap(),
+            base_damage: villager_template.base_dmg,
+            damage_range: villager_template.dmg_range,
+            base_speed: villager_template.base_speed,
+            base_vision: villager_template.base_vision,
+        },
+    };
+
+    // Villager generate skills
+    Villager::generate_skills(villager_id2, skills, &templates.skill_templates);
+
+    // Villager create attributes components ```
+    let base_attrs2 = Villager::generate_attributes(1);
+
+    let villager_attrs2 = VillagerAttrs {
+        shelter: "None".to_string(),
+        structure: -1,
+        activity: villager::Activity::None,
+    };
+
+    let villager_entity_id2 = commands
+        .spawn((villager2, SubclassVillager, base_attrs2, villager_attrs2))
+        .id();
+
+    ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);
 }
 
 fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {
     if target.class.0 == "structure" && *target.state == State::Founded {
         if let Some(attrs) = target.structure_attrs {
-            let target_items = Item::get_by_owner(target.id.0, &items);
+            let target_items = items.get_by_owner(target.id.0);
             let mut req_items = attrs.req.clone();
 
             // Check current required quantity from structure items
@@ -3799,7 +4397,7 @@ fn process_item_transfer_structure(
     templates: &Res<Templates>,
 ) -> Vec<ResReq> {
     if let Some(attrs) = structure.structure_attrs {
-        let structure_items = Item::get_by_owner(structure.id.0, &items);
+        let structure_items = items.get_by_owner(structure.id.0);
         let mut req_items = Structure::process_req_items(structure_items, attrs.req.clone());
 
         // Find first matching req item
@@ -3812,13 +4410,13 @@ fn process_item_transfer_structure(
                 if *match_req_item_cquantity > 0 {
                     if *match_req_item_cquantity == item.quantity {
                         // Transfer entire item
-                        Item::transfer(item.id, structure.id.0, items);
+                        items.transfer(item.id, structure.id.0);
 
                         // Set current quantity to 0
                         *match_req_item_cquantity = 0;
                     } else if *match_req_item_cquantity > item.quantity {
                         // Transfer entire item
-                        Item::transfer(item.id, structure.id.0, &mut items);
+                        items.transfer(item.id, structure.id.0);
 
                         // Subtract current quantity
                         *match_req_item_cquantity -= item.quantity;
@@ -3826,16 +4424,10 @@ fn process_item_transfer_structure(
                         let new_item_id = ids.new_item_id();
 
                         // Split to create new item. Required here as item quantity is greater than req quantity
-                        Item::split(
-                            item.id,
-                            *match_req_item_cquantity,
-                            new_item_id,
-                            &mut items,
-                            &templates.item_templates,
-                        );
+                        items.split(item.id, *match_req_item_cquantity);
 
                         // Transfer the new item
-                        Item::transfer(new_item_id, structure.id.0, &mut items);
+                        items.transfer(new_item_id, structure.id.0);
 
                         // Set current quantity to 0
                         *match_req_item_cquantity = 0;

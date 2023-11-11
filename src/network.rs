@@ -67,13 +67,15 @@ enum NetworkPacket {
     #[serde(rename = "info_inventory")]
     InfoInventory { id: i32 },
     #[serde(rename = "info_item")]
-    InfoItem { id: i32 },
+    InfoItem { id: i32, merchantid: i32, merchantaction: String},
     #[serde(rename = "info_item_by_name")]
     InfoItemByName { name: String },
     #[serde(rename = "info_item_transfer")]
     InfoItemTransfer { sourceid: i32, targetid: i32 },
     #[serde(rename = "info_exit")]
     InfoExit { id: i32, paneltype: String },
+    #[serde(rename = "info_hire")]
+    InfoHire { sourceid: i32 },
     #[serde(rename = "item_transfer")]
     ItemTransfer { targetid: i32, item: i32 },
     #[serde(rename = "item_split")]
@@ -126,6 +128,12 @@ enum NetworkPacket {
     SetExperimentResource { itemid: i32 },
     #[serde(rename = "reset_experiment")]
     ResetExperiment { structureid: i32 },
+    #[serde(rename = "hire")]
+    Hire {sourceid: i32, targetid: i32},
+    #[serde(rename = "buy_item")]
+    BuyItem {itemid: i32, quantity: i32},
+    #[serde(rename = "sell_item")]
+    SellItem {itemid: i32, targetid: i32, quantity: i32}
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -326,6 +334,7 @@ pub enum ResponsePacket {
         image: String,
         weight: f32,
         equipped: bool,
+        price: Option<i32>
     },
     #[serde(rename = "info_item_transfer")]
     InfoItemTransfer {
@@ -340,6 +349,10 @@ pub enum ResponsePacket {
         id: i32,
         items_updated: Vec<Item>,
         items_removed: Vec<i32>,
+    },
+    #[serde(rename = "info_hire")]
+    InfoHire {
+        data: Vec<HireData>
     },
     #[serde(rename = "item_transfer")]
     ItemTransfer {
@@ -435,6 +448,20 @@ pub enum ResponsePacket {
         action: String,
         sourceid: i32,
         item_name: String,
+    },
+    #[serde(rename = "buy_item")]
+    BuyItem {
+        sourceid: i32,
+        sourceitems: Inventory,
+        targetid: i32,
+        targetitems: Inventory,
+    },    
+    #[serde(rename = "sell_item")]
+    SellItem {
+        sourceid: i32,
+        sourceitems: Inventory,
+        targetid: i32,
+        targetitems: Inventory,
     },
     Ok,
     None,
@@ -604,6 +631,23 @@ pub struct TileResourceWithPos {
     pub quantity_label: String,
     pub x: i32,
     pub y: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct HireData {
+    pub id: i32,
+    pub name: String,
+    pub image: String,
+    pub wage: i32,
+    pub creativity: i32,
+    pub dexterity: i32,
+    pub endurance: i32,
+    pub focus: i32,
+    pub intellect: i32,
+    pub spirit: i32,
+    pub strength: i32,
+    pub toughness: i32,
+    pub skills: HashMap<String, i32>
 }
 
 pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clients>) {
@@ -869,8 +913,8 @@ async fn handle_connection(
                                             NetworkPacket::InfoInventory{id} => {
                                                 handle_info_inventory(player_id, id, client_to_game_sender.clone())
                                             }
-                                            NetworkPacket::InfoItem{id} => {
-                                                handle_info_item(player_id, id, client_to_game_sender.clone())
+                                            NetworkPacket::InfoItem{id, merchantid, merchantaction} => {
+                                                handle_info_item(player_id, id, merchantid, merchantaction, client_to_game_sender.clone())
                                             }
                                             NetworkPacket::InfoItemByName{name} => {
                                                 handle_info_item_by_name(player_id, name, client_to_game_sender.clone())
@@ -881,6 +925,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoExit{id, paneltype} => {
                                                 handle_info_exit(player_id, id, paneltype, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoHire{sourceid} => {
+                                                handle_info_hire(player_id, sourceid, client_to_game_sender.clone())
+                                            }                                            
                                             NetworkPacket::ItemTransfer{targetid, item} => {
                                                 handle_item_transfer(player_id, targetid, item, client_to_game_sender.clone())
                                             }
@@ -961,6 +1008,15 @@ async fn handle_connection(
                                             NetworkPacket::ResetExperiment{structureid} => {
                                                 handle_reset_experiment(player_id, structureid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::Hire{sourceid, targetid} => {
+                                                handle_hire(player_id, sourceid, targetid, client_to_game_sender.clone())
+                                            }
+                                            NetworkPacket::BuyItem{itemid, quantity} => {
+                                                handle_buy_item(player_id, itemid, quantity, client_to_game_sender.clone())
+                                            }                                                 
+                                            NetworkPacket::SellItem{itemid, targetid, quantity} => {
+                                                handle_sell_item(player_id, itemid, targetid, quantity, client_to_game_sender.clone())
+                                            }                                            
                                             _ => ResponsePacket::Ok
                                         }
                                     },
@@ -1288,12 +1344,16 @@ fn handle_info_inventory(
 fn handle_info_item(
     player_id: i32,
     id: i32,
+    merchantid: i32,
+    merchantaction: String,
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::InfoItem {
             player_id: player_id,
             id: id,
+            merchant_id: merchantid,
+            merchant_action: merchantaction
         })
         .expect("Could not send message");
 
@@ -1346,6 +1406,22 @@ fn handle_info_exit(
             player_id: player_id,
             id: id,
             panel_type: paneltype,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_hire(
+    player_id: i32,
+    sourceid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoHire {
+            player_id: player_id,
+            source_id: sourceid,
         })
         .expect("Could not send message");
 
@@ -1752,6 +1828,62 @@ fn handle_reset_experiment(
         .send(PlayerEvent::ResetExperiment {
             player_id: player_id,
             structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_hire(
+    player_id: i32,
+    sourceid: i32,
+    targetid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Hire {
+            player_id: player_id,
+            merchant_id: sourceid,
+            target_id: targetid
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_buy_item(
+    player_id: i32,
+    itemid: i32,
+    quantity: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::BuyItem {
+            player_id: player_id,
+            item_id: itemid,
+            quantity: quantity
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_sell_item(
+    player_id: i32,
+    itemid: i32,
+    targetid: i32,
+    quantity: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::SellItem {
+            player_id: player_id,
+            item_id: itemid,
+            target_id: targetid,
+            quantity: quantity
         })
         .expect("Could not send message");
 

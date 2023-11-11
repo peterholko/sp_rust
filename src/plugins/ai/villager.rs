@@ -245,7 +245,7 @@ pub fn transfer_drink_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_drink) = Item::get_by_class(villager.id.0, item::WATER.to_string(), &items)
+            if let Some(_drink) = items.get_by_class(villager.id.0, item::WATER.to_string())
             {
                 score.set(0.0);
             } else {
@@ -265,7 +265,7 @@ pub fn has_drink_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_item) = Item::get_by_class(villager.id.0, item::WATER.to_string(), &items)
+            if let Some(_item) = items.get_by_class(villager.id.0, item::WATER.to_string())
             {
                 score.set(1.0);
             } else {
@@ -360,7 +360,7 @@ pub fn transfer_food_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_drink) = Item::get_by_class(villager.id.0, item::FOOD.to_string(), &items)
+            if let Some(_drink) = items.get_by_class(villager.id.0, item::FOOD.to_string())
             {
                 score.set(0.0);
             } else {
@@ -380,7 +380,7 @@ pub fn has_food_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_item) = Item::get_by_class(villager.id.0, item::FOOD.to_string(), &items) {
+            if let Some(_item) = items.get_by_class(villager.id.0, item::FOOD.to_string()) {
                 score.set(1.0);
             } else {
                 score.set(0.0);
@@ -637,7 +637,10 @@ pub fn process_order_system(
                                             *villager.pos,                                        
                                             *target_pos,                                            
                                             &map,
-                                            &Vec::new()
+                                            &Vec::new(),
+                                            true,
+                                            false,
+                                            false
                                         ) {
                                             debug!("Follower path: {:?}", path_result);
 
@@ -734,7 +737,10 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new()
+                                        &Vec::new(),
+                                        true,
+                                        false,
+                                        false
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -856,7 +862,10 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new()
+                                        &Vec::new(),
+                                        true,
+                                        false,
+                                        false
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -968,7 +977,10 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new()
+                                        &Vec::new(),
+                                        true,
+                                        false,
+                                        false
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -1188,7 +1200,10 @@ pub fn flee_system(
                             *villager.pos,
                             *hero.pos,
                             &map,
-                            &blocking_list
+                            &blocking_list,
+                            true,
+                            false,
+                            false
                         ) {
                             debug!("Path to structure: {:?}", path_result);
 
@@ -1385,7 +1400,10 @@ pub fn move_to_water_source_action_system(
                                 *villager.pos,                                
                                 move_to_drink.dest,
                                 &map,
-                                &Vec::new()
+                                &Vec::new(),
+                                true,
+                                false,
+                                false
                             ) {
                                 debug!("Path to structure: {:?}", path_result);
 
@@ -1520,13 +1538,10 @@ pub fn transfer_drink_system(
                     continue;
                 };
 
-                Item::transfer_quantity(
+                items.transfer_quantity(
                     item.id,
                     villager.id.0,
                     1,
-                    &mut ids,
-                    &mut items,
-                    &templates.item_templates,
                 );
 
                 *state = ActionState::Success;
@@ -1573,7 +1588,7 @@ pub fn drink_action_system(
                         continue;
                     };
 
-                    let Some(drink_item) = Item::get_by_class(villager.id.0, item::WATER.to_owned(), &items) else {
+                    let Some(drink_item) = items.get_by_class(villager.id.0, item::WATER.to_owned()) else {
                         debug!("Cannot find drink item on {:?}", villager.id.0);
                         *state = ActionState::Failure;
                         continue;
@@ -1646,11 +1661,10 @@ pub fn drink_action_system(
                         }
 
                         // Update item count
-                        Item::update_quantity_by_class(
+                        items.update_quantity_by_class(
                             drink_event_completed.item.owner,
                             item::WATER.to_string(),
                             -1,
-                            &mut items,
                         );
 
                         *state = ActionState::Success;
@@ -1828,7 +1842,10 @@ pub fn move_to_food_action_system(
                                 *villager.pos,
                                 move_to_food.dest,
                                 &map,
-                                &Vec::new()
+                                &Vec::new(),
+                                true,
+                                false,
+                                false
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -1960,13 +1977,10 @@ pub fn transfer_food_system(
                     continue;
                 };
 
-                Item::transfer_quantity(
+                items.transfer_quantity(
                     item.id,
                     villager.id.0,
                     1,
-                    &mut ids,
-                    &mut items,
-                    &templates.item_templates,
                 );
 
                 *state = ActionState::Success;
@@ -2013,7 +2027,7 @@ pub fn eat_action_system(
                         continue;
                     };
 
-                    let Some(food_item) = Item::get_by_class(villager.id.0, item::FOOD.to_owned(), &items) else {
+                    let Some(food_item) = items.get_by_class(villager.id.0, item::FOOD.to_owned()) else {
                         debug!("Cannot find food item on {:?}", villager.id.0);
                         *state = ActionState::Failure;
                         continue;
@@ -2086,11 +2100,10 @@ pub fn eat_action_system(
                         }
 
                         // Update item count
-                        Item::update_quantity_by_class(
+                        items.update_quantity_by_class(
                             eat_event_completed.item.owner,
                             item::FOOD.to_string(),
                             -1,
-                            &mut items,
                         );
 
                         *state = ActionState::Success;
@@ -2247,7 +2260,10 @@ pub fn move_to_shelter_system(
                                 *villager.pos,
                                 move_to_shelter.dest,
                                 &map,
-                                &Vec::new()
+                                &Vec::new(),
+                                true,
+                                false,
+                                false
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -2503,7 +2519,7 @@ fn find_item_location_by_class(
 ) -> Option<(item::ItemLocation, Item)> {
     //First check obj if they have any water on hand
 
-    if let Some(item) = Item::get_by_class(villager.id.0, item_class.clone(), &items) {
+    if let Some(item) = items.get_by_class(villager.id.0, item_class.clone()) {
         return Some((item::ItemLocation::Own, item.clone()));
     } else {
         let mut nearest_source_dist = 10000 as u32;
@@ -2517,7 +2533,7 @@ fn find_item_location_by_class(
             }
 
             // Check if the structure has any water items
-            let Some(item) = Item::get_by_class(structure.id.0, item_class.clone(), &items) else {
+            let Some(item) = items.get_by_class(structure.id.0, item_class.clone()) else {
                 debug!("Structure does not have any items of class {:?}", item_class);
                 continue;
             };
@@ -2526,7 +2542,10 @@ fn find_item_location_by_class(
                 *villager.pos,
                 *structure.pos,
                 &map,
-                &Vec::new()
+                &Vec::new(),
+                true,
+                false,
+                false
             ) else {
                 debug!("Not path found to structure...");
                 continue;
@@ -2582,7 +2601,10 @@ fn find_shelter(
             *villager.pos,
             *structure.pos,
             &map,
-            &Vec::new()
+            &Vec::new(),
+            true,
+            false,
+            false
         ) else {
             debug!("No path found to structure...");
             continue;

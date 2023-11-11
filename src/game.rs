@@ -57,6 +57,34 @@ pub struct NetworkReceiver(CBReceiver<PlayerEvent>);
 #[derive(Resource, Deref, DerefMut, Debug)]
 pub struct MapEvents(pub HashMap<i32, MapEvent>);
 
+impl MapEvents {
+    pub fn add(
+        &mut self, 
+        visible_event: VisibleEvent, 
+        entity: Entity, 
+        obj_id: i32, 
+        player_id: i32, 
+        pos_x: i32,
+        pos_y: i32,
+        run_tick: i32) {
+
+        let map_event_id = self.len() as i32 + 1000;
+
+        let map_event = MapEvent {
+            event_id: map_event_id,
+            entity_id: entity,
+            obj_id: obj_id,
+            player_id: player_id,
+            pos_x: pos_x,
+            pos_y: pos_y,
+            run_tick: run_tick, // Add one game tick
+            map_event_type: visible_event,
+        };
+
+        self.insert(map_event_id, map_event);
+    }
+}
+
 #[derive(Resource, Deref, DerefMut)]
 pub struct VisibleEvents(Vec<MapEvent>);
 
@@ -132,17 +160,8 @@ pub enum State {
     Drinking,
     Eating,
     Sleeping,
+    Aboard
 }
-
-/*#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
-pub struct StateEnum(pub States);*/
-
-/*#[derive(Debug, Component, Clone, Eq, PartialEq, Hash)]
-pub enum States {
-    None,
-    Eating,
-    Sleeping,
-}*/
 
 #[derive(Debug, Component, Clone)]
 pub struct Viewshed {
@@ -163,6 +182,16 @@ pub struct ClassStructure; //Class Structure
 
 #[derive(Debug, Component)]
 pub struct AI;
+
+#[derive(Debug, Component)]
+pub struct Merchant {
+    pub home_port: Position,
+    pub target_port: Position,
+    pub dest: Position,
+    pub in_port_at: i32,
+    pub hauling: Vec<i32>,
+}
+
 
 #[derive(Debug, Component, Clone)]
 pub struct BaseAttrs {
@@ -512,6 +541,8 @@ impl Game {
     // pub fn setup(mut commands: Commands, task_pool: Res<IoTaskPool>) {
     pub fn setup(
         mut commands: Commands,
+        mut items: ResMut<Items>,
+        mut recipes: ResMut<Recipes>,
         mut resources: ResMut<Resources>,
         templates: Res<Templates>,
         map: Res<Map>,
@@ -535,24 +566,6 @@ impl Game {
         //Initialize Arc Mutex Hashmap to store the client to game channel per connected client
         let clients = Clients(Arc::new(Mutex::new(HashMap::new())));
         let accounts = Accounts::new(Mutex::new(HashMap::new()));
-
-        //Add accounts
-        /*let account = Account {
-            player_id: 1,
-            username: "peter".to_string(),
-            password: "123123".to_string(),
-            class: HeroClassList::None,
-        };
-
-        let account2 = Account {
-            player_id: 2,
-            username: "joe".to_string(),
-            password: "123123".to_string(),
-            class: HeroClassList::None,
-        };
-
-        accounts.lock().unwrap().insert(1, account);
-        accounts.lock().unwrap().insert(2, account2); */
 
         //Create the client to game channel, note the sender will be cloned by each connected client
         let (client_to_game_sender, client_to_game_receiver) = unbounded::<PlayerEvent>();
@@ -593,6 +606,10 @@ impl Game {
 
         // Initialize game world
         Resource::spawn_all_resources(&mut resources, &templates.res_templates, map);
+
+        // Initialize items, recipes
+        items.set_templates(templates.item_templates.clone());
+        recipes.set_templates(templates.recipe_templates.clone());
     }
 }
 
@@ -1112,7 +1129,7 @@ fn operate_refine_event_system(
                     for item_class in structure_refine_list.iter() {
                         debug!("Item class to refine: {:?}", item_class);
                         let item_to_refine =
-                            Item::get_by_class(*structure_id, item_class.clone(), &items);
+                            items.get_by_class(*structure_id, item_class.clone());
 
                         let Some(item_to_refine) = item_to_refine else {
                             continue;
@@ -1135,7 +1152,7 @@ fn operate_refine_event_system(
                         );
 
                         // Consume item to refine
-                        let refined_item = Item::remove_quantity(item_to_refine.id, 1, &mut items);
+                        let refined_item = items.remove_quantity(item_to_refine.id, 1);
 
                         let mut items_to_update: Vec<network::Item> = Vec::new();
                         let mut items_to_remove = Vec::new();
@@ -1152,7 +1169,7 @@ fn operate_refine_event_system(
                         // Create new items
                         for produce_item in produces_list.iter() {
                             let current_total_weight =
-                                Item::get_total_weight(*structure_id, &items);
+                                items.get_total_weight(*structure_id);
                             let item_weight = Item::get_weight_from_template(
                                 produce_item.to_string(),
                                 1,
@@ -1167,13 +1184,10 @@ fn operate_refine_event_system(
                             // Create new item
                             let new_item_id = ids.new_item_id();
 
-                            let (new_item, _merged) = Item::create(
-                                new_item_id,
+                            let (new_item, _merged) = items.create(
                                 *structure_id,
                                 produce_item.to_string(),
-                                1,
-                                &templates.item_templates,
-                                &mut items,
+                                1
                             );
 
                             // Convert items to be updated to packets
@@ -1317,7 +1331,7 @@ fn craft_event_system(
                         continue;
                     };
 
-                    let recipe = Recipe::get_by_name(recipe_name.clone(), &recipes);
+                    let recipe = recipes.get_by_name(recipe_name.clone());
 
                     if let Some(mut recipe) = recipe {
                         if Structure::has_req(*structure_id, &mut recipe.req, &mut items) {
@@ -1335,14 +1349,12 @@ fn craft_event_system(
                             item_attrs.insert(item::DAMAGE, 11.0);
 
                             // Create new item
-                            let new_item = Item::craft(
-                                ids.new_item_id(),
+                            let new_item = items.craft(
                                 *structure_id,
                                 recipe_name.to_string(),
                                 1,
                                 item_attrs,
                                 &templates.recipe_templates,
-                                &mut items,
                                 None,
                                 None,
                             );
@@ -1683,7 +1695,7 @@ fn use_item_system(
                         continue;
                     };
 
-                    let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                    let Some(mut item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -1761,7 +1773,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                    let Some(mut item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -1810,11 +1822,10 @@ fn drink_eat_system(
                             if let Some(thirst_mod) = item.attrs.get(item::THIRST) {
                                 thirst.thirst -= thirst_mod;
 
-                                Item::update_quantity_by_class(
+                                items.update_quantity_by_class(
                                     *obj_id,
                                     item::WATER.to_string(),
                                     -1,
-                                    &mut items,
                                 );
                             }
                         }
@@ -1829,7 +1840,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    let Some(mut item) = Item::find_by_id(*item_id, &items) else {
+                    let Some(mut item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -1878,11 +1889,10 @@ fn drink_eat_system(
                             if let Some(feed_mod) = item.attrs.get(item::FEED) {
                                 hunger.hunger -= feed_mod;
 
-                                Item::update_quantity_by_class(
+                                items.update_quantity_by_class(
                                     *obj_id,
                                     item::FOOD.to_string(),
                                     -1,
-                                    &mut items,
                                 );
                             }
                         }
@@ -2264,7 +2274,7 @@ fn perception_system(
                 let distance = Map::distance((pos1.x, pos1.y), (pos2.x, pos2.y));
 
                 if viewshed1.range >= distance {
-                    println!("Adding visible obj to percetion");
+                    debug!("Adding visible obj to percetion");
 
                     let visible_obj = network_obj(
                         id2.0,
@@ -2287,6 +2297,28 @@ fn perception_system(
                         .or_default()
                         .insert(visible_obj);
                 }
+
+                // Add observer to perception data
+                let observer_obj = network_obj(
+                    id1.0,
+                    player1.0,
+                    pos1.x,
+                    pos1.y,
+                    name1.0.to_owned(),
+                    template1.0.to_owned(),
+                    class1.0.to_owned(),
+                    subclass1.0.to_owned(),
+                    ObjUtil::state_to_str(state1.to_owned()),
+                    viewshed1.range,
+                    misc1.image.to_owned(),
+                    misc1.hsl.to_owned(),
+                    misc1.groups.to_owned(),
+                );
+
+                perceptions_to_send
+                    .entry(*perception_player)
+                    .or_default()
+                    .insert(observer_obj);
 
                 // Get visible tiles by player owned obj
                 let visible_tiles_pos = Map::range((pos1.x, pos1.y), viewshed1.range);
@@ -2643,10 +2675,10 @@ fn update_game_tick(
             }
         }
 
-        debug!(
+        /*debug!(
             "Thirst: {:?} Hunger: {:?} Tired: {:?}",
             thirst.thirst, hunger.hunger, tired.tired
-        );
+        );*/
         // Is thirsty
         /*if thirst.thirst >= 80.0 {
             morale.morale -= morale.per_tick;

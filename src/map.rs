@@ -1,8 +1,8 @@
 use bevy::{ecs::query, prelude::*};
-use tokio::task::spawn_blocking;
 use std::io::BufReader;
 use std::path::Path;
 use std::{fmt, fs::File};
+use tokio::task::spawn_blocking;
 
 use serde::{Deserialize, Serialize};
 
@@ -109,9 +109,9 @@ impl MapPos {
         Map::distance((self.0, self.1), (other.0, other.1))
     }
 
-    fn successors(&self, map: &Map, blocking_list: &Vec<MapPos>) -> Vec<(MapPos, u32)> {
+    fn successors(&self, map: &Map, blocking_list: &Vec<MapPos>, landwalk: bool, waterwalk: bool, mountainwalk:bool ) -> Vec<(MapPos, u32)> {
         let &MapPos(x, y) = self;
-        let s = Map::get_neighbour_tiles(x, y, map, blocking_list);
+        let s = Map::get_neighbour_tiles(x, y, map, blocking_list, landwalk, waterwalk, mountainwalk);
         s
     }
 }
@@ -187,11 +187,14 @@ impl Map {
         dst_pos: Position,
         map: &Map,
         blocking_list: &Vec<MapPos>,
+        landwalk: bool,
+        waterwalk: bool,
+        mountainwalk: bool,
     ) -> Option<(Vec<MapPos>, u32)> {
         let goal: MapPos = MapPos(dst_pos.x, dst_pos.y);
         let result = astar(
             &MapPos(src_pos.x, src_pos.y),
-            |p| p.successors(&map, &blocking_list),
+            |p| p.successors(&map, &blocking_list, landwalk, waterwalk, mountainwalk),
             |p| p.distance(&goal),
             |p| *p == goal,
         );
@@ -245,13 +248,38 @@ impl Map {
         tiles
     }
 
-    pub fn is_passable(x: i32, y: i32, map: &Map) -> bool {
+    pub fn is_passable_by_obj(
+        x: i32,
+        y: i32,
+        landwalk: bool,
+        waterwalk: bool,
+        mountainwalk: bool,
+        map: &Map,
+    ) -> bool {
         let tile_index = y * WIDTH + x;
         let tile_index_usize = tile_index as usize;
         //let layers = map.base[tile_index_usize].layers.clone();
         let tile_type = map.base[tile_index_usize].tile_type.clone();
 
-        //let n = Map::get_neighbour_tiles(16, 36, 1, map.clone());
+        let passable = match (tile_type, landwalk, waterwalk, mountainwalk) {
+            (TileType::Ocean, _, true, _) => true,
+            (TileType::Ocean, _, false, _) => false,
+            (TileType::River, _, true, _) => true,
+            (TileType::River, _, false, _) => false,
+            (TileType::Mountain, _, _, true) => true,
+            (TileType::Mountain, _, _, false) => false,
+            (_, false, _, _) => false,
+            _ => true,
+        };
+
+        return passable;
+    }
+
+    pub fn is_passable(x: i32, y: i32, map: &Map) -> bool {
+        let tile_index = y * WIDTH + x;
+        let tile_index_usize = tile_index as usize;
+        //let layers = map.base[tile_index_usize].layers.clone();
+        let tile_type = map.base[tile_index_usize].tile_type.clone();
 
         let passable = match tile_type {
             TileType::Ocean => false,
@@ -288,7 +316,6 @@ impl Map {
             _ => 1,
         };
 
-        println!("tile_type: {:?} mc: {:?}", tile_type, movement_cost);
         return movement_cost;
     }
 
@@ -460,6 +487,9 @@ impl Map {
         origin_y: i32,
         map: &Map,
         blocking_list: &Vec<MapPos>,
+        landwalk: bool,
+        waterwalk: bool,
+        mountainwalk: bool,
     ) -> Vec<(MapPos, u32)> {
         let neighbours_table: Vec<(i32, i32, i32)> = vec![
             (1, -1, 0),
@@ -480,15 +510,30 @@ impl Map {
             let neighbour_x = neighbour.0;
             let neighbour_y = neighbour.1;
 
+            // Skip coordinates out of bounds
+            if neighbour_x < 0 || neighbour_y < 0 || neighbour_x >= WIDTH || neighbour_y >= HEIGHT {
+                continue;
+            }
+
             //Reminder tile_index = y * width + x
+            //debug!("neighbour_y: {:?} neighbour_x: {:?}", neighbour_y, neighbour_y);
             let tile_index = neighbour_y * WIDTH + neighbour_x;
             let tile_index_usize = tile_index as usize;
             let tile_type = map.base[tile_index_usize].tile_type.clone();
 
             let movement_cost = Map::movement_cost(tile_type) as u32;
-            println!("movement_cost: {:?}", movement_cost);
 
-            if Map::is_valid_pos(neighbour) && Map::is_passable(neighbour_x, neighbour_y, map) && Map::is_not_blocked(neighbour, blocking_list) {
+            if Map::is_valid_pos(neighbour)
+                && Map::is_passable_by_obj(
+                    neighbour_x,
+                    neighbour_y,
+                    landwalk,
+                    waterwalk,
+                    mountainwalk,
+                    map,
+                )
+                && Map::is_not_blocked(neighbour, blocking_list)
+            {
                 result.push((MapPos(neighbour_x, neighbour_y), movement_cost));
             }
         }
@@ -496,7 +541,7 @@ impl Map {
         return result;
     }
 
-    fn is_not_blocked((x, y): (i32, i32), blocking_list: &Vec<MapPos>) -> bool {        
+    fn is_not_blocked((x, y): (i32, i32), blocking_list: &Vec<MapPos>) -> bool {
         for block_pos in blocking_list {
             if x == block_pos.0 && y == block_pos.1 {
                 return false;

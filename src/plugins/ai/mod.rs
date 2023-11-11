@@ -33,8 +33,9 @@ impl Plugin for AIPlugin {
                     villager::sleep_action_system.in_set(BigBrainSet::Actions),
                     villager::process_order_system.in_set(BigBrainSet::Actions),
                     npc::attack_target_system.in_set(BigBrainSet::Actions),
-                    npc::target_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::flee_system.in_set(BigBrainSet::Actions)
+                    
+                    villager::flee_system.in_set(BigBrainSet::Actions),
+                    npc::merchant_move_system.in_set(BigBrainSet::Actions)
                 )
             )
             .add_systems(
@@ -56,6 +57,8 @@ impl Plugin for AIPlugin {
                     villager::shelter_distance_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::near_shelter_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::morale_scorer_system.in_set(BigBrainSet::Scorers),
+                    npc::target_scorer_system.in_set(BigBrainSet::Scorers),
+                    npc::merchant_scorer_system.in_set(BigBrainSet::Scorers)
                 )
             );
 
