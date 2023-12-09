@@ -24,6 +24,7 @@ pub const GATHERING: &str = "Gathering";
 
 pub const POTION: &str = "Potion";
 pub const HEALTH: &str = "Health";
+pub const DEED: &str = "Deed";
 
 pub const HEALING: &str = "Healing";
 

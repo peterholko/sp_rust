@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 
+use crate::obj;
+
 #[derive(Debug, Resource)]
 pub struct Templates {
     pub item_templates: Vec<ItemTemplate>,
@@ -60,12 +62,26 @@ pub struct ObjTemplate {
     pub build_time: Option<i32>,
     pub level: Option<i32>,
     pub refine: Option<Vec<String>>,
-    pub req: Option<Vec<ResReq>>,
+    pub req: Option<Vec<ResReq>>,    
+    pub upgrade_req: Option<Vec<ResReq>>,
+    pub upgrade_to: Option<Vec<String>>,
     pub profession: Option<String>,
     pub upkeep: Option<Vec<ResReq>>,
 }
 
 impl ObjTemplate {
+
+    pub fn get_template_by_name(name: String, templates: &Res<Templates>) -> ObjTemplate {
+        for obj_template in templates.obj_templates.iter() {
+            if name == obj_template.name {
+                return obj_template.clone();
+            }
+        }
+
+        // Cannot recover from an invalid obj template
+        panic!("Cannot find obj_template: {:?}", name);
+    }
+
     pub fn get_template(template_name: String, templates: &Res<Templates>) -> ObjTemplate {
         for obj_template in templates.obj_templates.iter() {
             if template_name == obj_template.template {
@@ -76,6 +92,8 @@ impl ObjTemplate {
         // Cannot recover from an invalid obj template
         panic!("Cannot find obj_template: {:?}", template_name);
     }
+
+
 }
 
 /*#[derive(Debug, Resource, Deref, DerefMut)]

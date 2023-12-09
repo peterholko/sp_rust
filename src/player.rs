@@ -86,6 +86,10 @@ pub enum PlayerEvent {
         player_id: i32,
         id: i32,
     },
+    InfoUpgrade {
+        player_id: i32,
+        structure_id: i32,
+    },
     InfoTile {
         player_id: i32,
         x: i32,
@@ -98,7 +102,7 @@ pub enum PlayerEvent {
     InfoItem {
         player_id: i32,
         id: i32,
-        merchant_id: i32, 
+        merchant_id: i32,
         merchant_action: String,
     },
     InfoItemByName {
@@ -167,6 +171,12 @@ pub enum PlayerEvent {
         player_id: i32,
         source_id: i32,
         structure_id: i32,
+    },
+    Upgrade {
+        player_id: i32,
+        source_id: i32,
+        structure_id: i32,
+        selected_upgrade: String,
     },
     Survey {
         player_id: i32,
@@ -307,43 +317,55 @@ impl Plugin for PlayerPlugin {
         let player_events: PlayerEvents = PlayerEvents(HashMap::new());
         let active_infos: ActiveInfos = ActiveInfos(HashMap::new());
 
-        app.add_system(message_broker_system)
-            .add_system(new_player_system)
-            .add_system(login_system)
-            .add_system(move_system)
-            .add_system(attack_system)
-            .add_system(gather_system)
-            .add_system(info_obj_system)
-            .add_system(info_skills_system)
-            .add_system(info_attrs_system)
-            .add_system(info_advance_system)
-            .add_system(info_tile_system)
-            .add_system(info_item_system)
-            .add_system(info_hire_system)
-            .add_system(info_experiment_system)
-            .add_system(item_transfer_system)
-            .add_system(item_split_system)
-            .add_system(order_follow_system)
-            .add_system(order_gather_system)
-            .add_system(order_refine_system)
-            .add_system(order_craft_system)
-            .add_system(order_experiment_system)
-            .add_system(structure_list_system)
-            .add_system(create_foundation_system)
-            .add_system(build_system)
-            .add_system(explore_system)
-            .add_system(assign_list_system)
-            .add_system(assign_system)
-            .add_system(equip_system)
-            .add_system(recipe_list_system)
-            .add_system(order_explore_system)
-            .add_system(use_item_system)
-            .add_system(remove_system)
-            .add_system(set_experiment_item_system)
-            .add_system(hire_system)
-            .add_system(buy_sell_system)
-            .insert_resource(player_events)
-            .insert_resource(active_infos);
+        app.add_systems(
+            Update,
+            (
+                message_broker_system,
+                new_player_system,
+                login_system,
+                move_system,
+                attack_system,
+                gather_system,
+                info_obj_system,
+                info_skills_system,
+                info_attrs_system,
+                info_advance_system))
+            .add_systems(
+                Update,
+                (
+                info_upgrade_system,
+                info_tile_system,
+                info_item_system,
+                info_hire_system,
+                info_experiment_system,
+                item_transfer_system,
+                item_split_system,
+                order_follow_system,
+                order_gather_system,
+                order_refine_system,
+                order_craft_system))
+            .add_systems(Update,
+            (
+                order_experiment_system,
+                structure_list_system,
+                create_foundation_system,
+                build_system,
+                upgrade_system,
+                explore_system,
+                assign_list_system,
+                assign_system,
+                equip_system,
+                recipe_list_system,
+                order_explore_system,
+                use_item_system,
+                remove_system,
+                set_experiment_item_system,
+                hire_system,
+                buy_sell_system
+            )      
+        )
+        .insert_resource(player_events)
+        .insert_resource(active_infos);
     }
 }
 
@@ -993,6 +1015,7 @@ fn info_obj_system(
                             total_weight: total_weight,
                             build_time: structure_template.build_time,
                             progress: progress,
+                            upgrade_req: structure_template.upgrade_req,
                         };
                     }
                 } else {
@@ -1182,6 +1205,8 @@ fn info_advance_system(
                 }
             }
             PlayerEvent::Advance { player_id, id } => {
+                events_to_remove.push(*event_id);
+
                 let Some(entity) = ids.get_entity(*id) else {
                     error!("Cannot find entity for {:?}", id);
                     continue;
@@ -1224,8 +1249,110 @@ fn info_advance_system(
 
                     send_to_client(*player_id, advance_packet, &clients);
                 }
+            }
+            _ => {}
+        }
+    }
 
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn info_upgrade_system(
+    mut events: ResMut<PlayerEvents>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    clients: Res<Clients>,
+    structure_query: Query<StructureQuery, With<ClassStructure>>,
+    templates: Res<Templates>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::InfoUpgrade {
+                player_id,
+                structure_id,
+            } => {
                 events_to_remove.push(*event_id);
+
+                let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                    error!("Cannot find structure entity for {:?}", structure_id);
+                    break;
+                };
+
+                let Ok(structure) = structure_query.get(structure_entity) else {
+                    error!("Query failed to find entity {:?}", structure_entity);
+                    break;
+                };
+
+                if structure.player_id.0 != *player_id {
+                    error!("Structure not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let current_structure_template =
+                    ObjTemplate::get_template_by_name(structure.name.0.clone(), &templates);
+                debug!(
+                    "current_structure_template: {:?}",
+                    current_structure_template
+                );
+
+                let Some(upgrade_to_list) = current_structure_template.upgrade_to else {
+                    error!(
+                        "Missing upgrade_to field on structure template: {:?}",
+                        structure.name.0.clone()
+                    );
+                    continue;
+                };
+
+                let Some(upgrade_req) = current_structure_template.upgrade_req else {
+                    error!(
+                        "Missing upgrade_req field on structure template: {:?}",
+                        structure.name.0.clone()
+                    );
+                    continue;
+                };
+
+                let mut upgrade_template_list = Vec::new();
+                debug!("upgrade_to_list {:?}", upgrade_to_list);
+                for upgrade_to_structure in upgrade_to_list.iter() {
+                    let upgrade_structure_template = ObjTemplate::get_template_by_name(
+                        upgrade_to_structure.to_string(),
+                        &templates,
+                    );
+                    debug!(
+                        "upgrade_structure_template {:?}",
+                        upgrade_structure_template
+                    );
+                    let upgrade_template = network::UpgradeTemplate {
+                        name: upgrade_structure_template.name,
+                        template: upgrade_structure_template.template,
+                    };
+
+                    upgrade_template_list.push(upgrade_template);
+                }
+
+                if upgrade_template_list.len() == 0 {
+                    error!(
+                        "Cannot build upgrade template list for {:?}",
+                        structure.name.0.clone()
+                    );
+                    continue;
+                }
+
+                let upgrade_packet = ResponsePacket::InfoUpgrade {
+                    id: structure.id.0,
+                    upgrade_list: upgrade_template_list,
+                    req: upgrade_req,
+                };
+
+                send_to_client(*player_id, upgrade_packet, &clients);
             }
             _ => {}
         }
@@ -1346,11 +1473,11 @@ fn info_item_system(
                             image: item.image,
                             weight: item.weight,
                             equipped: item.equipped,
-                            price: Some(10)
+                            price: Some(10),
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
-                    } 
+                    }
                 } else if merchant_action == "merchantbuy" {
                     let item = items.get_packet(*id);
 
@@ -1365,11 +1492,11 @@ fn info_item_system(
                             image: item.image,
                             weight: item.weight,
                             equipped: item.equipped,
-                            price: Some(10)
+                            price: Some(10),
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
-                    }                     
+                    }
                 } else {
                     let item = items.get_packet(*id);
 
@@ -1384,7 +1511,7 @@ fn info_item_system(
                             image: item.image,
                             weight: item.weight,
                             equipped: item.equipped,
-                            price: None
+                            price: None,
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
@@ -1408,7 +1535,7 @@ fn info_item_system(
                         image: item.image,
                         weight: item.weight,
                         equipped: item.equipped,
-                        price: None
+                        price: None,
                     };
 
                     send_to_client(*player_id, info_item_packet, &clients);
@@ -1475,6 +1602,12 @@ fn item_transfer_system(
                     };
 
                     // Item has to be nearby
+                    debug!(
+                        "owner.pos: {:?} target.pos {:?} is_adjacent: {:?}",
+                        owner.pos,
+                        target.pos,
+                        Map::is_adjacent(*owner.pos, *target.pos)
+                    );
                     if !(owner.pos == target.pos || Map::is_adjacent(*owner.pos, *target.pos)) {
                         let packet = ResponsePacket::Error {
                             errmsg: "Item is not nearby.".to_string(),
@@ -1512,18 +1645,22 @@ fn item_transfer_system(
                     // Structure founded and under construction use case
                     if target.class.0 == "structure" && *target.state == State::Founded {
                         info!("Transfering to target structure with state founded.");
-                        let attrs = target.structure_attrs;
+                        let structure_template =
+                            ObjTemplate::get_template_by_name(target.name.0.clone(), &templates);
+                        let structure_req = structure_template
+                            .req
+                            .expect("Template should have req field.");
+
+                        //let attrs = target.structure_attrs;
 
                         // Check if item is required for structure construction
-                        if let Some(attrs) = attrs {
-                            if !Item::is_req(item.clone(), attrs.req.clone()) {
-                                info!("Item not required for construction: {:?}", item);
-                                let packet = ResponsePacket::Error {
-                                    errmsg: "Item not required for construction.".to_string(),
-                                };
-                                send_to_client(*player_id, packet, &clients);
-                                break;
-                            }
+                        if !Item::is_req(item.clone(), structure_req) {
+                            info!("Item not required for construction: {:?}", item);
+                            let packet = ResponsePacket::Error {
+                                errmsg: "Item not required for construction.".to_string(),
+                            };
+                            send_to_client(*player_id, packet, &clients);
+                            break;
                         }
 
                         // Process item transfer and calculate the require item quantities
@@ -1568,7 +1705,15 @@ fn item_transfer_system(
                         send_to_client(*player_id, item_transfer_packet, &clients);
                     } else if owner.class.0 == "structure" && *owner.state == State::Founded {
                         info!("Transfering from owner structure with state founded.");
-                        let attrs = target.structure_attrs;
+
+                        let structure_template =
+                            ObjTemplate::get_template_by_name(owner.name.0.clone(), &templates);
+                        let structure_req = structure_template
+                            .req
+                            .expect("Template should have req field.");
+
+                        // This code appears to be a mistake
+                        /* let attrs = target.structure_attrs;
 
                         // Check if item is required for structure construction
                         if let Some(attrs) = attrs {
@@ -1580,17 +1725,15 @@ fn item_transfer_system(
                                 send_to_client(*player_id, packet, &clients);
                                 break;
                             }
-                        }
+                        } */
 
                         if let Some(structure_attrs) = owner.structure_attrs {
                             items.transfer(item.id, target.id.0);
 
                             let structure_items = items.get_by_owner(owner.id.0);
 
-                            let req_items = Structure::process_req_items(
-                                structure_items,
-                                structure_attrs.req.clone(),
-                            );
+                            let req_items =
+                                Structure::process_req_items(structure_items, structure_req);
 
                             let source_capacity =
                                 ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
@@ -1687,6 +1830,14 @@ fn item_transfer_system(
                     *source_id, *target_id
                 );
 
+                if source_id == target_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Cannot transfer items to self".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 let Some(source_entity) = ids.get_entity(*source_id) else {
                     error!("Cannot find source entity from id: {:?}", source_id);
                     continue;
@@ -1704,6 +1855,15 @@ fn item_transfer_system(
                     continue;
                 };
 
+                if !Map::is_adjacent(*source.pos, *target.pos) {
+                    error!("Target is not nearby {:?}", target.id.0);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Target is not nearby".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 if target.player_id.0 != *player_id
                     && *target.state != State::Dead
                     && *target.subclass.0 != obj::SUBCLASS_MERCHANT.to_string()
@@ -1718,13 +1878,14 @@ fn item_transfer_system(
 
                 let source_capacity =
                     ObjUtil::get_capacity(&source.template.0, &templates.obj_templates);
-                let source_total_weight = items.get_total_weight(source.id.0);                
-                
-                let mut target_capacity = -1; // -1 representing unknown 
-                let mut target_total_weight = -1; // -1 representing unknown 
+                let source_total_weight = items.get_total_weight(source.id.0);
 
-                if target.player_id.0 == *player_id {                
-                    target_capacity = ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
+                let mut target_capacity = -1; // -1 representing unknown
+                let mut target_total_weight = -1; // -1 representing unknown
+
+                if target.player_id.0 == *player_id {
+                    target_capacity =
+                        ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
                     target_total_weight = items.get_total_weight(target.id.0);
                 }
 
@@ -1751,7 +1912,7 @@ fn item_transfer_system(
                     items: target_items.clone(),
                 };
 
-                let req_items = get_current_req_quantities(target, &items);
+                let req_items = get_current_req_quantities(target, &items, &templates);
 
                 let info_item_transfer_packet: ResponsePacket = ResponsePacket::InfoItemTransfer {
                     sourceid: *source_id,
@@ -2211,10 +2372,10 @@ fn create_foundation_system(
                 let structure_attrs = StructureAttrs {
                     start_time: 0,
                     end_time: 0,
-                    build_time: structure_template.build_time.unwrap(), // Structure must have build time
+                    //build_time: structure_template.build_time.unwrap(), // Structure must have build time
                     builder: *source_id,
                     progress: 0,
-                    req: structure_template.req.unwrap(),
+                    //req: structure_template.req.unwrap(),
                 };
 
                 let structure_entity_id = commands
@@ -2262,6 +2423,7 @@ fn build_system(
     mut map_events: ResMut<MapEvents>,
     mut ids: ResMut<Ids>,
     mut items: ResMut<Items>,
+    templates: Res<Templates>,
     builder_query: Query<CoreQuery, Or<(With<SubclassHero>, With<SubclassVillager>)>>,
     mut structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
@@ -2325,10 +2487,20 @@ fn build_system(
                     break;
                 }
 
+                let structure_template =
+                    ObjTemplate::get_template_by_name(structure.name.0.clone(), &templates);
+
+                let structure_req = structure_template
+                    .req
+                    .expect("Template should have req field");
+                let structure_build_time = structure_template
+                    .build_time
+                    .expect("Template should have build_time field");
+
                 // If structure is stalled, restart building
                 if *structure.state != State::Stalled {
                     // Check if structure is missing required items
-                    if !Structure::has_req(structure.id.0, &mut structure.attrs.req, &mut items) {
+                    if !Structure::has_req(structure.id.0, &structure_req, &mut items) {
                         let packet = ResponsePacket::Error {
                             errmsg: "Structure is missing required items.".to_string(),
                         };
@@ -2337,16 +2509,12 @@ fn build_system(
                     }
 
                     // Consume req items
-                    Structure::consume_reqs(
-                        structure.id.0,
-                        structure.attrs.req.clone(),
-                        &mut items,
-                    );
+                    Structure::consume_reqs(structure.id.0, structure_req, &mut items);
                 }
 
                 // Set structure building attributes
                 let progress_ratio = (100 - structure.attrs.progress) as f32 / 100.0;
-                let build_time = (structure.attrs.build_time as f32 * progress_ratio) as i32;
+                let build_time = (structure_build_time as f32 * progress_ratio) as i32;
 
                 structure.attrs.start_time = game_tick.0;
                 structure.attrs.end_time = game_tick.0 + build_time;
@@ -2403,8 +2571,135 @@ fn build_system(
                 );
 
                 let packet = ResponsePacket::Build {
-                    build_time: structure.attrs.build_time,
+                    build_time: structure_build_time,
                 };
+
+                send_to_client(*player_id, packet, &clients);
+            }
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
+fn upgrade_system(
+    mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
+    game_tick: ResMut<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut ids: ResMut<Ids>,
+    mut items: ResMut<Items>,
+    templates: Res<Templates>,
+    builder_query: Query<CoreQuery, Or<(With<SubclassHero>, With<SubclassVillager>)>>,
+    mut structure_query: Query<StructureQuery, With<ClassStructure>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::Upgrade {
+                player_id,
+                source_id,
+                structure_id,
+                selected_upgrade,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                    error!("Cannot find structure entity for {:?}", structure_id);
+                    continue;
+                };
+
+                let Ok(mut structure) = structure_query.get_mut(structure_entity) else {
+                    error!("Query failed to find entity {:?}", structure_entity);
+                    continue;
+                };
+
+                if *player_id != structure.player_id.0 {
+                    error!("Structure not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Validation checks and get builder and structure entities
+                let Some(builder_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find builder entity for {:?}", source_id);
+                    break;
+                };
+
+                let Ok(builder) = builder_query.get(builder_entity) else {
+                    error!("Query failed to find entity {:?}", builder_entity);
+                    break;
+                };
+
+                // Starting the upgrade and structure is not stalled upgrading
+                if *structure.state == State::None {
+                    let structure_template =
+                        ObjTemplate::get_template_by_name(structure.name.0.clone(), &templates);
+
+                    let structure_build_time = structure_template
+                        .build_time
+                        .expect("Template should have build_time field");
+
+                    structure.attrs.start_time = game_tick.0;
+                    structure.attrs.end_time = game_tick.0 + structure_build_time;
+                    structure.attrs.builder = *source_id;
+                }
+
+                // Structure State Change Event to Progressing
+                let builder_state_change = VisibleEvent::StateChangeEvent {
+                    new_state: obj::STATE_UPGRADING.to_string(),
+                };
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    builder_entity,
+                    &builder.id,
+                    &builder.player_id,
+                    &builder.pos,
+                    game_tick.0 + 1, // in the future
+                    builder_state_change,
+                );
+
+                // Structure State Change Event to Progressing
+                let structure_state_change = VisibleEvent::StateChangeEvent {
+                    new_state: obj::STATE_UPGRADING.to_string(),
+                };
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    structure.entity,
+                    &structure.id,
+                    &structure.player_id,
+                    &structure.pos,
+                    game_tick.0 + 1, // in the future
+                    structure_state_change,
+                );
+
+                // Add upgrade event for completion
+                let upgrade_event = VisibleEvent::UpgradeEvent {
+                    builder_id: builder.id.0,
+                    structure_id: structure.id.0,
+                    selected_upgrade: selected_upgrade.clone(),
+                };
+
+                map_events.new(
+                    ids.new_map_event_id(),
+                    structure_entity,
+                    &structure.id,
+                    &structure.player_id,
+                    structure.pos,
+                    game_tick.0 + 100, // in the future
+                    upgrade_event,
+                );
+
+                let packet = ResponsePacket::Upgrade { upgrade_time: 100 };
 
                 send_to_client(*player_id, packet, &clients);
             }
@@ -2531,6 +2826,14 @@ fn assign_list_system(
 
                         assignments.push(assignment);
                     }
+                }
+
+                if assignments.len() == 0 {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No villagers available to assign".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
                 }
 
                 let packet = ResponsePacket::AssignList {
@@ -3660,7 +3963,7 @@ fn buy_sell_system(
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
-                    break;
+                    continue;
                 };
 
                 let Some(item) = items.find_by_id(*item_id) else {
@@ -3710,7 +4013,7 @@ fn buy_sell_system(
                 items.transfer_quantity(item.id, hero_id, *quantity);
 
                 let mut item_filter = Vec::new();
-                item_filter.push(item::GOLD.to_string());                
+                item_filter.push(item::GOLD.to_string());
 
                 let source_items = items.get_by_owner_packet(hero_id);
                 let target_items = items.get_by_owner_packet_filter(merchant_id, item_filter);
@@ -3737,7 +4040,7 @@ fn buy_sell_system(
                 };
 
                 send_to_client(*player_id, item_transfer_packet, &clients);
-            }            
+            }
             PlayerEvent::SellItem {
                 player_id,
                 item_id,
@@ -3746,14 +4049,49 @@ fn buy_sell_system(
             } => {
                 events_to_remove.push(*event_id);
 
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    continue;
+                };
+
                 let Some(item) = items.find_by_id(*item_id) else {
                     debug!("Failed to find item: {:?}", item_id);
+                    continue;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find entity for {:?}", hero_id);
+                    continue;
+                };
+
+                let Ok(hero_pos) = pos_query.get(hero_entity).copied() else {
+                    error!("Cannot find obj for {:?}", hero_entity);
+                    continue;
+                };
+
+                let Some(merchant_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find entity for {:?}", item.owner);
+                    continue;
+                };
+
+                let Ok(merchant_pos) = pos_query.get(merchant_entity).copied() else {
+                    error!("Cannot find obj for {:?}", merchant_entity);
                     continue;
                 };
 
                 if item.owner != *player_id {
                     let packet = ResponsePacket::Error {
                         errmsg: "Item is not owned by you.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                debug!("Hero Pos: {:?} Merchant Pos: {:?}", hero_pos, merchant_pos);
+
+                if !Map::is_adjacent(hero_pos, merchant_pos) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Merchant is not nearby".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
                     continue;
@@ -3767,7 +4105,7 @@ fn buy_sell_system(
                 items.transfer_quantity(*item_id, *target_id, *quantity);
 
                 let mut item_filter = Vec::new();
-                item_filter.push(item::GOLD.to_string());    
+                item_filter.push(item::GOLD.to_string());
 
                 let source_items = items.get_by_owner_packet(item.owner);
                 let target_items = items.get_by_owner_packet_filter(*target_id, item_filter);
@@ -4161,7 +4499,7 @@ fn new_player(
     //Starting plans
     plans.add(player_id, "Crafting Tent".to_string(), 0, 0);
     plans.add(player_id, "Blacksmith".to_string(), 0, 0);
-    plans.add(player_id, "Tent".to_string(), 0, 0);
+    plans.add(player_id, "Small Tent".to_string(), 0, 0);
     plans.add(player_id, "Burrow".to_string(), 0, 0);
     plans.add(player_id, "Stockade".to_string(), 0, 0);
     plans.add(player_id, "Mine".to_string(), 0, 0);
@@ -4200,10 +4538,10 @@ fn new_player(
     let structure_attrs = StructureAttrs {
         start_time: 0,
         end_time: 0,
-        build_time: structure_template.build_time.unwrap(), // Structure must have build time
+        //build_time: structure_template.build_time.unwrap(), // Structure must have build time
         builder: -1,
         progress: 0,
-        req: structure_template.req.unwrap(),
+        //req: structure_template.req.unwrap(),
     };
 
     let structure_entity_id = commands
@@ -4232,8 +4570,6 @@ fn new_player(
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::THIRST, 70.0);
 
-     
-
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::FEED, 70.0);
 
@@ -4248,7 +4584,7 @@ fn new_player(
     let merchant = Obj {
         id: Id(merchant_id),
         player_id: PlayerId(merchant_player_id),
-        position: Position { x: 15, y: 37},
+        position: Position { x: 15, y: 37 },
         name: Name("Meager Merchant".to_string()),
         template: Template(merchant_template.template.to_string()),
         class: Class(merchant_template.class.to_string()),
@@ -4271,6 +4607,9 @@ fn new_player(
         },
     };
 
+    // Merchant Items
+    items.new(merchant_id, "Yurt Deed".to_string(), 1);
+
     // Villager obj
     let villager_id2 = ids.new_obj_id();
 
@@ -4278,16 +4617,16 @@ fn new_player(
         .spawn((
             merchant,
             Merchant {
-                home_port: Position{x: 1, y: 37},
-                target_port: Position{x: 15, y: 37},
-                dest: Position{x: 15, y: 37},
+                home_port: Position { x: 1, y: 37 },
+                target_port: Position { x: 15, y: 37 },
+                dest: Position { x: 15, y: 37 },
                 in_port_at: game_tick.0,
                 hauling: vec![villager_id2],
             },
             Thinker::build()
-            .label("Merchant")
-            .picker(Highest)
-            .when(MerchantScorer, SailToPort ),
+                .label("Merchant")
+                .picker(Highest)
+                .when(MerchantScorer, SailToPort),
         ))
         .id();
 
@@ -4355,34 +4694,41 @@ fn new_player(
     ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);
 }
 
-fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Items>) -> Vec<ResReq> {
+fn get_current_req_quantities(
+    target: ItemTransferQueryItem,
+    items: &ResMut<Items>,
+    templates: &Res<Templates>,
+) -> Vec<ResReq> {
     if target.class.0 == "structure" && *target.state == State::Founded {
-        if let Some(attrs) = target.structure_attrs {
-            let target_items = items.get_by_owner(target.id.0);
-            let mut req_items = attrs.req.clone();
+        let structure_template =
+            ObjTemplate::get_template_by_name(target.name.0.clone(), templates);
 
-            // Check current required quantity from structure items
-            for req_item in req_items.iter_mut() {
-                let mut req_quantity = req_item.quantity;
+        let target_items = items.get_by_owner(target.id.0);
+        let mut req_items = structure_template
+            .req
+            .expect("Template should have req field.");
 
-                for target_item in target_items.iter() {
-                    if req_item.req_type == target_item.name
-                        || req_item.req_type == target_item.class
-                        || req_item.req_type == target_item.subclass
-                    {
-                        if req_quantity - target_item.quantity > 0 {
-                            req_quantity -= target_item.quantity;
-                        } else {
-                            req_quantity = 0;
-                        }
+        // Check current required quantity from structure items
+        for req_item in req_items.iter_mut() {
+            let mut req_quantity = req_item.quantity;
+
+            for target_item in target_items.iter() {
+                if req_item.req_type == target_item.name
+                    || req_item.req_type == target_item.class
+                    || req_item.req_type == target_item.subclass
+                {
+                    if req_quantity - target_item.quantity > 0 {
+                        req_quantity -= target_item.quantity;
+                    } else {
+                        req_quantity = 0;
                     }
                 }
-
-                req_item.cquantity = Some(req_quantity);
             }
 
-            return req_items;
+            req_item.cquantity = Some(req_quantity);
         }
+
+        return req_items;
     }
 
     // Return empty vector
@@ -4391,62 +4737,60 @@ fn get_current_req_quantities(target: ItemTransferQueryItem, items: &ResMut<Item
 
 fn process_item_transfer_structure(
     item: Item,
-    mut structure: ItemTransferQueryItem,
-    mut items: &mut ResMut<Items>,
-    mut ids: &mut ResMut<Ids>,
+    structure: ItemTransferQueryItem,
+    items: &mut ResMut<Items>,
+    ids: &mut ResMut<Ids>,
     templates: &Res<Templates>,
 ) -> Vec<ResReq> {
-    if let Some(attrs) = structure.structure_attrs {
-        let structure_items = items.get_by_owner(structure.id.0);
-        let mut req_items = Structure::process_req_items(structure_items, attrs.req.clone());
+    let structure_items = items.get_by_owner(structure.id.0);
+    let structure_template = ObjTemplate::get_template_by_name(structure.name.0.clone(), templates);
+    let structure_req = structure_template
+        .req
+        .expect("Template should have req field");
 
-        // Find first matching req item
-        let matching_req_item = req_items.iter_mut().find(|r| {
-            r.req_type == item.name || r.req_type == item.class || r.req_type == item.subclass
-        });
+    let mut req_items = Structure::process_req_items(structure_items, structure_req);
 
-        if let Some(matching_req_item) = matching_req_item {
-            if let Some(match_req_item_cquantity) = &mut matching_req_item.cquantity {
-                if *match_req_item_cquantity > 0 {
-                    if *match_req_item_cquantity == item.quantity {
-                        // Transfer entire item
-                        items.transfer(item.id, structure.id.0);
+    // Find first matching req item
+    let matching_req_item = req_items.iter_mut().find(|r| {
+        r.req_type == item.name || r.req_type == item.class || r.req_type == item.subclass
+    });
 
-                        // Set current quantity to 0
-                        *match_req_item_cquantity = 0;
-                    } else if *match_req_item_cquantity > item.quantity {
-                        // Transfer entire item
-                        items.transfer(item.id, structure.id.0);
+    if let Some(matching_req_item) = matching_req_item {
+        if let Some(match_req_item_cquantity) = &mut matching_req_item.cquantity {
+            if *match_req_item_cquantity > 0 {
+                if *match_req_item_cquantity == item.quantity {
+                    // Transfer entire item
+                    items.transfer(item.id, structure.id.0);
 
-                        // Subtract current quantity
-                        *match_req_item_cquantity -= item.quantity;
-                    } else if *match_req_item_cquantity < item.quantity {
-                        let new_item_id = ids.new_item_id();
+                    // Set current quantity to 0
+                    *match_req_item_cquantity = 0;
+                } else if *match_req_item_cquantity > item.quantity {
+                    // Transfer entire item
+                    items.transfer(item.id, structure.id.0);
 
-                        // Split to create new item. Required here as item quantity is greater than req quantity
-                        items.split(item.id, *match_req_item_cquantity);
+                    // Subtract current quantity
+                    *match_req_item_cquantity -= item.quantity;
+                } else if *match_req_item_cquantity < item.quantity {
+                    let new_item_id = ids.new_item_id();
 
-                        // Transfer the new item
-                        items.transfer(new_item_id, structure.id.0);
+                    // Split to create new item. Required here as item quantity is greater than req quantity
+                    items.split(item.id, *match_req_item_cquantity);
 
-                        // Set current quantity to 0
-                        *match_req_item_cquantity = 0;
-                    }
+                    // Transfer the new item
+                    items.transfer(new_item_id, structure.id.0);
+
+                    // Set current quantity to 0
+                    *match_req_item_cquantity = 0;
                 }
-
-                // Return required items list
-                return req_items;
-            } else {
-                error!("Matching current quantity is unexpected None.")
             }
+
+            // Return required items list
+            return req_items;
         } else {
-            error!("Item transfer is invalid due to lack of matching req item")
+            error!("Matching current quantity is unexpected None.")
         }
     } else {
-        error!(
-            "Missing structure attributes on structure {:?}",
-            structure.id
-        );
+        error!("Item transfer is invalid due to lack of matching req item")
     }
 
     return Vec::new();

@@ -13,7 +13,8 @@ name = "siege_perilous"
 path = "src/lib.rs"
 
 [dependencies]
-bevy = { version = "0.11", default-features = false }
+bevy = { version = "0.12", default-features = false, features = ["multi-threaded"] }
+bevy_save = "0.13"
 crossbeam-channel = "0.5.1"
 tokio-tungstenite = "*"
 futures-util = { version = "0.3", default-features = false, features = ["async-await", "sink", "std"] }
@@ -31,7 +32,8 @@ tiled = "0.9.3"
 glob = "0.3.0"
 lazy_static = "1.4.0"
 itertools = "0.10.5"
-big-brain = { version = "0.18.0", features = ["trace"] }
+# big-brain = { version = "0.18.0", features = ["trace"] }
+big-brain = {git = "https://github.com/zkat/big-brain.git", rev = "6befa38"}
 pathfinding = "4.1.1"
 rand = "0.8.5"
 argon2 = "0.5.1"

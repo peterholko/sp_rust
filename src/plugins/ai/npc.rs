@@ -306,7 +306,7 @@ pub fn merchant_scorer_system(
                         score.set(0.0);
                     }
                 } else if *position == merchant.target_port {
-                    if (merchant.in_port_at + 50) <= game_tick.0 {
+                    if (merchant.in_port_at + 500) <= game_tick.0 {
 
                         // destination to home port
                         merchant.dest = merchant.home_port;

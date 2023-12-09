@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     account::{Account, Accounts},
-    templates::ResReq,
+    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil,
 };
 use crate::{
     game::{Client, Clients, HeroClassList},
@@ -62,6 +62,8 @@ enum NetworkPacket {
     InfoAttrs { id: i32 },
     #[serde(rename = "info_advance")]
     InfoAdvance { sourceid: i32 },
+    #[serde(rename = "info_upgrade")]
+    InfoUpgrade { structureid: i32 },    
     #[serde(rename = "info_tile")]
     InfoTile { x: i32, y: i32 },
     #[serde(rename = "info_inventory")]
@@ -100,6 +102,8 @@ enum NetworkPacket {
     CreateFoundation { sourceid: i32, structure: String },
     #[serde(rename = "build")]
     Build { sourceid: i32, structureid: i32 },
+    #[serde(rename = "upgrade")]
+    Upgrade { sourceid: i32, structureid: i32, selected_upgrade: String},
     #[serde(rename = "survey")]
     Survey { sourceid: i32 },
     #[serde(rename = "explore")]
@@ -157,9 +161,10 @@ pub enum ResponsePacket {
     Login {
         player: u32,
     },
-    #[serde(rename = "map")]
-    Map {
-        data: Vec<MapTile>,
+    #[serde(rename = "obj_perception")]
+    ObjPerception {
+        new_objs: Vec<MapObj>,
+        new_tiles: Vec<MapTile>,
     },
     #[serde(rename = "stats")]
     Stats {
@@ -271,6 +276,7 @@ pub enum ResponsePacket {
         effects: Option<Vec<String>>,
         build_time: Option<i32>,
         progress: Option<i32>,
+        upgrade_req: Option<Vec<ResReq>>
     },
     #[serde(rename = "info_npc")]
     InfoNPC {
@@ -302,6 +308,12 @@ pub enum ResponsePacket {
         next_rank: String,
         total_xp: i32,
         req_xp: i32,
+    },
+    #[serde(rename = "info_upgrade")]
+    InfoUpgrade {
+        id: i32,        
+        upgrade_list: Vec<UpgradeTemplate>,
+        req: Vec<ResReq>
     },
     #[serde(rename = "info_tile")]
     InfoTile {
@@ -413,6 +425,10 @@ pub enum ResponsePacket {
     #[serde(rename = "build")]
     Build {
         build_time: i32,
+    },
+    #[serde(rename = "upgrade")]
+    Upgrade {
+        upgrade_time: i32,
     },
     #[serde(rename = "attack")]
     Attack {
@@ -650,6 +666,12 @@ pub struct HireData {
     pub skills: HashMap<String, i32>
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct UpgradeTemplate {
+    pub name: String,
+    pub template: String
+}
+
 pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clients>) {
     for (_client_id, client) in clients.lock().unwrap().iter() {
         if client.player_id == player_id {
@@ -695,6 +717,28 @@ pub fn network_obj(
     network_obj
 }
 
+pub fn map_obj(
+    obj: ObjQueryMutReadOnlyItem<'_>
+) -> MapObj {
+    let network_obj = MapObj {
+        id: obj.id.0,
+        player: obj.player_id.0,
+        x: obj.pos.x,
+        y: obj.pos.y,
+        name: obj.name.0.clone(),
+        template: obj.template.0.clone(),
+        class: obj.class.0.clone(),
+        subclass: obj.subclass.0.clone(),
+        state: ObjUtil::state_to_str(obj.state.clone()),
+        vision: obj.viewshed.range,
+        image: obj.misc.image.clone(),
+        hsl: obj.misc.hsl.clone(),
+        groups: obj.misc.groups.clone(),
+    };
+
+    network_obj
+}
+
 lazy_static! {
     static ref TILESET: HashMap<String, serde_json::Value> = {
         println!("Loading tilesets");
@@ -705,6 +749,7 @@ lazy_static! {
           match entry {
               Ok(path) => {
                 let path = Path::new(&path);
+                println!("path: {:?}", path);
                 let file_stem = path.file_stem();
                 let data = std::fs::read_to_string(&path).expect("Unable to read file");
                 let json: serde_json::Value = serde_json::from_str(&data).expect("JSON does not have correct format.");
@@ -907,6 +952,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoAdvance{sourceid} => {
                                                 handle_info_advance(player_id, sourceid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoUpgrade{structureid} => {
+                                                handle_info_upgrade(player_id, structureid, client_to_game_sender.clone())
+                                            }                                            
                                             NetworkPacket::InfoTile{x, y} => {
                                                 handle_info_tile(player_id, x, y, client_to_game_sender.clone())
                                             }
@@ -952,6 +1000,9 @@ async fn handle_connection(
                                             NetworkPacket::Build{sourceid, structureid} => {
                                                 handle_build(player_id, sourceid, structureid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::Upgrade{sourceid, structureid, selected_upgrade} => {
+                                                handle_upgrade(player_id, sourceid, structureid, selected_upgrade, client_to_game_sender.clone())
+                                            }                                            
                                             NetworkPacket::Survey{sourceid} => {
                                                 handle_survey(player_id, sourceid, client_to_game_sender.clone())
                                             }
@@ -1307,6 +1358,22 @@ fn handle_info_advance(
     ResponsePacket::None
 }
 
+fn handle_info_upgrade(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoUpgrade {
+            player_id: player_id,
+            structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
 fn handle_info_tile(
     player_id: i32,
     x: i32,
@@ -1560,6 +1627,26 @@ fn handle_build(
             player_id: player_id,
             source_id: sourceid,
             structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_upgrade(
+    player_id: i32,
+    sourceid: i32,
+    structureid: i32,
+    selected_upgrade: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Upgrade {
+            player_id: player_id,
+            source_id: sourceid,
+            structure_id: structureid,
+            selected_upgrade: selected_upgrade
         })
         .expect("Could not send message");
 

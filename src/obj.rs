@@ -30,6 +30,7 @@ pub const STATE_DEAD: &str = "dead";
 pub const STATE_FOUNDED: &str = "founded";
 pub const STATE_PROGRESSING: &str = "progressing";
 pub const STATE_BUILDING: &str = "building";
+pub const STATE_UPGRADING: &str = "upgrading";
 pub const STATE_STALLED: &str = "stalled";
 pub const STATE_GATHERING: &str = "gathering";
 pub const STATE_REFINING: &str = "refining";
@@ -48,6 +49,7 @@ impl ObjUtil {
             STATE_FOUNDED => State::Founded,
             STATE_PROGRESSING => State::Progressing,
             STATE_BUILDING => State::Building,
+            STATE_UPGRADING => State::Upgrading,
             STATE_STALLED => State::Stalled,
             STATE_GATHERING => State::Gathering,
             STATE_REFINING => State::Refining,
@@ -68,6 +70,7 @@ impl ObjUtil {
             State::Founded => STATE_FOUNDED,
             State::Progressing => STATE_PROGRESSING,
             State::Building => STATE_BUILDING,
+            State::Upgrading => STATE_UPGRADING,
             State::Stalled => STATE_STALLED,
             State::Gathering => STATE_GATHERING,
             State::Refining => STATE_REFINING,

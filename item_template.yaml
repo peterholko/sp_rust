@@ -270,6 +270,12 @@
 ##### DEEDS #####
 ##################
 
+- name: Yurt Deed
+  class: Deed
+  subclass: Yurt
+  image: deed
+  weight: 1
+
 - name: Basic Blacksmith Deed
   class: Deed
   subclass: Blacksmith

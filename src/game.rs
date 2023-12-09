@@ -1,9 +1,13 @@
 use bevy::ecs::query::WorldQuery;
+use bevy::tasks::AsyncComputeTaskPool;
+//use bevy::ecs::world;
 use bevy::utils::tracing::{debug, trace};
 use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
+
+use bevy_save::prelude::*;
 
 use big_brain::prelude::{FirstToScore, Highest};
 use big_brain::thinker::Thinker;
@@ -40,8 +44,8 @@ use crate::plugins::ai::AIPlugin;
 use crate::recipe::{Recipe, RecipePlugin, Recipes};
 use crate::resource::{Resource, ResourcePlugin, Resources};
 use crate::skill::{Skill, SkillPlugin, Skills};
-use crate::structure::{Structure, StructurePlugin};
-use crate::templates::{RecipeTemplate, ResReq, Templates, TemplatesPlugin};
+use crate::structure::{Plans, Structure, StructurePlugin};
+use crate::templates::{ObjTemplate, RecipeTemplate, ResReq, Templates, TemplatesPlugin};
 use crate::villager;
 
 pub struct GamePlugin;
@@ -59,15 +63,15 @@ pub struct MapEvents(pub HashMap<i32, MapEvent>);
 
 impl MapEvents {
     pub fn add(
-        &mut self, 
-        visible_event: VisibleEvent, 
-        entity: Entity, 
-        obj_id: i32, 
-        player_id: i32, 
+        &mut self,
+        visible_event: VisibleEvent,
+        entity: Entity,
+        obj_id: i32,
+        player_id: i32,
         pos_x: i32,
         pos_y: i32,
-        run_tick: i32) {
-
+        run_tick: i32,
+    ) {
         let map_event_id = self.len() as i32 + 1000;
 
         let map_event = MapEvent {
@@ -150,6 +154,7 @@ pub enum State {
     Founded,
     Progressing,
     Building,
+    Upgrading,
     Stalled,
     Gathering,
     Refining,
@@ -160,7 +165,7 @@ pub enum State {
     Drinking,
     Eating,
     Sleeping,
-    Aboard
+    Aboard,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -191,7 +196,6 @@ pub struct Merchant {
     pub in_port_at: i32,
     pub hauling: Vec<i32>,
 }
-
 
 #[derive(Debug, Component, Clone)]
 pub struct BaseAttrs {
@@ -234,10 +238,10 @@ pub struct VillagerAttrs {
 pub struct StructureAttrs {
     pub start_time: i32,
     pub end_time: i32,
-    pub build_time: i32,
+    //pub build_time: i32,
     pub builder: i32,
     pub progress: i32,
-    pub req: Vec<ResReq>,
+    //pub req: Vec<ResReq>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -312,11 +316,12 @@ pub struct ObjWithStatsQuery {
     pub id: &'static Id,
     pub player_id: &'static PlayerId,
     pub pos: &'static Position,
-    pub class: &'static Class,
-    pub subclass: &'static Subclass,
-    pub template: &'static Template,
+    pub name: &'static mut Name,
+    pub template: &'static mut Template,
+    pub class: &'static mut Class,
+    pub subclass: &'static mut Subclass,
     pub state: &'static mut State,
-    pub misc: &'static Misc,
+    pub misc: &'static mut Misc,
     pub stats: &'static mut Stats,
 }
 
@@ -443,6 +448,11 @@ pub enum VisibleEvent {
         builder_id: i32,
         structure_id: i32,
     },
+    UpgradeEvent {
+        builder_id: i32,
+        structure_id: i32,
+        selected_upgrade: String,
+    },
     GatherEvent {
         res_type: String,
     },
@@ -507,7 +517,9 @@ impl Plugin for GamePlugin {
             .init_resource::<GameTick>()
             .add_systems(Startup, Game::setup)
             .add_systems(PreUpdate, update_game_tick)
+            .add_systems(PreUpdate, snapshot_system)
             .add_systems(Update, new_obj_event_system)
+            
             .add_systems(Update, remove_obj_event_system)
             .add_systems(Update, move_event_system)
             .add_systems(Update, state_change_event_system)
@@ -517,7 +529,7 @@ impl Plugin for GamePlugin {
             .add_systems(Update, operate_refine_event_system)
             .add_systems(Update, craft_event_system)
             .add_systems(Update, experiment_event_system)
-            .add_systems(Update, explore_event_system)
+            //.add_systems(Update, explore_event_system)
             .add_systems(Update, broadcast_event_system)
             .add_systems(Update, cooldown_event_system)
             .add_systems(Update, use_item_system)
@@ -525,6 +537,7 @@ impl Plugin for GamePlugin {
             .add_systems(Update, visible_event_system)
             .add_systems(Update, game_event_system)
             .add_systems(Update, perception_system);
+
         // .add_system(task_move_to_target_system);
     }
 }
@@ -698,7 +711,8 @@ fn move_event_system(
 
                     // Check if destination is open
                     let mut is_dst_open = true;
-                    let mut all_obj_pos: Vec<(PlayerId, Position)> = Vec::new();
+                    let mut colliding_objs: Vec<(PlayerId, Id, Position)> = Vec::new();
+                    let mut all_map_objs: Vec<network::MapObj> = Vec::new();
 
                     debug!("MoveEvent - Removing EventInProgress...");
                     commands
@@ -716,7 +730,8 @@ fn move_event_system(
                             is_dst_open = false;
                         }
 
-                        all_obj_pos.push((obj.player_id.clone(), obj.pos.clone()));
+                        colliding_objs.push((obj.player_id.clone(), obj.id.clone(), obj.pos.clone()));
+                        all_map_objs.push(network::map_obj(obj));
                     }
 
                     // Get entity and update state
@@ -745,7 +760,7 @@ fn move_event_system(
                                         obj.player_id.0,
                                         *dst_x,
                                         *dst_y,
-                                        all_obj_pos,
+                                        colliding_objs.clone(),
                                         &map,
                                     );
 
@@ -791,12 +806,27 @@ fn move_event_system(
                                     }
                                 }
 
+
+                                let mut new_objs = Vec::new();
+
+                                // Get new objs in viewshed
+                                for map_obj in all_map_objs.iter() {
+                                    
+                                    if obj.id.0 != map_obj.id {
+                                        let distance = Map::distance((obj.pos.x, obj.pos.y), (map_obj.x, map_obj.y));
+                                        if obj.viewshed.range >= distance {
+                                            new_objs.push(map_obj.clone());
+                                        }
+                                    }
+                                }
+
                                 // Only send new explored tiles
                                 if new_explored_tiles.len() > 0 {
                                     let tiles_to_send =
                                         Map::pos_to_tiles(&new_explored_tiles, &map);
-                                    let map_packet = ResponsePacket::Map {
-                                        data: tiles_to_send,
+                                    let map_packet = ResponsePacket::ObjPerception {
+                                        new_objs: new_objs,
+                                        new_tiles: tiles_to_send,
                                     };
                                     send_to_client(obj.player_id.0, map_packet, &clients);
                                 }
@@ -900,6 +930,7 @@ fn build_event_system(
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
     mut ids: ResMut<Ids>,
+    templates: Res<Templates>,
     mut query: Query<ObjWithStatsQuery>,
 ) {
     let mut events_to_remove = Vec::new();
@@ -975,6 +1006,113 @@ fn build_event_system(
                     };
 
                     visible_events.push(structure_state_event);
+                }
+                VisibleEvent::UpgradeEvent {
+                    builder_id,
+                    structure_id,
+                    selected_upgrade,
+                } => {
+                    debug!(
+                        "Processing UpgradeEvent: builder_id {:?}, structure_id: {:?} ",
+                        builder_id, structure_id
+                    );
+
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(builder_entity) = ids.get_entity(*builder_id) else {
+                        error!("Cannot find builder from {:?}", *builder_id);
+                        continue;
+                    };
+
+                    let Ok(mut builder) = query.get_mut(builder_entity) else {
+                        error!("Query failed to find entity {:?}", builder_entity);
+                        continue;
+                    };
+
+                    *builder.state = State::None;
+
+                    // None visible state change
+                    let state_change_event = VisibleEvent::StateChangeEvent {
+                        new_state: obj::STATE_NONE.to_string(),
+                    };
+
+                    // Builder visible state change
+                    let builder_visible_state_change = MapEvent {
+                        event_id: ids.new_map_event_id(),
+                        entity_id: builder_entity,
+                        obj_id: builder.id.0,
+                        player_id: builder.player_id.0,
+                        pos_x: builder.pos.x,
+                        pos_y: builder.pos.y,
+                        run_tick: game_tick.0 + 1,
+                        map_event_type: state_change_event.clone(),
+                    };
+
+                    visible_events.push(builder_visible_state_change);
+
+                    let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                        error!("Cannot find structure from {:?}", *structure_id);
+                        continue;
+                    };
+
+                    let Ok(mut structure) = query.get_mut(structure_entity) else {
+                        error!("Query failed to find entity {:?}", structure_entity);
+                        continue;
+                    };
+
+                    //Get current template
+                    let current_template =
+                        ObjTemplate::get_template_by_name(structure.name.0.clone(), &templates);
+
+                    if let Some(upgrade_to_list) = current_template.upgrade_to {
+                        if !upgrade_to_list.contains(selected_upgrade) {
+                            error!("Invalid upgrade selection");
+                            continue;
+                        }
+
+                        let upgrade_template =
+                            ObjTemplate::get_template_by_name(selected_upgrade.clone(), &templates);
+
+                        //TODO Fix image code across project
+                        let image: String = upgrade_template
+                            .template
+                            .to_lowercase()
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+
+                        *structure.state = State::None;
+                        *structure.name = Name(upgrade_template.name);
+                        *structure.template = Template(upgrade_template.template);
+                        *structure.class = Class(upgrade_template.class);
+                        *structure.subclass = Subclass(upgrade_template.subclass);
+                        structure.misc.image = image;
+
+                        //Add obj update event
+                        let obj_update_event = VisibleEvent::UpdateObjEvent {
+                            attr: obj::TEMPLATE.to_string(),
+                            value: structure.template.0.clone(),
+                        };
+
+                        // Structure visible templat change
+                        let structure_visible_template_change = MapEvent {
+                            event_id: ids.new_map_event_id(),
+                            entity_id: structure.entity,
+                            obj_id: structure.id.0,
+                            player_id: structure.player_id.0,
+                            pos_x: structure.pos.x,
+                            pos_y: structure.pos.y,
+                            run_tick: game_tick.0 + 1,
+                            map_event_type: obj_update_event.clone(),
+                        };
+
+                        visible_events.push(structure_visible_template_change);
+                    } else {
+                        error!(
+                            "Missing upgrade_to field on template for {:?}",
+                            structure.name.0.clone()
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -1128,8 +1266,7 @@ fn operate_refine_event_system(
 
                     for item_class in structure_refine_list.iter() {
                         debug!("Item class to refine: {:?}", item_class);
-                        let item_to_refine =
-                            items.get_by_class(*structure_id, item_class.clone());
+                        let item_to_refine = items.get_by_class(*structure_id, item_class.clone());
 
                         let Some(item_to_refine) = item_to_refine else {
                             continue;
@@ -1168,8 +1305,7 @@ fn operate_refine_event_system(
 
                         // Create new items
                         for produce_item in produces_list.iter() {
-                            let current_total_weight =
-                                items.get_total_weight(*structure_id);
+                            let current_total_weight = items.get_total_weight(*structure_id);
                             let item_weight = Item::get_weight_from_template(
                                 produce_item.to_string(),
                                 1,
@@ -1184,11 +1320,8 @@ fn operate_refine_event_system(
                             // Create new item
                             let new_item_id = ids.new_item_id();
 
-                            let (new_item, _merged) = items.create(
-                                *structure_id,
-                                produce_item.to_string(),
-                                1
-                            );
+                            let (new_item, _merged) =
+                                items.create(*structure_id, produce_item.to_string(), 1);
 
                             // Convert items to be updated to packets
                             let new_item_packet = Item::to_packet(new_item.clone());
@@ -1672,7 +1805,9 @@ fn use_item_system(
     game_tick: Res<GameTick>,
     clients: Res<Clients>,
     mut ids: ResMut<Ids>,
+    templates: Res<Templates>,
     mut items: ResMut<Items>,
+    mut plans: ResMut<Plans>,
     mut visible_events: ResMut<VisibleEvents>,
     mut map_events: ResMut<MapEvents>,
     mut query: Query<ObjWithStatsQuery>,
@@ -1732,6 +1867,32 @@ fn use_item_system(
 
                                 send_to_client(item_owner.player_id.0, packet, &clients);
                             }
+                        }
+                        (item::DEED, _) => {
+                            plans.add(map_event.player_id, item.subclass, 0, 0);
+
+                            items.remove_item(item.id);
+
+                            let inventory_items = items.get_by_owner_packet(item.owner);
+
+                            let info_inventory_packet: ResponsePacket =
+                                ResponsePacket::InfoInventory {
+                                    id: item.owner,
+                                    cap: ObjUtil::get_capacity(
+                                        &item_owner.template.0,
+                                        &templates.obj_templates,
+                                    ),
+                                    tw: items.get_total_weight(item.owner),
+                                    items: inventory_items,
+                                };
+
+                            send_to_client(map_event.player_id, info_inventory_packet, &clients);
+
+                            let packet = ResponsePacket::Error {
+                                errmsg: format!("You have learnt how to build a {:?}", item.name),
+                            };
+
+                            send_to_client(map_event.player_id, packet, &clients);
                         }
                         _ => {}
                     }
@@ -1889,11 +2050,7 @@ fn drink_eat_system(
                             if let Some(feed_mod) = item.attrs.get(item::FEED) {
                                 hunger.hunger -= feed_mod;
 
-                                items.update_quantity_by_class(
-                                    *obj_id,
-                                    item::FOOD.to_string(),
-                                    -1,
-                                );
+                                items.update_quantity_by_class(*obj_id, item::FOOD.to_string(), -1);
                             }
                         }
                     }
@@ -2524,9 +2681,18 @@ fn game_event_system(
                                     continue;
                                 };
 
+                                let structure_template = ObjTemplate::get_template_by_name(
+                                    structure.name.0.clone(),
+                                    &templates,
+                                );
+                                let structure_build_time = structure_template
+                                    .build_time
+                                    .expect("Template should have build_time field");
+
                                 *structure.state = State::Stalled;
+
                                 let ratio = (game_tick.0 - structure_attrs.start_time) as f32
-                                    / structure_attrs.build_time as f32;
+                                    / structure_build_time as f32;
 
                                 debug!("Ratio: {:?}", ratio);
 
@@ -2617,6 +2783,13 @@ fn game_event_system(
 
     for event_id in events_to_remove.iter() {
         game_events.remove(event_id);
+    }
+}
+
+fn snapshot_system(world: &mut World) {
+    let game_tick = world.resource::<GameTick>();
+    if game_tick.0 == 100 {
+        debug!("Making snapshot...");
     }
 }
 
@@ -2918,7 +3091,7 @@ fn get_random_adjacent_pos(
     player_id: i32,
     center_x: i32,
     center_y: i32,
-    all_obj_pos: Vec<(PlayerId, Position)>,
+    all_obj_pos: Vec<(PlayerId, Id, Position)>,
     map: &Map,
 ) -> Option<Position> {
     let mut selected_pos = None;
@@ -2952,7 +3125,7 @@ fn get_random_adjacent_pos(
 fn find_valid_pos(
     neighbours: Vec<(i32, i32)>,
     player_id: i32,
-    all_obj_pos: &Vec<(PlayerId, Position)>,
+    all_obj_pos: &Vec<(PlayerId, Id, Position)>,
     map: &Map,
 ) -> Option<Position> {
     for (x, y) in neighbours {
@@ -2968,9 +3141,9 @@ fn find_valid_pos(
     return None;
 }
 
-fn is_not_blocked(player_id: i32, x: i32, y: i32, all_obj_pos: &Vec<(PlayerId, Position)>) -> bool {
+fn is_not_blocked(_player_id: i32, x: i32, y: i32, all_obj_pos: &Vec<(PlayerId, Id, Position)>) -> bool {
     // TODO reconsider if player id should be compared
-    for (obj_player_id, obj_pos) in all_obj_pos.iter() {
+    for (_obj_player_id, _obj_id, obj_pos) in all_obj_pos.iter() {
         if x == obj_pos.x && y == obj_pos.y {
             // found blocking obj
             return false;

@@ -64,7 +64,7 @@ impl Structure {
                     if plan.structure == obj_template.name {
                         let structure = network::Structure {
                             name: obj_template.name.clone(),
-                            image: str::replace(obj_template.name.as_str(), " ", "").to_lowercase(),
+                            image: str::replace(obj_template.template.as_str(), " ", "").to_lowercase(),
                             class: obj_template.class.clone(),
                             subclass: obj_template.subclass.clone(),
                             template: obj_template.template.clone(),
@@ -103,8 +103,10 @@ impl Structure {
         return None;
     }
 
-    pub fn has_req(structure_id: i32, req_items: &mut Vec<ResReq>, items: &ResMut<Items>) -> bool {
+    pub fn has_req(structure_id: i32, source_req_items: &Vec<ResReq>, items: &ResMut<Items>) -> bool {
         let structure_items = items.get_by_owner(structure_id);
+
+        let mut req_items = source_req_items.clone();
 
         for req_item in req_items.iter_mut() {
             let mut req_quantity = req_item.quantity;

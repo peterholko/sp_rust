@@ -380,6 +380,13 @@
       quantity: 5
     - type: Hide
       quantity: 5
+  upgrade_to: [Blacksmith, Workshop]
+  upgrade_req:
+    - type: Wood
+      quantity: 10
+    - type: Hide
+      quantity: 10  
+   
 
 - name: Mine
   class: structure
@@ -397,7 +404,7 @@
     - type: Ingot
       quantity: 20
 
-- name: Tent
+- name: Small Tent
   class: structure
   subclass: shelter
   template: Tent
@@ -405,12 +412,71 @@
   base_def: 0
   build_time: 24
   capacity: 0
-  level: 0
+  level: 0  
   req: 
     - type: Wood
       quantity: 5
     - type: Hide
       quantity: 5
+  upgrade_to: [Large Tent]
+  upgrade_req:
+    - type: Wood
+      quantity: 10
+    - type: Hide
+      quantity: 10  
+
+- name: Large Tent
+  class: structure
+  subclass: shelter
+  template: Tent
+  base_hp: 100
+  base_def: 0
+  build_time: 24
+  capacity: 0
+  level: 1  
+  req: 
+    - type: Wood
+      quantity: 5
+    - type: Hide
+      quantity: 5
+  upgrade_to: []     
+
+- name: Yurt
+  class: structure
+  subclass: shelter
+  template: Tent
+  base_hp: 100
+  base_def: 0
+  build_time: 24
+  capacity: 0
+  level: 1
+  req: 
+    - type: Wood
+      quantity: 25
+    - type: Hide
+      quantity: 25
+  upgrade_to: [Large Yurt]
+  upgrade_req:
+    - type: Wood
+      quantity: 50
+    - type: Hide
+      quantity: 50 
+
+- name: Large Yurt
+  class: structure
+  subclass: shelter
+  template: Tent
+  base_hp: 100
+  base_def: 0
+  build_time: 24
+  capacity: 0
+  level: 2
+  req: 
+    - type: Wood
+      quantity: 5
+    - type: Hide
+      quantity: 5
+  upgrade_to: []     
 
 - name: Farm
   class: structure
@@ -483,10 +549,10 @@
     - type: Wood
       quantity: 1
 
-- name: Carpenter
+- name: Workshop
   class: structure
   subclass: craft
-  template: Carpenter
+  template: Workshop
   base_hp: 250
   base_def: 0
   build_time: 5
@@ -496,6 +562,11 @@
   req: 
     - type: Wood
       quantity: 1
+  upgrade_req:
+    - type: Wood
+      quantity: 10
+    - type: Hide
+      quantity: 10           
 
 - name: Mason
   class: structure
@@ -526,6 +597,11 @@
   req: 
     - type: Wood
       quantity: 1
+  upgrade_req:
+    - type: Wood
+      quantity: 10
+    - type: Hide
+      quantity: 10           
 
 - name: Tailor
   class: structure
