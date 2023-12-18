@@ -15,7 +15,8 @@ use crate::components::villager::{
     TransferDrink, TransferDrinkScorer, TransferFood, TransferFoodScorer,
 };
 
-use crate::combat::{Combat, CombatQuery};
+use crate::combat::{Combat, CombatQuery, ComboTracker};
+use crate::effect::Effects;
 use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
     is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
@@ -263,6 +264,7 @@ struct CoreQuery {
     template: &'static Template,
     state: &'static State,
     misc: &'static Misc,
+    effects: &'static Effects
 }
 
 #[derive(WorldQuery)]
@@ -329,10 +331,12 @@ impl Plugin for PlayerPlugin {
                 info_obj_system,
                 info_skills_system,
                 info_attrs_system,
-                info_advance_system))
-            .add_systems(
-                Update,
-                (
+                info_advance_system,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
                 info_upgrade_system,
                 info_tile_system,
                 info_item_system,
@@ -343,8 +347,11 @@ impl Plugin for PlayerPlugin {
                 order_follow_system,
                 order_gather_system,
                 order_refine_system,
-                order_craft_system))
-            .add_systems(Update,
+                order_craft_system,
+            ),
+        )
+        .add_systems(
+            Update,
             (
                 order_experiment_system,
                 structure_list_system,
@@ -361,8 +368,8 @@ impl Plugin for PlayerPlugin {
                 remove_system,
                 set_experiment_item_system,
                 hire_system,
-                buy_sell_system
-            )      
+                buy_sell_system,
+            ),
         )
         .insert_resource(player_events)
         .insert_resource(active_infos);
@@ -587,7 +594,7 @@ fn move_system(
 fn attack_system(
     mut commands: Commands,
     mut events: ResMut<PlayerEvents>,
-    game_tick: ResMut<GameTick>,
+    game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
     clients: Res<Clients>,
     mut map_events: ResMut<MapEvents>,
@@ -634,7 +641,7 @@ fn attack_system(
                         errmsg: "Attacker not owned by player.".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
-                    break;
+                    continue;
                 }
 
                 // Is target adjacent
@@ -643,7 +650,7 @@ fn attack_system(
                         errmsg: "Target is not adjacent.".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
-                    break;
+                    continue;
                 }
 
                 // Check if target is dead
@@ -652,17 +659,20 @@ fn attack_system(
                         errmsg: "Target is dead.".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
-                    break;
+                    continue;
                 }
 
                 // Calculate and process damage
-                let (damage, skill_updated) = Combat::process_damage(
-                    attack_type.to_string(),
-                    &attacker,
+                let (damage, combo, skill_updated) = Combat::process_damage(
+                    Combat::attack_type_to_enum(attack_type.to_string()),
+                    &mut attacker,
                     &mut target,
                     &mut commands,
                     &mut items,
                     &templates,
+                    &mut ids,
+                    &game_tick,
+                    &mut map_events
                 );
 
                 // Add visible damage event to broadcast to everyone nearby
@@ -671,6 +681,7 @@ fn attack_system(
                     game_tick.0,
                     attack_type.to_string(),
                     damage,
+                    combo,
                     &attacker,
                     &target,
                     &mut map_events,
@@ -705,6 +716,37 @@ fn attack_system(
 
                     send_to_client(*player_id, skill_updated_packet, &clients);
                 };
+            }
+            PlayerEvent::Combo {
+                player_id,
+                source_id,
+                combo_type,
+            } => {
+                events_to_remove.push(*event_id);
+
+                let Some(attacker_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find attacker entity from id: {:?}", source_id);
+                    continue;
+                };
+
+                let Ok(attacker) = query.get_mut(attacker_entity) else {
+                    error!("Cannot find attacker entity {:?}", attacker_entity);
+                    continue;
+                };
+
+                // Check if attacker is owned by player
+                if attacker.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Attacker not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                if let Some(mut combo_tracker) = attacker.combo_tracker {
+                    combo_tracker.attacks.clear();
+                    combo_tracker.target_id = -1;
+                }
             }
             _ => {}
         }
@@ -1019,13 +1061,18 @@ fn info_obj_system(
                         };
                     }
                 } else {
-                    // TODO add effects
-                    let effects = Vec::new();
-                    let mut items_packet = None;
+                    let mut items_packet = None;                    
 
                     // Add items if object is dead
                     if *obj.state == State::Dead {
                         items_packet = Some(items.get_by_owner_packet(*id));
+                    }
+
+                    let mut effects = Vec::new();
+
+                    // Get effects 
+                    for (key, _val) in obj.effects.0.iter() {
+                        effects.push(key.clone().to_str());
                     }
 
                     // Non player owned object
@@ -1039,7 +1086,7 @@ fn info_obj_system(
                         image: obj.misc.image.clone(),
                         hsl: obj.misc.hsl.clone(),
                         items: items_packet,
-                        effects: Some(effects),
+                        effects: effects,
                     };
                 }
 
@@ -1474,6 +1521,7 @@ fn info_item_system(
                             weight: item.weight,
                             equipped: item.equipped,
                             price: Some(10),
+                            attrs: None,
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
@@ -1493,12 +1541,16 @@ fn info_item_system(
                             weight: item.weight,
                             equipped: item.equipped,
                             price: Some(10),
+                            attrs: None,
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
                     }
                 } else {
                     let item = items.get_packet(*id);
+
+                    //let mut attrs = HashMap::new();
+                    //attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(17.0));
 
                     if let Some(item) = item {
                         let info_item_packet: ResponsePacket = ResponsePacket::InfoItem {
@@ -1512,6 +1564,7 @@ fn info_item_system(
                             weight: item.weight,
                             equipped: item.equipped,
                             price: None,
+                            attrs: item.attrs,
                         };
 
                         send_to_client(*player_id, info_item_packet, &clients);
@@ -1536,6 +1589,7 @@ fn info_item_system(
                         weight: item.weight,
                         equipped: item.equipped,
                         price: None,
+                        attrs: None,
                     };
 
                     send_to_client(*player_id, info_item_packet, &clients);
@@ -2355,8 +2409,8 @@ fn create_foundation_system(
                     viewshed: Viewshed { range: 0 },
                     misc: Misc {
                         image: structure_template.template.to_string().to_lowercase(),
-                        hsl: Vec::new().into(),
-                        groups: Vec::new().into(),
+                        hsl: Vec::new(),
+                        groups: Vec::new(),
                     },
                     stats: Stats {
                         hp: 1,
@@ -2367,6 +2421,7 @@ fn create_foundation_system(
                         base_speed: None,
                         base_vision: None,
                     },
+                    effects: Effects(HashMap::new())
                 };
 
                 let structure_attrs = StructureAttrs {
@@ -4216,8 +4271,8 @@ fn new_player(
         viewshed: Viewshed { range: range },
         misc: Misc {
             image: "novicewarrior".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
         },
         stats: Stats {
             hp: hero_template.base_hp.unwrap(),
@@ -4228,6 +4283,7 @@ fn new_player(
             base_speed: hero_template.base_speed,
             base_vision: hero_template.base_vision,
         },
+        effects: Effects(HashMap::new())
     };
 
     // Create hero items
@@ -4240,7 +4296,9 @@ fn new_player(
     items.new(hero_id, "Gold Coins".to_string(), 50);
 
     let mut item_attrs = HashMap::new();
-    item_attrs.insert(item::DAMAGE, 11.0);
+    item_attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(11.0));
+    item_attrs.insert(item::AttrKey::Equipable, item::AttrVal::Bool(true));
+    item_attrs.insert(item::AttrKey::DeepWoundChance, item::AttrVal::Num(0.5));
 
     items.new_with_attrs(
         hero_id,
@@ -4257,7 +4315,7 @@ fn new_player(
     );
 
     let mut item_attrs = HashMap::new();
-    item_attrs.insert(item::FEED, 100.0);
+    item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(100.0));
 
     items.new_with_attrs(
         hero_id,
@@ -4267,7 +4325,7 @@ fn new_player(
     );
 
     let mut item_attrs2 = HashMap::new();
-    item_attrs2.insert(item::HEALING, 10.0);
+    item_attrs2.insert(item::AttrKey::Healing, item::AttrVal::Num(10.0));
 
     items.new_with_attrs(hero_id, "Health Potion".to_string(), 1, item_attrs2);
 
@@ -4328,8 +4386,8 @@ fn new_player(
         viewshed: Viewshed { range: 2 },
         misc: Misc {
             image: "humanvillager1".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
         },
         stats: Stats {
             hp: villager_template.base_hp.unwrap(),
@@ -4340,6 +4398,7 @@ fn new_player(
             base_speed: villager_template.base_speed,
             base_vision: villager_template.base_vision,
         },
+        effects: Effects(HashMap::new())
     };
 
     // Villager generate skills
@@ -4521,8 +4580,8 @@ fn new_player(
         viewshed: Viewshed { range: 0 },
         misc: Misc {
             image: "burrow".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
         },
         stats: Stats {
             hp: 1,
@@ -4533,6 +4592,7 @@ fn new_player(
             base_speed: None,
             base_vision: None,
         },
+        effects: Effects(HashMap::new())
     };
 
     let structure_attrs = StructureAttrs {
@@ -4568,16 +4628,21 @@ fn new_player(
     map_events.insert(map_event_id, map_state_event);
 
     let mut item_attrs = HashMap::new();
-    item_attrs.insert(item::THIRST, 70.0);
+    item_attrs.insert(item::AttrKey::Thirst, item::AttrVal::Num(50.0));
 
     let mut item_attrs = HashMap::new();
-    item_attrs.insert(item::FEED, 70.0);
+    item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(70.0));
 
     items.new_with_attrs(structure_id, "Amitanian Grape".to_string(), 50, item_attrs);
 
-    let merchant_template = ObjTemplate::get_template("Meager Merchant".to_string(), templates);
+    // Villager obj
     let merchant_id = ids.new_obj_id();
+    let villager_id2 = ids.new_obj_id();
     let merchant_player_id = 2000;
+
+    /* let merchant_template = ObjTemplate::get_template("Meager Merchant".to_string(), templates);
+
+
 
     items.new(merchant_id, "Gold Coins".to_string(), 500);
 
@@ -4593,8 +4658,8 @@ fn new_player(
         viewshed: Viewshed { range: 2 },
         misc: Misc {
             image: "meagermerchant".to_string(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
         },
         stats: Stats {
             hp: merchant_template.base_hp.unwrap(),
@@ -4605,13 +4670,13 @@ fn new_player(
             base_speed: merchant_template.base_speed,
             base_vision: merchant_template.base_vision,
         },
+        effects: Effects(HashMap::new())
     };
 
     // Merchant Items
     items.new(merchant_id, "Yurt Deed".to_string(), 1);
 
-    // Villager obj
-    let villager_id2 = ids.new_obj_id();
+
 
     let merchant_entity_id = commands
         .spawn((
@@ -4647,7 +4712,7 @@ fn new_player(
         map_event_type: new_obj_event,
     };
 
-    map_events.insert(map_event_id, map_state_event);
+    map_events.insert(map_event_id, map_state_event); */
 
     let villager2 = Obj {
         id: Id(villager_id2),
@@ -4661,8 +4726,8 @@ fn new_player(
         viewshed: Viewshed { range: 2 },
         misc: Misc {
             image: "humanvillager2".into(),
-            hsl: Vec::new().into(),
-            groups: Vec::new().into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
         },
         stats: Stats {
             hp: villager_template.base_hp.unwrap(),
@@ -4673,6 +4738,7 @@ fn new_player(
             base_speed: villager_template.base_speed,
             base_vision: villager_template.base_vision,
         },
+        effects: Effects(HashMap::new())
     };
 
     // Villager generate skills

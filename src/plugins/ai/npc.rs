@@ -2,12 +2,14 @@ use bevy::prelude::*;
 use big_brain::prelude::*;
 use rand::Rng;
 
+use crate::combat::AttackType;
 use crate::combat::Combat;
 use crate::combat::CombatQuery;
 use crate::components::npc::MerchantScorer;
 use crate::components::npc::SailToPort;
 use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::components::villager::MoveToInProgress;
+use crate::effect::Effect;
 use crate::game::*;
 use crate::game::State;    
 use crate::item::*;
@@ -15,7 +17,8 @@ use crate::map::Map;
 use crate::templates::Templates;
 
 pub const NO_TARGET: i32 = -1;
-
+pub const BASE_MOVE_TICKS: f32 = 100.0;
+pub const BASE_SPEED: f32 = 1.0;
 
 pub fn target_scorer_system(
     target_query: Query<&VisibleTarget>,
@@ -94,6 +97,24 @@ pub fn attack_target_system(
                     continue;
                 };
 
+                // NPC is stunned, skip execution
+                if npc.effects.0.contains_key(&Effect::Stunned) {
+                    debug!("NPC is stunned");
+                    continue;
+                }
+
+                // Get NPC speed
+                let mut npc_speed = 1;
+
+                if let Some(npc_base_speed) = npc.stats.base_speed {
+                    npc_speed = npc_base_speed;
+                }
+
+                let effect_speed_mod = npc.effects.get_speed_effects(&templates);
+
+                let move_duration = (BASE_MOVE_TICKS * (BASE_SPEED / npc_speed as f32) * (1.0 / effect_speed_mod)) as i32;
+                info!("NPC move duration: {:?}", move_duration);
+
                 if target_id == NO_TARGET {
                     debug!("No target to chase, start wandering...");
                     let wander_pos_list = Map::get_neighbour_tiles(npc.pos.x, npc.pos.y, &map, &Vec::new(), true, false, false);
@@ -124,7 +145,7 @@ pub fn attack_target_system(
                                 npc.pos,
                                 game_tick.0 + 4,
                                 state_change_event,
-                            );
+                            );                            
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
@@ -139,7 +160,7 @@ pub fn attack_target_system(
                                 npc.id,
                                 npc.player_id,
                                 npc.pos,
-                                game_tick.0 + 36, // in the future
+                                game_tick.0 + move_duration, // in the future
                                 move_event,
                             );
 
@@ -170,13 +191,16 @@ pub fn attack_target_system(
                         debug!("Target is adjacent, time to attack");
 
                         // Calculate and process damage
-                        let (damage, _skill_gain) = Combat::process_damage(
-                            "quick".to_string(),
-                            &npc,
+                        let (damage, combo, _skill_gain) = Combat::process_damage(
+                            AttackType::Quick,
+                            &mut npc,
                             &mut target,
                             &mut commands,
                             &mut items,
                             &templates,
+                            &mut ids,
+                            &game_tick,
+                            &mut map_events                            
                         );
 
                         // Add visible damage event to broadcast to everyone nearby
@@ -185,6 +209,7 @@ pub fn attack_target_system(
                             game_tick.0,
                             "quick".to_string(),
                             damage,
+                            combo,
                             &npc,
                             &target,
                             &mut map_events,
@@ -257,7 +282,7 @@ pub fn attack_target_system(
                                     npc.id,
                                     npc.player_id,
                                     npc.pos,
-                                    game_tick.0 + 36, // in the future
+                                    game_tick.0 + move_duration,
                                     move_event,
                                 );
 

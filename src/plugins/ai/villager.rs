@@ -1647,14 +1647,19 @@ pub fn drink_action_system(
                         // Remove Drink Event Complete
                         commands.entity(*actor).remove::<DrinkEventCompleted>();
 
-                        let Some(thirst_mod) = drink_event_completed.item.attrs.get(item::THIRST) else {
+                        let Some(thirst_mod) = drink_event_completed.item.attrs.get(&item::AttrKey::Thirst) else {
                             debug!("Missing thirst mod on item: {:?}", drink_event_completed.item);
                             *state = ActionState::Failure;
                             continue;
                         };
 
+                        let thirst_mod_val = match thirst_mod {
+                            item::AttrVal::Num(val) => val,
+                            _ => panic!("Incorrect attribute value {:?}", thirst_mod)
+                        };
+
                         // Update thirst
-                        thirst.add(-1.0 * *thirst_mod);
+                        thirst.add(-1.0 * *thirst_mod_val);
 
                         if thirst.thirst <= 80.0 {
                             commands.entity(*actor).remove::<Dehydrated>();
@@ -2086,14 +2091,19 @@ pub fn eat_action_system(
                         // Remove Eat Event Complete
                         commands.entity(*actor).remove::<EatEventCompleted>();
 
-                        let Some(feed_mod) = eat_event_completed.item.attrs.get(item::FEED) else {
+                        let Some(feed_mod) = eat_event_completed.item.attrs.get(&item::AttrKey::Feed) else {
                             debug!("Missing feed mod on item: {:?}", eat_event_completed.item);
                             *state = ActionState::Failure;
                             continue;
                         };
 
+                        let feed_mod_val = match feed_mod {
+                            item::AttrVal::Num(val) => val,
+                            _ => panic!("Incorrect attribute value {:?}", feed_mod)
+                        };
+
                         // Update hunger
-                        hunger.update(-1.0 * *feed_mod);
+                        hunger.update(-1.0 * *feed_mod_val);
 
                         if hunger.hunger <= 80.0 {
                             commands.entity(*actor).remove::<Starving>();
@@ -2602,9 +2612,9 @@ fn find_shelter(
             *structure.pos,
             &map,
             &Vec::new(),
-            true,
-            false,
-            false
+                                                        true,
+                                            false,
+                                            false
         ) else {
             debug!("No path found to structure...");
             continue;

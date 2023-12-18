@@ -1,4 +1,6 @@
+use bevy::ecs::entity::{MapEntities, EntityMapper};
 use bevy::ecs::query::WorldQuery;
+use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::tasks::AsyncComputeTaskPool;
 //use bevy::ecs::world;
 use bevy::utils::tracing::{debug, trace};
@@ -8,6 +10,11 @@ use bevy::{
 };
 
 use bevy_save::prelude::*;
+
+use serde::{
+    de::DeserializeSeed,
+    Serialize,
+};
 
 use big_brain::prelude::{FirstToScore, Highest};
 use big_brain::thinker::Thinker;
@@ -29,8 +36,10 @@ use async_compat::Compat;
 
 use crate::account::Accounts;
 
+use crate::combat::{AttackType, Combo, Combat};
 use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
+use crate::effect::{Effects, Effect};
 use crate::encounter::Encounter;
 use crate::experiment::{self, Experiment, ExperimentPlugin, ExperimentState, Experiments};
 use crate::item::{self, Item, ItemPlugin, Items};
@@ -50,15 +59,14 @@ use crate::villager;
 
 pub struct GamePlugin;
 
-//pub type Accounts = Arc<Mutex<HashMap<i32, Account>>>;
-
 #[derive(Resource, Deref, DerefMut, Clone, Debug)]
 pub struct Clients(Arc<Mutex<HashMap<i32, Client>>>);
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct NetworkReceiver(CBReceiver<PlayerEvent>);
 
-#[derive(Resource, Deref, DerefMut, Debug)]
+#[derive(Resource, Reflect, Default, Deref, DerefMut, Debug)]
+#[reflect(Resource)]
 pub struct MapEvents(pub HashMap<i32, MapEvent>);
 
 impl MapEvents {
@@ -89,14 +97,15 @@ impl MapEvents {
     }
 }
 
-#[derive(Resource, Deref, DerefMut)]
+#[derive(Resource, Reflect, Deref, DerefMut)]
 pub struct VisibleEvents(Vec<MapEvent>);
 
-#[derive(Resource, Deref, DerefMut, Debug)]
-pub struct GameEvents(pub HashMap<i32, GameEvent>);
+
 
 #[derive(Resource, Deref, DerefMut, Debug, Default)]
 pub struct GameTick(pub i32);
+
+
 
 // Indexes for IDs
 #[derive(Resource, Clone, Debug)]
@@ -108,6 +117,8 @@ pub struct Ids {
     pub player_hero_map: HashMap<i32, i32>,
     pub obj_entity_map: HashMap<i32, Entity>,
 }
+
+
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct ExploredMap(pub HashMap<i32, Vec<(i32, i32)>>);
@@ -125,7 +136,8 @@ pub struct Client {
 #[derive(Debug, Component, Clone)]
 pub struct Id(pub i32);
 
-#[derive(Debug, Component, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Reflect, Component, Default, Clone, Copy, Eq, PartialEq, Hash)]
+#[reflect(Component)]
 pub struct Position {
     pub x: i32,
     pub y: i32,
@@ -188,7 +200,8 @@ pub struct ClassStructure; //Class Structure
 #[derive(Debug, Component)]
 pub struct AI;
 
-#[derive(Debug, Component)]
+#[derive(Debug, Reflect, Component, Default)]
+#[reflect(Component)]
 pub struct Merchant {
     pub home_port: Position,
     pub target_port: Position,
@@ -224,7 +237,7 @@ pub struct Stats {
 pub struct Misc {
     pub image: String,
     pub hsl: Vec<i32>,
-    pub groups: Vec<i32>,
+    pub groups: Vec<i32>
 }
 
 #[derive(Debug, Component, Clone)]
@@ -291,6 +304,7 @@ pub struct Obj {
     pub viewshed: Viewshed,
     pub misc: Misc,
     pub stats: Stats,
+    pub effects: Effects
 }
 
 #[derive(WorldQuery)]
@@ -401,7 +415,7 @@ pub const SPIRIT: &str = "Spirit";
 pub const STRENGTH: &str = "Strength";
 pub const TOUGHNESS: &str = "Toughness";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Reflect, Debug)]
 pub struct MapEvent {
     pub event_id: i32,
     pub entity_id: Entity,
@@ -413,7 +427,7 @@ pub struct MapEvent {
     pub map_event_type: VisibleEvent,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Reflect, Debug)]
 pub enum VisibleEvent {
     NewObjEvent {
         new_player: bool,
@@ -438,7 +452,11 @@ pub enum VisibleEvent {
         target_pos: Position,
         attack_type: String,
         damage: i32,
+        combo: Option<Combo>,
         state: String,
+    },
+    EffectExpiredEvent {
+        effect: Effect
     },
     SoundObjEvent {
         sound: String,
@@ -485,16 +503,36 @@ pub enum VisibleEvent {
     SleepEvent {
         obj_id: i32,
     },
+    NoEvent
 }
 
-#[derive(Clone, Debug)]
+#[derive(Resource, Component, Reflect, Default, Deref, DerefMut, Debug)]
+#[reflect(Resource, MapEntities)]
+pub struct GameEvents(pub HashMap<i32, GameEvent>);
+
+impl MapEntities for GameEvents {
+    fn map_entities(&mut self, entity_mapper: &mut EntityMapper) {
+
+        for (_index, game_event) in self.iter_mut() {
+            match game_event.game_event_type  {
+                GameEventType::RemoveEntity { mut entity } => {
+                    entity = entity_mapper.get_or_reserve(entity);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Clone, Reflect, Debug)]
 pub struct GameEvent {
     pub event_id: i32,
     pub run_tick: i32,
     pub game_event_type: GameEventType,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Reflect, Debug)]
+
 pub enum GameEventType {
     Login { player_id: i32 },
     SpawnNPC { npc_type: String, pos: Position },
@@ -529,8 +567,10 @@ impl Plugin for GamePlugin {
             .add_systems(Update, operate_refine_event_system)
             .add_systems(Update, craft_event_system)
             .add_systems(Update, experiment_event_system)
-            //.add_systems(Update, explore_event_system)
+            .add_systems(Update, explore_event_system)
             .add_systems(Update, broadcast_event_system)
+            .add_systems(Update, broadcast_event_system)
+            .add_systems(Update, effect_expired_event_system)
             .add_systems(Update, cooldown_event_system)
             .add_systems(Update, use_item_system)
             .add_systems(Update, drink_eat_system)
@@ -555,7 +595,7 @@ impl Game {
     pub fn setup(
         mut commands: Commands,
         mut items: ResMut<Items>,
-        mut recipes: ResMut<Recipes>,
+        mut recipes: ResMut<Recipes>,    
         mut resources: ResMut<Resources>,
         templates: Res<Templates>,
         map: Res<Map>,
@@ -1479,7 +1519,7 @@ fn craft_event_system(
                                 .remove::<EventInProgress>();
 
                             let mut item_attrs = HashMap::new();
-                            item_attrs.insert(item::DAMAGE, 11.0);
+                            item_attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(11.0));
 
                             // Create new item
                             let new_item = items.craft(
@@ -1766,6 +1806,36 @@ fn broadcast_event_system(
     }
 }
 
+fn effect_expired_event_system(
+    game_tick: Res<GameTick>,
+    mut map_events: ResMut<MapEvents>,
+    mut effect_query: Query<&mut Effects>
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::EffectExpiredEvent { effect } => {
+                    debug!("Processing EffectExpiredEvent {:?}", effect);
+                    events_to_remove.push(*map_event_id);
+
+                    if let Ok(mut effects) = effect_query.get_mut(map_event.entity_id) {
+                        debug!("Effects on {:?}", map_event.obj_id);
+                        effects.0.remove(effect);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
 fn cooldown_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
@@ -1842,7 +1912,14 @@ fn use_item_system(
 
                     match (item.class.as_str(), item.subclass.as_str()) {
                         (item::POTION, item::HEALTH) => {
-                            let healing_value = *item.attrs.get(item::HEALING).unwrap() as i32;
+                            let healing_attrval = item.attrs.get(&item::AttrKey::Healing).expect("Missing Healing attribute.");
+
+                            debug!("Healing AttrVal: {:?}", healing_attrval);
+
+                            let healing_value = match healing_attrval {
+                                item::AttrVal::Num(val) => *val as i32,
+                                _ => panic!("Invalid healing attribute value")
+                            };
 
                             if item_owner.stats.hp < item_owner.stats.base_hp {
                                 if (item_owner.stats.hp + healing_value) > item_owner.stats.base_hp
@@ -1980,8 +2057,14 @@ fn drink_eat_system(
                             .insert(DrinkEventCompleted { item: item });
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
                         if let Ok(mut thirst) = thirsts.get_mut(map_event.entity_id) {
-                            if let Some(thirst_mod) = item.attrs.get(item::THIRST) {
-                                thirst.thirst -= thirst_mod;
+                            if let Some(thirst_attrval) = item.attrs.get(&item::AttrKey::Thirst) {
+
+                                let thirst_value = match thirst_attrval {
+                                    item::AttrVal::Num(val) => *val,
+                                    _ => panic!("Invalid thirst attribute value")
+                                };
+
+                                thirst.thirst -= thirst_value;
 
                                 items.update_quantity_by_class(
                                     *obj_id,
@@ -2047,8 +2130,13 @@ fn drink_eat_system(
                             .insert(EatEventCompleted { item: item });
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
                         if let Ok(mut hunger) = hungers.get_mut(map_event.entity_id) {
-                            if let Some(feed_mod) = item.attrs.get(item::FEED) {
-                                hunger.hunger -= feed_mod;
+                            if let Some(feed_attrval) = item.attrs.get(&item::AttrKey::Feed) {
+                                let feed_value = match feed_attrval {
+                                    item::AttrVal::Num(val) => *val,
+                                    _ => panic!("Invalid feed attribute value")
+                                };
+
+                                hunger.hunger -= feed_value;
 
                                 items.update_quantity_by_class(*obj_id, item::FOOD.to_string(), -1);
                             }
@@ -2213,7 +2301,7 @@ fn visible_event_system(
 
                             if viewshed.range >= dst_distance {
                                 let change_event = network::ChangeEvents::ObjMove {
-                                    event: "obj_move".to_string(),
+                                     event: "obj_move".to_string(),
                                     obj: new_obj.to_owned(),
                                     src_x: *dst_x,
                                     src_y: *dst_y,
@@ -2230,6 +2318,7 @@ fn visible_event_system(
                             target_pos,
                             attack_type,
                             damage,
+                            combo,
                             state,
                         } => {
                             debug!("Processing DamageEvent: {:?}", &map_event.map_event_type);
@@ -2263,7 +2352,7 @@ fn visible_event_system(
                                     attacktype: attack_type.to_string(),
                                     dmg: *damage,
                                     state: state.to_string(),
-                                    combo: None,
+                                    combo: Combat::combo_to_string(combo.clone()),
                                     countered: None,
                                 };
 
@@ -2369,7 +2458,6 @@ fn visible_event_system(
         };
 
         for (_client_id, client) in clients.lock().unwrap().iter() {
-            println!("Player: {:?} == client: {:?}", player_id, client);
             if client.player_id == *player_id {
                 client
                     .sender
@@ -2382,7 +2470,6 @@ fn visible_event_system(
     // TODO reconsider these 3 loops
     for (player_id, broadcast_events) in all_broadcast_events.iter_mut() {
         for (_client_id, client) in clients.lock().unwrap().iter() {
-            println!("Player: {:?} == client: {:?}", player_id, client);
             if client.player_id == *player_id {
                 for broadcast_event in broadcast_events.iter() {
                     client
@@ -2570,7 +2657,6 @@ fn perception_system(
             };
 
             for (_client_id, client) in clients.lock().unwrap().iter() {
-                println!("Player: {:?} == client: {:?}", player_id, client);
                 if client.player_id == *player_id {
                     client
                         .sender
@@ -2788,8 +2874,35 @@ fn game_event_system(
 
 fn snapshot_system(world: &mut World) {
     let game_tick = world.resource::<GameTick>();
-    if game_tick.0 == 100 {
-        debug!("Making snapshot...");
+    if game_tick.0 % 100 == 0 {
+        debug!("Taking snapshot...");
+
+        fn serialize(snapshot: &Snapshot, registry: &AppTypeRegistry) -> String {
+            let serializer = SnapshotSerializer { snapshot, registry };
+    
+            let mut buf = Vec::new();
+            let format = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+            let mut ser = serde_json::Serializer::with_formatter(&mut buf, format);
+    
+            serializer.serialize(&mut ser).unwrap();
+    
+            String::from_utf8(buf).unwrap()
+        }
+
+        let snapshot = Snapshot::builder(world)
+            .extract_resource::<Items>()
+            .extract_resource::<MapEvents>()
+            .extract_resource::<GameEvents>()
+            /* .extract_entities_matching(|e| {
+                e.contains::<Merchant>() 
+            }) */
+            .build();
+
+        let registry = world.resource::<AppTypeRegistry>();
+
+        let output = serialize(&snapshot, registry);
+
+        //debug!("snapshot: {:?}", output);
     }
 }
 
@@ -2968,7 +3081,7 @@ impl MapEvents {
     }
 }
 
-impl GameEvents {
+/*impl GameEvents {
     pub fn new(&mut self, event_id: i32, run_tick: i32, game_event_type: GameEventType) {
         let game_event = GameEvent {
             event_id: event_id,
@@ -2979,7 +3092,7 @@ impl GameEvents {
         //self.insert(map_event_id, map_state_event);
         self.insert(event_id, game_event);
     }
-}
+}*/
 
 fn spawn_npc(
     player_id: i32,
@@ -3033,6 +3146,7 @@ fn spawn_npc(
                 base_speed: npc_template.base_speed,
                 base_vision: npc_template.base_vision,
             },
+            effects: Effects(HashMap::new())
         };
 
         let entity = commands

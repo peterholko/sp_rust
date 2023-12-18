@@ -14,11 +14,14 @@ use bevy::{
     utils::Duration,
 };
 
-use game::GamePlugin;
+use bevy_save::SavePlugins;
+use game::{GamePlugin, Position, Merchant, MapEvents, GameEvents};
+use item::Items;
 
 mod account;
 mod combat;
 mod components;
+mod effect;
 mod encounter;
 mod experiment;
 mod game;
@@ -50,5 +53,11 @@ pub fn setup() {
             filter: "big_brain=info,siege_perilous::ai=info,siege_perilous::plugins::ai=info,siege_perilious::game=debug".into(),
         })
         .add_plugins(GamePlugin)
+        .add_plugins(SavePlugins)
+        .register_type::<Position>()
+        .register_type::<Merchant>()
+        .register_type::<Items>()
+        .register_type::<MapEvents>()
+        .register_type::<GameEvents>()
         .run();
 }

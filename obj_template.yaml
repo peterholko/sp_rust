@@ -26,7 +26,7 @@
   subclass: npc
   template: Giant Rat
   family: Animal
-  base_hp: 10
+  base_hp: 1000
   base_stamina: 10000
   base_dmg: 2
   dmg_range: 6

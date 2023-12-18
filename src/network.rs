@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     account::{Account, Accounts},
-    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil,
+    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil, item,
 };
 use crate::{
     game::{Client, Clients, HeroClassList},
@@ -289,7 +289,7 @@ pub enum ResponsePacket {
         image: String,
         hsl: Vec<i32>,
         items: Option<Vec<Item>>,
-        effects: Option<Vec<String>>,
+        effects: Vec<String>,
     },
     #[serde(rename = "info_skills")]
     InfoSkills {
@@ -346,7 +346,8 @@ pub enum ResponsePacket {
         image: String,
         weight: f32,
         equipped: bool,
-        price: Option<i32>
+        price: Option<i32>,
+        attrs: Option<HashMap<item::AttrKey, item::AttrVal>>
     },
     #[serde(rename = "info_item_transfer")]
     InfoItemTransfer {
@@ -582,6 +583,7 @@ pub struct Item {
     pub image: String,
     pub weight: f32,
     pub equipped: bool,
+    pub attrs: Option<HashMap<item::AttrKey, item::AttrVal>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

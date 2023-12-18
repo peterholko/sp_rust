@@ -1,0 +1,19 @@
+# combo_template.yaml
+
+- name: Hamstring
+  attacks: [quick, quick]
+  effect: Hamstrung
+  
+- name: Gouge
+  attacks: [precise, quick]
+  effect: Stunned
+
+- name: Imtimidating Shout
+  attacks: [fierce, fierce]
+  effect: Fear
+
+
+#bombay curry chicken
+#chicken korma
+
+#bombay curry lamb 

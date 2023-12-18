@@ -1,12 +1,30 @@
 use bevy::prelude::*;
-use pathfinding::prelude::directions::S;
+use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
 
-use crate::game::Ids;
 use crate::network;
 use crate::resource::{self};
 use crate::templates::{ItemTemplate, RecipeTemplates, ResReq};
+
+#[derive(Debug, Reflect, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttrKey {
+    Damage,
+    Feed,
+    Healing,
+    Thirst,
+    Equipable,
+    Consumable,
+    DeepWoundChance
+}
+
+#[derive(Debug, Reflect, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AttrVal {
+    Num(f32),
+    Bool(bool),
+    Str(String),
+}
 
 pub const DAMAGE: &str = "Damage";
 
@@ -30,7 +48,6 @@ pub const HEALING: &str = "Healing";
 
 pub const VISIBLE: &str = "Visble";
 
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemLocation {
     Own,
@@ -39,13 +56,13 @@ pub enum ItemLocation {
     OtherStructure,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Reflect, Clone, PartialEq)]
 pub enum ExperimentItemType {
     Source,
     Reagent,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Reflect, Clone)]
 pub struct Item {
     pub id: i32,
     pub owner: i32,
@@ -57,10 +74,11 @@ pub struct Item {
     pub weight: f32,
     pub equipped: bool,
     pub experiment: Option<ExperimentItemType>,
-    pub attrs: HashMap<&'static str, f32>,
+    pub attrs: HashMap<AttrKey, AttrVal>,
 }
 
-#[derive(Resource, Debug)]
+#[derive(Resource, Reflect, Default, Debug)]
+#[reflect(Resource)]
 pub struct Items {
     items: Vec<Item>,
     item_templates: Vec<ItemTemplate>,
@@ -112,7 +130,7 @@ impl Items {
         owner: i32,
         name: String,
         quantity: i32,
-        attrs: HashMap<&'static str, f32>,
+        attrs: HashMap<AttrKey, AttrVal>,
     ) -> Item {
         let mut class = "Invalid".to_string();
         let mut subclass = "Invalid".to_string();
@@ -147,16 +165,11 @@ impl Items {
         new_item
     }
 
-    pub fn create(
-        &mut self,
-        owner: i32,
-        name: String,
-        quantity: i32,
-    ) -> (Item, bool) {
+    pub fn create(&mut self, owner: i32, name: String, quantity: i32) -> (Item, bool) {
         let mut class = "Invalid".to_string();
         let mut subclass = "Invalid".to_string();
         let mut image = "Invalid".to_string();
-        let mut weight = 0.0; 
+        let mut weight = 0.0;
 
         for item_template in self.item_templates.iter() {
             if name == item_template.name {
@@ -194,14 +207,14 @@ impl Items {
         }
     }
 
-    
     pub fn transfer(&mut self, item_id: i32, target_id: i32) {
         if let Some(transfer_index) = self.items.iter().position(|item| item.id == item_id) {
             // Immutable item to transfer
             let item_to_transfer = self.items[transfer_index].clone();
 
             if Item::can_merge(item_to_transfer.class.clone()) {
-                if let Some(merged_index) = self.items
+                if let Some(merged_index) = self
+                    .items
                     .iter()
                     .position(|item| item.owner == target_id && item.name == item_to_transfer.name)
                 {
@@ -221,15 +234,10 @@ impl Items {
         }
     }
 
-    pub fn split(
-        &mut self,
-        item_id: i32,
-        quantity: i32,        
-    ) -> Option<Item> {
+    pub fn split(&mut self, item_id: i32, quantity: i32) -> Option<Item> {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
             let new_item_id = self.items.len() as i32 + 1;
             let item = &mut self.items[index];
-
 
             if (item.quantity - quantity) > 0 {
                 item.quantity -= quantity;
@@ -245,7 +253,7 @@ impl Items {
                 let mut subclass = "Invalid".to_string();
                 let mut image = "Invalid".to_string();
                 let mut weight = 0.0;
-        
+
                 for item_template in self.item_templates.iter() {
                     if item.name == item_template.name {
                         class = item_template.class.clone();
@@ -254,7 +262,7 @@ impl Items {
                         weight = item_template.weight;
                     }
                 }
-        
+
                 let new_item = Item {
                     id: new_item_id,
                     owner: item.owner,
@@ -280,13 +288,7 @@ impl Items {
         return None;
     }
 
-    pub fn transfer_quantity(
-        &mut self,
-        item_id: i32,
-        target_id: i32,
-        quantity: i32,
-    ) {
-
+    pub fn transfer_quantity(&mut self, item_id: i32, target_id: i32, quantity: i32) {
         let result = self.split(item_id, quantity);
 
         // First call split, if successful transfer the new split item
@@ -304,7 +306,7 @@ impl Items {
         owner: i32,
         recipe_name: String,
         quantity: i32,
-        attrs: HashMap<&'static str, f32>,
+        attrs: HashMap<AttrKey, AttrVal>,
         recipe_templates: &RecipeTemplates,
         custom_name: Option<String>,  //override
         custom_image: Option<String>, //override
@@ -389,6 +391,7 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
+                    attrs: None
                 };
 
                 owner_items.push(item_packet);
@@ -398,7 +401,11 @@ impl Items {
         return owner_items;
     }
 
-    pub fn get_by_owner_packet_filter(&self, owner: i32, filter: Vec<String>) -> Vec<network::Item> {
+    pub fn get_by_owner_packet_filter(
+        &self,
+        owner: i32,
+        filter: Vec<String>,
+    ) -> Vec<network::Item> {
         let mut owner_items: Vec<network::Item> = Vec::new();
 
         for item in self.items.iter() {
@@ -414,6 +421,7 @@ impl Items {
                         image: item.image.clone(),
                         weight: item.weight,
                         equipped: item.equipped,
+                        attrs: None
                     };
 
                     owner_items.push(item_packet);
@@ -426,7 +434,8 @@ impl Items {
 
     pub fn get_packet(&self, item_id: i32) -> Option<network::Item> {
         for item in self.items.iter() {
-            if item.id == item_id {
+            if item.id == item_id {                
+
                 return Some(network::Item {
                     id: item.id,
                     owner: item.owner,
@@ -437,6 +446,7 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
+                    attrs: Some(item.attrs.clone())
                 });
             }
         }
@@ -457,14 +467,13 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
+                    attrs: None //TODO actually get the attrs
                 });
             }
         }
 
         return None;
     }
-
-
 
     pub fn get_equipped(&self, owner: i32) -> Vec<Item> {
         let mut equipped = Vec::new();
@@ -511,7 +520,11 @@ impl Items {
     }
 
     pub fn remove_quantity(&mut self, item_id: i32, quantity: i32) -> Option<Item> {
-        let index = self.items.iter().position(|item| item.id == item_id).unwrap(); // Should panic if item is not found
+        let index = self
+            .items
+            .iter()
+            .position(|item| item.id == item_id)
+            .unwrap(); // Should panic if item is not found
         let mut item = &mut self.items[index];
         if item.quantity >= quantity {
             item.quantity -= quantity;
@@ -628,10 +641,7 @@ impl Items {
         return (experiment_source, experiment_reagents, other_resources);
     }
 
-    pub fn get_experiment_source_reagents(
-        &self,
-        structure_id: i32,
-    ) -> (Option<Item>, Vec<Item>) {
+    pub fn get_experiment_source_reagents(&self, structure_id: i32) -> (Option<Item>, Vec<Item>) {
         let mut experiment_source = None;
         let mut experiment_reagents = Vec::new();
 
@@ -650,11 +660,7 @@ impl Items {
         return (experiment_source, experiment_reagents);
     }
 
-    pub fn get_experiment_reagent(
-        &self,
-        structure_id: i32,
-        subclass: String,
-    ) -> Option<i32> {
+    pub fn get_experiment_reagent(&self, structure_id: i32, subclass: String) -> Option<i32> {
         for item in self.items.iter() {
             if item.owner == structure_id
                 && item.subclass == subclass
@@ -664,7 +670,7 @@ impl Items {
             }
         }
         return None;
-    }    
+    }
 
     pub fn get_total_gold(&self, owner: i32) -> i32 {
         let mut total_gold = 0;
@@ -679,7 +685,6 @@ impl Items {
     }
 
     pub fn transfer_gold(&mut self, owner: i32, target_id: i32, quantity: i32) {
-
         let mut remainder = quantity;
         let mut transfer_items = Vec::new();
 
@@ -698,9 +703,7 @@ impl Items {
         for (transfer_item_id, transfer_quantity) in transfer_items.iter() {
             self.transfer_quantity(*transfer_item_id, target_id, *transfer_quantity);
         }
-
     }
-    
 
     // TODO reconsider returning the cloned item...
     pub fn find_by_id(&self, item_id: i32) -> Option<Item> {
@@ -718,7 +721,8 @@ impl Items {
     }
 
     fn find_by_class(&self, owner: i32, class: String) -> Option<usize> {
-        let index = self.items
+        let index = self
+            .items
             .iter()
             .position(|item| item.owner == owner && item.class == class);
         return index;
@@ -726,7 +730,6 @@ impl Items {
 }
 
 impl Item {
-
     pub fn to_packet(item: Item) -> network::Item {
         return network::Item {
             id: item.id,
@@ -738,6 +741,7 @@ impl Item {
             image: item.image.clone(),
             weight: item.weight,
             equipped: item.equipped,
+            attrs: None
         };
     }
 
@@ -750,12 +754,20 @@ impl Item {
 
     pub fn use_item(item_id: i32, status: bool, items: &mut ResMut<Items>) {}
 
-    pub fn get_items_value_by_attr(attr: &str, items: Vec<Item>) -> f32 {
+    pub fn get_items_value_by_attr(attr: &AttrKey, items: Vec<Item>) -> f32 {
         let mut item_values = 0.0;
 
         for item in items.iter() {
             match item.attrs.get(&attr) {
-                Some(item_value) => item_values += item_value,
+                Some(item_value) => {
+                    let mut val = 0.0;
+
+                    match item_value {
+                        AttrVal::Num(attr_val) => val = *attr_val,
+                        _ => val = 0.0,
+                    }
+                    item_values += val
+                }
                 None => item_values += 0.0,
             }
         }
@@ -796,10 +808,6 @@ impl Item {
         panic!("Invalid item template name {:?}", item_name);
     }
 
-
-
-
-
     pub fn is_resource(item: Item) -> bool {
         match item.class.as_str() {
             resource::ORE => true,
@@ -825,10 +833,10 @@ pub struct ItemPlugin;
 
 impl Plugin for ItemPlugin {
     fn build(&self, app: &mut App) {
-        let items = Items { 
-            items: Vec::new(), 
-            item_templates: Vec::new()
-        } ;
+        let items = Items {
+            items: Vec::new(),
+            item_templates: Vec::new(),
+        };
 
         app.insert_resource(items);
     }

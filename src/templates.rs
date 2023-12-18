@@ -15,6 +15,8 @@ pub struct Templates {
     pub skill_templates: SkillTemplates,
     pub obj_templates: ObjTemplates,
     pub recipe_templates: RecipeTemplates,
+    pub effect_templates: EffectTemplates,
+    pub combo_templates: ComboTemplates
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -99,7 +101,8 @@ impl ObjTemplate {
 /*#[derive(Debug, Resource, Deref, DerefMut)]
 pub struct ItemTemplates(Vec<ItemTemplate>);*/
 
-#[derive(Debug, Resource, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Reflect, Clone, PartialEq, Serialize, Deserialize)]
+
 pub struct ItemTemplate {
     pub name: String,
     pub class: String,
@@ -181,6 +184,60 @@ impl RecipeTemplate {
     }
 }
 
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
+pub struct EffectTemplate {
+    pub name: String,
+    pub duration: i32,
+    pub max_hp: Option<f32>,
+    pub healing: Option<f32>,
+    pub damage: Option<f32>,
+    pub speed: Option<f32>,
+    pub defense: Option<f32>,
+    pub stackable: Option<bool>,
+    pub atk: Option<f32>,
+    pub armor: Option<f32>,
+    pub lifeleech: Option<f32>,
+    pub viewshed: Option<i32>,
+    pub ignore_all_armor: Option<bool>,
+    pub instant_kill_chance: Option<f32>,
+    pub next_attack: Option<bool>
+}
+
+type EffectName = String;
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct EffectTemplates(HashMap<EffectName, EffectTemplate>);
+
+impl EffectTemplates {
+    pub fn load(&mut self, effect_templates: Vec<EffectTemplate>) {                 
+
+        for effect_template in effect_templates.iter() {
+            self.insert(effect_template.name.clone(), effect_template.clone() );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
+pub struct ComboTemplate {
+    pub name: String,
+    pub attacks: Vec<String>,
+    pub effect: String
+}
+
+type ComboName = String;
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct ComboTemplates(HashMap<ComboName, ComboTemplate>);
+
+impl ComboTemplates {
+    pub fn load(&mut self, combo_templates: Vec<ComboTemplate>) {                 
+
+        for combo_template in combo_templates.iter() {
+            self.insert(combo_template.name.clone(), combo_template.clone() );
+        }
+    }
+}
+
 /// The systems that make structures tick.
 pub struct TemplatesPlugin;
 
@@ -226,12 +283,34 @@ impl Plugin for TemplatesPlugin {
         let recipe_templates: Vec<RecipeTemplate> =
             serde_yaml::from_reader(recipe_template_file).expect("Could not read values.");
 
+        // Load effect template data
+        let effect_template_file =
+            fs::File::open("effect_template.yaml").expect("Could not open file.");
+
+        let effect_template_list: Vec<EffectTemplate> =
+            serde_yaml::from_reader(effect_template_file).expect("Could not read values.");
+
+        let mut effect_templates = EffectTemplates(HashMap::new());
+        effect_templates.load(effect_template_list);
+
+        // Load combo template data
+        let combo_template_file =
+            fs::File::open("combo_template.yaml").expect("Could not open file.");
+
+        let combo_template_list: Vec<ComboTemplate> =
+            serde_yaml::from_reader(combo_template_file).expect("Could not read values.");
+
+        let mut comobo_templates = ComboTemplates(HashMap::new());
+        comobo_templates.load(combo_template_list);
+
         let templates = Templates {
             item_templates: item_templates,
             res_templates: ResTemplates(res_templates),
             skill_templates: SkillTemplates(skill_templates),
             obj_templates: ObjTemplates(obj_templates),
             recipe_templates: RecipeTemplates(recipe_templates),
+            effect_templates: effect_templates,
+            combo_templates: comobo_templates
         };
 
         app.insert_resource(templates);
