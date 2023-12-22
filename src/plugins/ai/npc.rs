@@ -191,7 +191,7 @@ pub fn attack_target_system(
                         debug!("Target is adjacent, time to attack");
 
                         // Calculate and process damage
-                        let (damage, combo, _skill_gain) = Combat::process_damage(
+                        let (damage, combo, _skill_gain) = Combat::process_attack(
                             AttackType::Quick,
                             &mut npc,
                             &mut target,

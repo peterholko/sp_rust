@@ -10,7 +10,7 @@ use crate::game::{
     BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, PlayerId, Position, State,
     Stats, Subclass, Template, VisibleEvent, VisibleEvents,
 };
-use crate::item::{self, Item, Items, DAMAGE, AttrKey};
+use crate::item::{self, AttrKey, Item, Items, DAMAGE};
 use crate::map::Map;
 use crate::obj::ObjUtil;
 use crate::skill::{Skill, SkillUpdated, Skills};
@@ -93,7 +93,7 @@ pub struct CombatQuery {
 pub struct Combat;
 
 impl Combat {
-    pub fn process_damage(
+    pub fn process_attack(
         attack_type: AttackType,
         attacker: &mut CombatQueryItem,
         target: &mut CombatQueryItem,
@@ -112,7 +112,7 @@ impl Combat {
         let damage_range = attacker.stats.damage_range.unwrap() as f32;
         let base_damage = attacker.stats.base_damage.unwrap() as f32;
         let base_defense = target.stats.base_def as f32;
-    
+
         // 2 Get attacker & defender items
         let attacker_items = items.get_equipped(attacker.id.0);
         let defender_items = items.get_equipped(target.id.0);
@@ -127,7 +127,7 @@ impl Combat {
         // 5 Get defense effects on defender
         let defense_effects_mod = Self::get_defense_effects(target, templates);
 
-        // 6 Get damage mod from items 
+        // 6 Get damage mod from items
         let damage_from_items =
             Item::get_items_value_by_attr(&item::AttrKey::Damage, attacker_items);
 
@@ -138,32 +138,33 @@ impl Combat {
 
         // 9 Get armor from defender items
         let defense_from_items =
-        Item::get_items_value_by_attr(&item::AttrKey::Defense, defender_items);
+            Item::get_items_value_by_attr(&item::AttrKey::Defense, defender_items);
 
         // TODO 10 Check if Defender has Defensive Stance
 
-        // 11 & 12 Add attack type to attack list and check if combo is completed
-        let combo_template =
-            Self::process_combo(commands, templates, attack_type, attacker, target);
+        // 11 & 12 Add attack type to attack list
+        Self::add_attack_to_combo_tracker(commands, templates, attack_type, attacker, target);
 
         // TODO 13 Check if combo is countered
 
         // TODO 14 Remove Defense Stanc Effect if combo countered
 
         // 15 Calculate combo damage and apply combo effects
-        let (combo_quick_damage_mod, combo_precise_damage_mod, combo_fierce_damage_mod) =
-            Self::get_combo_damage(combo_template.clone());            
+        /*let (combo_quick_damage_mod, combo_precise_damage_mod, combo_fierce_damage_mod) =
+            Self::get_combo_damage(combo_template.clone());
 
-        let combo_damage_mod = combo_quick_damage_mod * combo_precise_damage_mod * combo_fierce_damage_mod;
-        debug!("combo_damage_mod: {:?}", combo_damage_mod);
+        let combo_damage_mod =
+            combo_quick_damage_mod * combo_precise_damage_mod * combo_fierce_damage_mod;
+        debug!("combo_damage_mod: {:?}", combo_damage_mod);*/
 
-        // TODO 16 Check if target is fortified 
+        // TODO 16 Check if target is fortified
 
         // 17 Roll from base damage
         let roll_damage = rng.gen_range(0.0..damage_range) + base_damage;
 
         // 18 Calculate total damage
-        let total_damage = (roll_damage + damage_from_items) * damage_effects_mod * attack_type_damage_mod * combo_damage_mod;
+        let total_damage =
+            (roll_damage + damage_from_items) * damage_effects_mod * attack_type_damage_mod;
 
         // 19 Calculate total defense
         let total_defense = (base_defense * defense_from_items) * defense_effects_mod;
@@ -177,12 +178,15 @@ impl Combat {
 
         // 23 Get terrain defense mod
         let terrain_defense_mod = Self::get_terrain_defense(*target.pos, map);
-        
+
         // TODO 24 Get monolith distance defense mod
         let monolith_distance_defense_mod = 1.0;
 
         // 25 Calculate final damage
-        let final_damage = damage_reduction * defend_stance_mod * terrain_defense_mod * monolith_distance_defense_mod;
+        let final_damage = damage_reduction
+            * defend_stance_mod
+            * terrain_defense_mod
+            * monolith_distance_defense_mod;
 
         // 26 Update Hp and check if target is dead
         target.stats.hp -= final_damage as i32;
@@ -190,7 +194,151 @@ impl Combat {
         // 27 Update stamina TODO remove static 100 value
         let attacker_stamina = attacker.stats.stamina.expect("Missing stamina stat");
         attacker.stats.stamina = Some(attacker_stamina - 100);
-        
+
+        // 28 Apply new effects from this attack
+        /*Self::apply_combo_effects(
+            combo_template.clone(),
+            templates,
+            attacker,
+            target,
+            ids,
+            game_tick,
+            map_events,
+        );*/
+
+        // 29 Check if any weapons procced
+        Self::process_weapon_procs(templates, &attacker_weapons, target);
+
+        // 30 & 31 Check if target is dead and update skills
+        let mut skill_updated = None;
+
+        debug!("Target HP: {:?}", target.stats.hp);
+
+        if target.stats.hp <= 0 {
+            *target.state = State::Dead;
+            commands.entity(target.entity).remove::<ThinkerBuilder>();
+            //commands.entity(target.entity).despawn();
+
+            for item in attacker_weapons.iter() {
+                skill_updated = Some(SkillUpdated {
+                    id: attacker.id.0,
+                    xp_type: item.subclass.to_string(),
+                    xp: target_template.kill_xp.unwrap_or(0),
+                });
+            }
+        }
+
+        debug!("Total Damage: {:?}", total_damage);
+
+        // Return combo name
+        /*let mut combo_name = None;
+
+        if let Some(combo) = combo_template {
+            combo_name = Some(combo.name);
+        }*/
+
+        return (total_damage as i32, None, skill_updated);
+    }
+
+    pub fn process_combo(
+        attacker: &mut CombatQueryItem,
+        target: &mut CombatQueryItem,
+        commands: &mut Commands,
+        items: &mut ResMut<Items>,
+        templates: &Res<Templates>,
+        map: &Res<Map>,
+        mut ids: &mut ResMut<Ids>,
+        game_tick: &Res<GameTick>,
+        mut map_events: &mut ResMut<MapEvents>,
+    ) -> (i32, Option<String>, Option<SkillUpdated>) {
+        let mut rng = rand::thread_rng();
+
+        // 1 Get Base Damage, DamageRange, BaseDef and DefHp
+        let target_template = ObjTemplate::get_template(target.template.0.clone(), &templates);
+        let damage_range = attacker.stats.damage_range.unwrap() as f32;
+        let base_damage = attacker.stats.base_damage.unwrap() as f32;
+        let base_defense = target.stats.base_def as f32;
+
+        // 2 Get attacker & defender items
+        let attacker_items = items.get_equipped(attacker.id.0);
+        let defender_items = items.get_equipped(target.id.0);
+
+        // #3 Get attacker weapons
+        let attacker_weapons = items.get_equipped_weapons(attacker.id.0);
+        debug!("Attacker_weapons: {:?}", attacker_weapons);
+
+        // 4 Get damage effects on attacker
+        let damage_effects_mod = Self::get_damage_effects(attacker, templates);
+
+        // 5 Get defense effects on defender
+        let defense_effects_mod = Self::get_defense_effects(target, templates);
+
+        // 6 Get damage mod from items
+        let damage_from_items =
+            Item::get_items_value_by_attr(&item::AttrKey::Damage, attacker_items);
+
+        // TODO 8 Get damage reduction from Defensive action
+
+        // 9 Get armor from defender items
+        let defense_from_items =
+            Item::get_items_value_by_attr(&item::AttrKey::Defense, defender_items);
+
+        // TODO 10 Check if Defender has Defensive Stance
+
+        // 11 & 12 Add attack type to attack list and check if combo is completed
+        let combo_template = Self::find_combo(commands, templates, attacker, target);
+        debug!("process_combo::combo_template: {:?}", combo_template);
+
+        // TODO 13 Check if combo is countered
+
+        // TODO 14 Remove Defense Stanc Effect if combo countered
+
+        // 15 Calculate combo damage and apply combo effects
+        let (combo_quick_damage_mod, combo_precise_damage_mod, combo_fierce_damage_mod) =
+            Self::get_combo_damage(combo_template.clone());
+
+        let combo_damage_mod =
+            combo_quick_damage_mod * combo_precise_damage_mod * combo_fierce_damage_mod;
+        debug!("combo_damage_mod: {:?}", combo_damage_mod);
+
+        // TODO 16 Check if target is fortified
+
+        // 17 Roll from base damage
+        let roll_damage = rng.gen_range(0.0..damage_range) + base_damage;
+
+        // 18 Calculate total damage
+        let total_damage =
+            (roll_damage + damage_from_items) * damage_effects_mod * combo_damage_mod;
+
+        // 19 Calculate total defense
+        let total_defense = (base_defense * defense_from_items) * defense_effects_mod;
+
+        // 20 & 21 Calculate damage defense reduction
+        let defense_reduction = total_defense / (total_defense + 50.0);
+        let damage_reduction = total_damage * (1.0 - defense_reduction);
+
+        // TODO 22 Get defense stance mod
+        let defend_stance_mod = 1.0;
+
+        // 23 Get terrain defense mod
+        let terrain_defense_mod = Self::get_terrain_defense(*target.pos, map);
+
+        // TODO 24 Get monolith distance defense mod
+        let monolith_distance_defense_mod = 1.0;
+
+        // 25 Calculate final damage
+        let final_damage = damage_reduction
+            * defend_stance_mod
+            * terrain_defense_mod
+            * monolith_distance_defense_mod;
+
+        // 26 Update Hp and check if target is dead
+        target.stats.hp -= final_damage as i32;
+
+        // 27 Update stamina TODO remove static 100 value
+        let attacker_stamina = attacker.stats.stamina.expect("Missing stamina stat");
+        attacker.stats.stamina = Some(attacker_stamina - 100);
+
         // 28 Apply new effects from this attack
         Self::apply_combo_effects(
             combo_template.clone(),
@@ -204,7 +352,6 @@ impl Combat {
 
         // 29 Check if any weapons procced
         Self::process_weapon_procs(templates, &attacker_weapons, target);
-
 
         // 30 & 31 Check if target is dead and update skills
         let mut skill_updated = None;
@@ -272,7 +419,7 @@ impl Combat {
 
                         let effects = &mut target.effects.0;
                         effects.insert(effect, (effect_template.duration, 1.0, 1));
-    
+
                         debug!("effects: {:?}", effects);
                     }
                 }
@@ -280,45 +427,27 @@ impl Combat {
         }
     }
 
-    fn process_combo(
+    fn add_attack_to_combo_tracker(
         commands: &mut Commands,
         templates: &Res<Templates>,
         attack_type: AttackType,
         attacker: &mut CombatQueryItem,
         target: &mut CombatQueryItem,
-    ) -> Option<ComboTemplate> {
-        let mut combo = None;
+    ) {
         // Only allow combos for players
         if attacker.player_id.0 < 1000 {
             debug!("check combo_tracker: {:?}", attacker.combo_tracker);
 
             if let Some(combo_tracker) = &mut attacker.combo_tracker {
                 // Add to existing combo tracker only if same target id
+                // TODO reconsider if this is a good idea
                 if combo_tracker.target_id == target.id.0 {
                     combo_tracker.attacks.push(attack_type);
-
-                    let mut attacks_str = Vec::new();
-
-                    for attack in combo_tracker.attacks.iter() {
-                        attacks_str.push(attack.clone().to_str());
-                    }
-
-                    debug!("attack_str: {:?}", attacks_str);
-
-                    for (_combo_name, combo_template) in templates.combo_templates.iter() {
-                        debug!("combo_template.attacks: {:?}", combo_template.attacks);
-                        if combo_template.attacks == attacks_str {
-                            combo = Some(combo_template.clone());
-                            combo_tracker.attacks.clear();
-                            break;
-                        }
-                    }
                 } else {
                     combo_tracker.target_id = target.id.0;
                     combo_tracker.attacks = vec![attack_type];
                 }
             } else {
-
                 let combo_tracker = ComboTracker {
                     target_id: target.id.0,
                     attacks: vec![attack_type],
@@ -328,6 +457,38 @@ impl Combat {
             }
 
             debug!("post check combo_tracker {:?}", attacker.combo_tracker);
+        }
+    }
+
+    fn find_combo(
+        commands: &mut Commands,
+        templates: &Res<Templates>,
+        attacker: &mut CombatQueryItem,
+        target: &mut CombatQueryItem,
+    ) -> Option<ComboTemplate> {
+        let mut combo = None;
+        // Only allow combos for players
+        if attacker.player_id.0 < 1000 {
+            debug!("check combo_tracker: {:?}", attacker.combo_tracker);
+
+            if let Some(combo_tracker) = &mut attacker.combo_tracker {
+                let mut attacks_str = Vec::new();
+
+                for attack in combo_tracker.attacks.iter() {
+                    attacks_str.push(attack.clone().to_str());
+                }
+
+                debug!("attack_str: {:?}", attacks_str);
+
+                for (_combo_name, combo_template) in templates.combo_templates.iter() {
+                    debug!("combo_template.attacks: {:?}", combo_template.attacks);
+                    if combo_template.attacks == attacks_str {
+                        combo = Some(combo_template.clone());
+                        combo_tracker.attacks.clear();
+                        break;
+                    }
+                }
+            }
         }
 
         return combo;
@@ -485,7 +646,7 @@ impl Combat {
             AttackType::Quick => 0.5,
             AttackType::Precise => 1.0,
             AttackType::Fierce => 1.5,
-            _ => 0.0
+            _ => 0.0,
         }
     }
 

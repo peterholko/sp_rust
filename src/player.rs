@@ -665,7 +665,7 @@ fn attack_system(
                 }
 
                 // Calculate and process damage
-                let (damage, combo, skill_updated) = Combat::process_damage(
+                let (damage, combo, skill_updated) = Combat::process_attack(
                     Combat::attack_type_to_enum(attack_type.to_string()),
                     &mut attacker,
                     &mut target,
@@ -776,8 +776,7 @@ fn attack_system(
                 }
 
                 // Calculate and process damage
-                let (damage, combo, skill_updated) = Combat::process_damage(
-                    Combat::attack_type_to_enum(attack_type.to_string()),
+                let (damage, combo, skill_updated) = Combat::process_combo(
                     &mut attacker,
                     &mut target,
                     &mut commands,
@@ -789,11 +788,13 @@ fn attack_system(
                     &mut map_events
                 );
 
+                debug!("Found combo: {:?}", combo);
+
                 // Add visible damage event to broadcast to everyone nearby
                 Combat::add_damage_event(
                     ids.new_map_event_id(),
                     game_tick.0,
-                    attack_type.to_string(),
+                    "combo".to_string(),
                     damage,
                     combo,
                     &attacker,
@@ -804,7 +805,7 @@ fn attack_system(
                 // Response to client with attack response packet
                 let packet = ResponsePacket::Attack {
                     sourceid: *source_id,
-                    attacktype: attack_type.clone(),
+                    attacktype: "combo".to_string(),
                     cooldown: 5,
                     stamina_cost: 5,
                 };
