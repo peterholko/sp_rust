@@ -191,10 +191,11 @@ pub struct EffectTemplate {
     pub max_hp: Option<f32>,
     pub healing: Option<f32>,
     pub damage: Option<f32>,
+    pub damage_over_time: Option<f32>,
     pub speed: Option<f32>,
+    pub attack_speed: Option<f32>,
     pub defense: Option<f32>,
     pub stackable: Option<bool>,
-    pub atk: Option<f32>,
     pub armor: Option<f32>,
     pub lifeleech: Option<f32>,
     pub viewshed: Option<i32>,
@@ -221,7 +222,10 @@ impl EffectTemplates {
 pub struct ComboTemplate {
     pub name: String,
     pub attacks: Vec<String>,
-    pub effect: String
+    pub effects: Vec<String>,
+    pub quick_damage: f32,
+    pub precise_damage: f32,
+    pub fierce_damage: f32
 }
 
 type ComboName = String;

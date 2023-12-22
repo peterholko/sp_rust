@@ -53,7 +53,7 @@ enum NetworkPacket {
         targetid: i32,
     },
     #[serde(rename = "combo")]
-    Combo { sourceid: i32, combotype: String },
+    Combo { sourceid: i32, targetid: i32, combotype: String },
     #[serde(rename = "info_obj")]
     InfoObj { id: i32 },
     #[serde(rename = "info_skills")]
@@ -939,8 +939,8 @@ async fn handle_connection(
                                             NetworkPacket::Attack{attacktype, sourceid, targetid} => {
                                                 handle_attack(player_id, attacktype, sourceid, targetid, client_to_game_sender.clone())
                                             }
-                                            NetworkPacket::Combo{sourceid, combotype} => {
-                                                handle_combo(player_id, sourceid, combotype, client_to_game_sender.clone())
+                                            NetworkPacket::Combo{sourceid, targetid, combotype} => {
+                                                handle_combo(player_id, sourceid, targetid, combotype, client_to_game_sender.clone())
                                             }
                                             NetworkPacket::InfoObj{id} => {
                                                 handle_info_obj(player_id, id, client_to_game_sender.clone())
@@ -1282,6 +1282,7 @@ fn handle_attack(
 fn handle_combo(
     player_id: i32,
     sourceid: i32,
+    targetid: i32,
     combotype: String,
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
@@ -1289,6 +1290,7 @@ fn handle_combo(
         .send(PlayerEvent::Combo {
             player_id: player_id,
             source_id: sourceid,
+            target_id: targetid,
             combo_type: combotype,
         })
         .expect("Could not send message");

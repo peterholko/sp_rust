@@ -2,7 +2,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
+use std::slice::Iter;
 
+use crate::effect::Effect;
 use crate::network;
 use crate::resource::{self};
 use crate::templates::{ItemTemplate, RecipeTemplates, ResReq};
@@ -10,12 +12,38 @@ use crate::templates::{ItemTemplate, RecipeTemplates, ResReq};
 #[derive(Debug, Reflect, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttrKey {
     Damage,
+    Defense,
     Feed,
     Healing,
     Thirst,
     Equipable,
     Consumable,
-    DeepWoundChance
+    DeepWoundChance,
+    BleedChance,
+    ConcussedChance,
+    DisarmedChance,
+}
+
+impl AttrKey {
+    pub fn proc_iter() -> Iter<'static, AttrKey> {
+        static PROC_ATTR_KEYS: [AttrKey; 4] = [
+            AttrKey::DeepWoundChance,
+            AttrKey::BleedChance,
+            AttrKey::ConcussedChance,
+            AttrKey::DisarmedChance,
+        ];
+        PROC_ATTR_KEYS.iter()
+    }
+
+    pub fn proc_to_effect(self) -> Effect {
+        match self {
+            AttrKey::DeepWoundChance => Effect::DeepWound,
+            AttrKey::BleedChance => Effect::Bleed,
+            AttrKey::ConcussedChance => Effect::Concussed,
+            AttrKey::DisarmedChance => Effect::Disarmed, 
+            _ => panic!("Invalid Proc AttrKey, could not find Effect")
+        }
+    }
 }
 
 #[derive(Debug, Reflect, Clone, PartialEq, Serialize, Deserialize)]
@@ -27,6 +55,7 @@ pub enum AttrVal {
 }
 
 pub const DAMAGE: &str = "Damage";
+pub const DEFENSE: &str = "Defense";
 
 pub const WATER: &str = "Water";
 pub const THIRST: &str = "Thirst";
@@ -391,7 +420,7 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
-                    attrs: None
+                    attrs: None,
                 };
 
                 owner_items.push(item_packet);
@@ -421,7 +450,7 @@ impl Items {
                         image: item.image.clone(),
                         weight: item.weight,
                         equipped: item.equipped,
-                        attrs: None
+                        attrs: None,
                     };
 
                     owner_items.push(item_packet);
@@ -434,8 +463,7 @@ impl Items {
 
     pub fn get_packet(&self, item_id: i32) -> Option<network::Item> {
         for item in self.items.iter() {
-            if item.id == item_id {                
-
+            if item.id == item_id {
                 return Some(network::Item {
                     id: item.id,
                     owner: item.owner,
@@ -446,7 +474,7 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
-                    attrs: Some(item.attrs.clone())
+                    attrs: Some(item.attrs.clone()),
                 });
             }
         }
@@ -467,7 +495,7 @@ impl Items {
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
-                    attrs: None //TODO actually get the attrs
+                    attrs: None, //TODO actually get the attrs
                 });
             }
         }
@@ -741,7 +769,7 @@ impl Item {
             image: item.image.clone(),
             weight: item.weight,
             equipped: item.equipped,
-            attrs: None
+            attrs: None,
         };
     }
 

@@ -198,6 +198,7 @@ pub fn attack_target_system(
                             &mut commands,
                             &mut items,
                             &templates,
+                            &map,
                             &mut ids,
                             &game_tick,
                             &mut map_events                            

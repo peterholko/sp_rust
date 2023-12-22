@@ -2,18 +2,52 @@
 
 - name: Hamstring
   attacks: [quick, quick]
-  effect: Hamstrung
+  effects: [Hamstrung]
+  quick_damage: 1.0
+  precise_damage: 1.0
+  fierce_damage: 1.0
   
 - name: Gouge
   attacks: [precise, quick]
-  effect: Stunned
+  effects: [Stunned]
+  quick_damage: 1.0
+  precise_damage: 1.0
+  fierce_damage: 1.0
 
 - name: Imtimidating Shout
   attacks: [fierce, fierce]
-  effect: Fear
+  effects: [Fear]
+  quick_damage: 1.0
+  precise_damage: 1.0
+  fierce_damage: 1.0  
+
+- name: Shrouded Slash
+  attacks: [precise, fierce, quick]
+  effects: [Expose Armor]
+  quick_damage: 3.0
+  precise_damage: 1.0
+  fierce_damage: 1.0  
+
+- name: Shatter Cleave
+  attacks: [quick, fierce, fierce]
+  effects: [Bleed]
+  quick_damage: 1.0
+  precise_damage: 1.0
+  fierce_damage: 3.5
+
+- name: Massive Pummel
+  attacks: [quick, precise, fierce, precise]
+  effects: [Concussed]
+  quick_damage: 1.0
+  precise_damage: 5.0
+  fierce_damage: 1.0
+
+- name: Nightmare Strike
+  attacks: [fierce, precise, quick, fierce]
+  effects: []
+  quick_damage: 1.0
+  precise_damage: 1.0
+  fierce_damage: 8.0
 
 
-#bombay curry chicken
-#chicken korma
 
-#bombay curry lamb 

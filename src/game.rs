@@ -225,7 +225,9 @@ pub struct BaseAttrs {
 #[derive(Debug, Component, Clone)]
 pub struct Stats {
     pub hp: i32,
+    pub stamina: Option<i32>,
     pub base_hp: i32,
+    pub base_stamina: Option<i32>,
     pub base_def: i32,
     pub damage_range: Option<i32>,
     pub base_damage: Option<i32>,
@@ -452,7 +454,7 @@ pub enum VisibleEvent {
         target_pos: Position,
         attack_type: String,
         damage: i32,
-        combo: Option<Combo>,
+        combo: Option<String>,
         state: String,
     },
     EffectExpiredEvent {
@@ -2332,7 +2334,7 @@ fn visible_event_system(
                                     attacktype: attack_type.to_string(),
                                     dmg: *damage,
                                     state: state.to_string(),
-                                    combo: None,
+                                    combo: combo.clone(),
                                     countered: None,
                                 };
 
@@ -2352,7 +2354,7 @@ fn visible_event_system(
                                     attacktype: attack_type.to_string(),
                                     dmg: *damage,
                                     state: state.to_string(),
-                                    combo: Combat::combo_to_string(combo.clone()),
+                                    combo: combo.clone(),
                                     countered: None,
                                 };
 
@@ -3140,6 +3142,8 @@ fn spawn_npc(
             stats: Stats {
                 hp: npc_template.base_hp.unwrap(),
                 base_hp: npc_template.base_hp.unwrap(),
+                stamina: npc_template.base_stamina,
+                base_stamina: npc_template.base_stamina,
                 base_def: npc_template.base_def.unwrap(),
                 base_damage: npc_template.base_dmg,
                 damage_range: npc_template.dmg_range,

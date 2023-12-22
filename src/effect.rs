@@ -82,15 +82,15 @@ pub struct Effects(pub HashMap<Effect, (Duration, Amplifier, Stacks)>);
 impl Effects {
 
         // Value returned is between 0.0 and 1.0
-        fn get_attack_effects(self, templates: &Res<Templates>) -> f32 {
+        fn get_damage_effects(self, templates: &Res<Templates>) -> f32 {
             for (effect, (_duration, _amplifier, _stacks)) in self.0.iter() {
                 let effect_template = templates
                     .effect_templates
                     .get(&effect.clone().to_str())
                     .expect("Effect missing from templates");
     
-                if let Some(effect_atk) = effect_template.atk {
-                    let modifier = 1.0 + effect_atk; // atk is negative in the template file
+                if let Some(effect_damage) = effect_template.damage {
+                    let modifier = 1.0 + effect_damage; // atk is negative in the template file
                     return modifier;
                 }
             }

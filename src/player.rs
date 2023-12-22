@@ -64,6 +64,7 @@ pub enum PlayerEvent {
     Combo {
         player_id: i32,
         source_id: i32,
+        target_id: i32,
         combo_type: String,
     },
     Gather {
@@ -601,6 +602,7 @@ fn attack_system(
     mut items: ResMut<Items>,
     mut skills: ResMut<Skills>,
     templates: Res<Templates>,
+    map: Res<Map>,
     mut query: Query<CombatQuery>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
@@ -670,6 +672,7 @@ fn attack_system(
                     &mut commands,
                     &mut items,
                     &templates,
+                    &map,
                     &mut ids,
                     &game_tick,
                     &mut map_events
@@ -691,7 +694,7 @@ fn attack_system(
                 let packet = ResponsePacket::Attack {
                     sourceid: *source_id,
                     attacktype: attack_type.clone(),
-                    cooldown: 20,
+                    cooldown: 5,
                     stamina_cost: 5,
                 };
 
@@ -720,11 +723,115 @@ fn attack_system(
             PlayerEvent::Combo {
                 player_id,
                 source_id,
+                target_id, 
                 combo_type,
             } => {
                 events_to_remove.push(*event_id);
 
                 let Some(attacker_entity) = ids.get_entity(*source_id) else {
+                    error!("Cannot find attacker entity from id: {:?}", source_id);
+                    continue;
+                };
+
+                let Some(target_entity) = ids.get_entity(*target_id) else {
+                    error!("Cannot find target entity from id: {:?}", target_id);
+                    continue;
+                };
+
+                let entities = [attacker_entity, target_entity];
+
+                let Ok([mut attacker, mut target]) = query.get_many_mut(entities) else {
+                    error!(
+                        "Cannot find attacker or target from entities {:?}",
+                        entities
+                    );
+                    continue;
+                };
+
+                // Check if attacker is owned by player
+                if attacker.player_id.0 != *player_id {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Attacker not owned by player.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Is target adjacent
+                if Map::dist(*attacker.pos, *target.pos) > 1 {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Target is not adjacent.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Check if target is dead
+                if *target.state == State::Dead {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Target is dead.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                // Calculate and process damage
+                let (damage, combo, skill_updated) = Combat::process_damage(
+                    Combat::attack_type_to_enum(attack_type.to_string()),
+                    &mut attacker,
+                    &mut target,
+                    &mut commands,
+                    &mut items,
+                    &templates,
+                    &map,
+                    &mut ids,
+                    &game_tick,
+                    &mut map_events
+                );
+
+                // Add visible damage event to broadcast to everyone nearby
+                Combat::add_damage_event(
+                    ids.new_map_event_id(),
+                    game_tick.0,
+                    attack_type.to_string(),
+                    damage,
+                    combo,
+                    &attacker,
+                    &target,
+                    &mut map_events,
+                );
+
+                // Response to client with attack response packet
+                let packet = ResponsePacket::Attack {
+                    sourceid: *source_id,
+                    attacktype: attack_type.clone(),
+                    cooldown: 5,
+                    stamina_cost: 5,
+                };
+
+                send_to_client(*player_id, packet, &clients);
+
+                debug!("Skill gain: {:?}", skill_updated);
+
+                if let Some(skill_updated) = skill_updated {
+                    Skill::update(
+                        attacker.id.0,
+                        skill_updated.xp_type.clone(),
+                        skill_updated.xp,
+                        &mut skills,
+                        &templates.skill_templates,
+                    );
+
+                    let skill_updated_packet = ResponsePacket::Xp {
+                        id: attacker.id.0,
+                        xp_type: skill_updated.xp_type,
+                        xp: skill_updated.xp,
+                    };
+
+                    send_to_client(*player_id, skill_updated_packet, &clients);
+                };
+
+                /*let Some(attacker_entity) = ids.get_entity(*source_id) else {
                     error!("Cannot find attacker entity from id: {:?}", source_id);
                     continue;
                 };
@@ -746,7 +853,7 @@ fn attack_system(
                 if let Some(mut combo_tracker) = attacker.combo_tracker {
                     combo_tracker.attacks.clear();
                     combo_tracker.target_id = -1;
-                }
+                }*/
             }
             _ => {}
         }
@@ -2415,6 +2522,8 @@ fn create_foundation_system(
                     stats: Stats {
                         hp: 1,
                         base_hp: structure_template.base_hp.unwrap(), // Convert option to non-option
+                        stamina: None,
+                        base_stamina: None,
                         base_def: 0,
                         base_damage: None,
                         damage_range: None,
@@ -4277,6 +4386,8 @@ fn new_player(
         stats: Stats {
             hp: hero_template.base_hp.unwrap(),
             base_hp: hero_template.base_hp.unwrap(),
+            stamina: hero_template.base_stamina,
+            base_stamina: hero_template.base_stamina,
             base_def: hero_template.base_def.unwrap(),
             base_damage: hero_template.base_dmg,
             damage_range: hero_template.dmg_range,
@@ -4298,7 +4409,7 @@ fn new_player(
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(11.0));
     item_attrs.insert(item::AttrKey::Equipable, item::AttrVal::Bool(true));
-    item_attrs.insert(item::AttrKey::DeepWoundChance, item::AttrVal::Num(0.5));
+    item_attrs.insert(item::AttrKey::DeepWoundChance, item::AttrVal::Num(0.9));
 
     items.new_with_attrs(
         hero_id,
@@ -4392,6 +4503,8 @@ fn new_player(
         stats: Stats {
             hp: villager_template.base_hp.unwrap(),
             base_hp: villager_template.base_hp.unwrap(),
+            stamina: villager_template.base_stamina,
+            base_stamina: villager_template.base_stamina,
             base_def: villager_template.base_def.unwrap(),
             base_damage: villager_template.base_dmg,
             damage_range: villager_template.dmg_range,
@@ -4586,6 +4699,8 @@ fn new_player(
         stats: Stats {
             hp: 1,
             base_hp: structure_template.base_hp.unwrap(), // Convert option to non-option
+            stamina: None,
+            base_stamina: None,
             base_def: 0,
             base_damage: None,
             damage_range: None,
@@ -4730,9 +4845,11 @@ fn new_player(
             groups: Vec::new(),
         },
         stats: Stats {
-            hp: villager_template.base_hp.unwrap(),
-            base_hp: villager_template.base_hp.unwrap(),
-            base_def: villager_template.base_def.unwrap(),
+            hp: villager_template.base_hp.expect("Missing hp stat"),
+            base_hp: villager_template.base_hp.expect("Missing base_hp stat"),
+            stamina: villager_template.base_stamina,
+            base_stamina: villager_template.base_stamina,
+            base_def: villager_template.base_def.expect("Missing base_def stat"),
             base_damage: villager_template.base_dmg,
             damage_range: villager_template.dmg_range,
             base_speed: villager_template.base_speed,
