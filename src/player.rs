@@ -522,6 +522,7 @@ fn move_system(
                 // Remove events that are cancellable
                 let mut events_to_remove = Vec::new();
 
+                // TODO move this into a function
                 for (map_event_id, map_event) in map_events.iter() {
                     if map_event.obj_id == hero_id {
                         match map_event.map_event_type {
@@ -924,7 +925,8 @@ fn gather_system(
                     gather_event,
                 );
 
-                debug!("Skills: {:?}", skills);
+                let packet = ResponsePacket::Gather { gather_time: 8 };
+                send_to_client(*player_id, packet, &clients);
             }
             PlayerEvent::NearbyResources { player_id } => {
                 debug!("PlayerEvent::NearbyResources");
@@ -1746,6 +1748,11 @@ fn item_transfer_system(
                 events_to_remove.push(*event_id);
 
                 if let Some(item) = items.find_by_id(*item_id) {
+                    debug!("Item found: {:?}", item);                   
+
+                    debug!("Entity ID map: {:?}", ids.obj_entity_map);
+
+
                     let Some(owner_entity) = ids.get_entity(item.owner) else {
                         error!("Cannot find owner entity from id: {:?}", item.owner);
                         continue;
@@ -1816,13 +1823,14 @@ fn item_transfer_system(
                         //let attrs = target.structure_attrs;
 
                         // Check if item is required for structure construction
+
                         if !Item::is_req(item.clone(), structure_req) {
                             info!("Item not required for construction: {:?}", item);
                             let packet = ResponsePacket::Error {
                                 errmsg: "Item not required for construction.".to_string(),
                             };
                             send_to_client(*player_id, packet, &clients);
-                            break;
+                            continue;
                         }
 
                         // Process item transfer and calculate the require item quantities
@@ -1830,9 +1838,16 @@ fn item_transfer_system(
                             item.clone(),
                             target, // target is the structure
                             &mut items,
-                            &mut ids,
                             &templates,
                         );
+
+                        if req_items.len() == 0 {
+                            let packet = ResponsePacket::Error {
+                                errmsg: "All structure item requirements met.".to_string(),
+                            };
+                            send_to_client(*player_id, packet, &clients);
+                            continue;
+                        }
 
                         let source_capacity =
                             ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
@@ -2879,6 +2894,7 @@ fn upgrade_system(
 
 fn explore_system(
     mut events: ResMut<PlayerEvents>,
+    clients: Res<Clients>,
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
@@ -2893,18 +2909,29 @@ fn explore_system(
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
-                    break;
+                    continue;
                 };
 
                 let Some(hero_entity) = ids.get_entity(hero_id) else {
                     error!("Cannot find hero entity for hero {:?}", hero_id);
-                    break;
+                    continue;
                 };
 
                 let Ok(hero) = hero_query.get(hero_entity) else {
                     error!("Cannot find hero for {:?}", hero_entity);
-                    break;
+                    continue;
                 };
+
+                // If hero is not already exploring
+                // TODO expand the action and state checking across all actions
+                if *hero.state == State::Exploring {
+                    error!("Hero is already exploring {:?}", hero_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Already exploring".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 // Builder State Change Event to Building
                 let state_change_event = VisibleEvent::StateChangeEvent {
@@ -2933,6 +2960,9 @@ fn explore_system(
                     game_tick.0 + 20, // in the future
                     explore_event,
                 );
+
+                let packet = ResponsePacket::Explore { explore_time: 20 };
+                send_to_client(*player_id, packet, &clients);
             }
             _ => {}
         }
@@ -4406,6 +4436,20 @@ fn new_player(
     items.new(hero_id, "Valleyrun Copper Ingot".to_string(), 5);
     items.new(hero_id, "Cragroot Maple Timber".to_string(), 5);
     items.new(hero_id, "Gold Coins".to_string(), 50);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(11.0));
@@ -4923,7 +4967,6 @@ fn process_item_transfer_structure(
     item: Item,
     structure: ItemTransferQueryItem,
     items: &mut ResMut<Items>,
-    ids: &mut ResMut<Ids>,
     templates: &Res<Templates>,
 ) -> Vec<ResReq> {
     let structure_items = items.get_by_owner(structure.id.0);
@@ -4955,16 +4998,15 @@ fn process_item_transfer_structure(
                     // Subtract current quantity
                     *match_req_item_cquantity -= item.quantity;
                 } else if *match_req_item_cquantity < item.quantity {
-                    let new_item_id = ids.new_item_id();
-
                     // Split to create new item. Required here as item quantity is greater than req quantity
-                    items.split(item.id, *match_req_item_cquantity);
+                    if let Some(new_split_item) = items.split(item.id, *match_req_item_cquantity) {
 
-                    // Transfer the new item
-                    items.transfer(new_item_id, structure.id.0);
+                        // Transfer the new item
+                        items.transfer(new_split_item.id, structure.id.0);
 
-                    // Set current quantity to 0
-                    *match_req_item_cquantity = 0;
+                        // Set current quantity to 0
+                        *match_req_item_cquantity = 0;
+                    }
                 }
             }
 

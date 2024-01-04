@@ -110,6 +110,7 @@ pub struct Item {
 #[reflect(Resource)]
 pub struct Items {
     items: Vec<Item>,
+    next_id: i32,
     item_templates: Vec<ItemTemplate>,
 }
 
@@ -136,7 +137,7 @@ impl Items {
         let attrs = HashMap::new();
 
         let new_item = Item {
-            id: self.items.len() as i32 + 1,
+            id: self.get_next_id(),
             owner: owner,
             name: name,
             quantity: quantity,
@@ -150,6 +151,7 @@ impl Items {
         };
 
         self.items.push(new_item.clone());
+        debug!("New Item by new(): {:?}", new_item);
 
         new_item
     }
@@ -176,7 +178,7 @@ impl Items {
         }
 
         let new_item = Item {
-            id: self.items.len() as i32 + 1,
+            id: self.get_next_id(),
             owner: owner,
             name: name,
             quantity: quantity,
@@ -191,6 +193,7 @@ impl Items {
 
         self.items.push(new_item.clone());
 
+        debug!("New Item by new_with_attrs(): {:?}", new_item.clone());
         new_item
     }
 
@@ -265,7 +268,7 @@ impl Items {
 
     pub fn split(&mut self, item_id: i32, quantity: i32) -> Option<Item> {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
-            let new_item_id = self.items.len() as i32 + 1;
+            let new_item_id = self.get_next_id();
             let item = &mut self.items[index];
 
             if (item.quantity - quantity) > 0 {
@@ -307,6 +310,7 @@ impl Items {
                 };
 
                 self.items.push(new_item.clone());
+                debug!("New Item: {:?}", new_item);
 
                 return Some(new_item);
             } else {
@@ -736,7 +740,7 @@ impl Items {
     // TODO reconsider returning the cloned item...
     pub fn find_by_id(&self, item_id: i32) -> Option<Item> {
         info!("Find by id {:?}", item_id);
-        info!("Items: {:?}", self.items);
+        info!("Items: {:#?}", self.items);
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
             return Some(self.items[index].clone());
         }
@@ -754,6 +758,12 @@ impl Items {
             .iter()
             .position(|item| item.owner == owner && item.class == class);
         return index;
+    }
+
+    fn get_next_id(&mut self) -> i32 {
+       let next_id = self.next_id; 
+       self.next_id += 1;
+       return next_id;
     }
 }
 
@@ -863,6 +873,7 @@ impl Plugin for ItemPlugin {
     fn build(&self, app: &mut App) {
         let items = Items {
             items: Vec::new(),
+            next_id: 0,
             item_templates: Vec::new(),
         };
 

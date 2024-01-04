@@ -76,6 +76,79 @@
     - Wraithforge Mithril Ingot
     - Wraighforge Mithril Dust
 
+# name: Duskmire Gold Ore
+# class: Ore
+# subclass: Gold Ore
+# image: goldore
+# weight: 10
+# produces:
+
+# Duskmire Gold Ingot
+# Duskmire Gold Dust
+# name: Emberstone Silver Ore
+# class: Ore
+# subclass: Silver Ore
+# image: silverore
+# weight: 10
+# produces:
+
+# Emberstone Silver Ingot
+# Emberstone Silver Dust
+# name: Gloomwood Platinum Ore
+# class: Ore
+# subclass: Platinum Ore
+# image: platinumore
+# weight: 10
+# produces:
+
+# Gloomwood Platinum Ingot
+# Gloomwood Platinum Dust
+# name: Stormhold Titanium Ore
+# class: Ore
+# subclass: Titanium Ore
+# image: titaniumore
+# weight: 10
+# produces:
+
+# Stormhold Titanium Ingot
+# Stormhold Titanium Dust
+# name: Obsidian Vein
+# class: Ore
+# subclass: Obsidian Ore
+# image: obsidianore
+# weight: 10
+# produces:
+
+# Obsidian Ingot
+# Obsidian Shards
+# name: Arcane Crystal Ore
+# class: Ore
+# subclass: Crystal Ore
+# image: crystalore
+# weight: 10
+# produces:
+
+# Arcane Crystals
+# Crystal Fragments
+# name: Sunstone Ore
+# class: Ore
+# subclass: Sunstone Ore
+# image: sunstoneore
+# weight: 10
+# produces:
+
+# Sunstone Ingot
+# Sunstone Dust
+# name: Moonshadow Ore
+# class: Ore
+# subclass: Moonshadow Ore
+# image: moonshadowore
+# weight: 10
+# produces:
+
+# Moonshadow Ingot
+# Moonshadow Essence    
+
 ##################
 ###### INGOT ######
 ##################
@@ -175,6 +248,71 @@
   subclass: Birch Timber
   image: birchtimber
   weight: 1
+
+# name: Thornwood Oak Wood
+# class: Wood
+# subclass: Oak Wood
+# image: oakwood
+# weight: 10
+# produces:
+
+# Thornwood Oak Timber
+# name: Frostbark Elm Wood
+# class: Wood
+# subclass: Elm Wood
+# image: elmwood
+# weight: 10
+# produces:
+
+# Frostbark Elm Timber
+# name: Shadowgrove Birch Wood
+# class: Wood
+# subclass: Birch Wood
+# image: birchwood
+# weight: 10
+# produces:
+
+# Shadowgrove Birch Timber
+# name: Ironbark Redwood Wood
+# class: Wood
+# subclass: Redwood Wood
+# image: redwoodwood
+# weight: 10
+# produces:
+
+# Ironbark Redwood Timber
+# name: Emberleaf Willow Wood
+# class: Wood
+# subclass: Willow Wood
+# image: willowwood
+# weight: 10
+# produces:
+
+# Emberleaf Willow Timber
+# name: Dusktide Cedar Wood
+# class: Wood
+# subclass: Cedar Wood
+# image: cedarwood
+# weight: 10
+# produces:
+
+# Dusktide Cedar Timber
+# name: Stormsinger Pine Wood
+# class: Wood
+# subclass: Pine Wood
+# image: pinewood
+# weight: 10
+# produces:
+
+# Stormsinger Pine Timber
+# name: Starfall Ebony Wood
+# class: Wood
+# subclass: Ebony Wood
+# image: ebonywood
+# weight: 10
+# produces:
+
+# Starfall Ebony Timber  
 
 ##################
 ##### CLOTH #####

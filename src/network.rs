@@ -431,6 +431,14 @@ pub enum ResponsePacket {
     Upgrade {
         upgrade_time: i32,
     },
+    #[serde(rename = "explore")]
+    Explore {
+        explore_time: i32,
+    },    
+    #[serde(rename = "gather")]
+    Gather {
+        gather_time: i32,
+    },      
     #[serde(rename = "attack")]
     Attack {
         sourceid: i32,

@@ -74,7 +74,7 @@ pub struct ComboTracker {
 
 #[derive(WorldQuery)]
 #[world_query(mutable, derive(Debug))]
-pub struct CombatQuery {
+pub struct CombatQuery { 
     pub entity: Entity,
     pub id: &'static Id,
     pub player_id: &'static PlayerId,
@@ -484,10 +484,11 @@ impl Combat {
                     debug!("combo_template.attacks: {:?}", combo_template.attacks);
                     if combo_template.attacks == attacks_str {
                         combo = Some(combo_template.clone());
-                        combo_tracker.attacks.clear();
                         break;
                     }
                 }
+            // Clear attacks even if combo wasn't found
+            combo_tracker.attacks.clear();
             }
         }
 

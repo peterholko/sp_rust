@@ -1,4 +1,4 @@
-use bevy::ecs::entity::{MapEntities, EntityMapper};
+use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::ecs::query::WorldQuery;
 use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::tasks::AsyncComputeTaskPool;
@@ -11,10 +11,7 @@ use bevy::{
 
 use bevy_save::prelude::*;
 
-use serde::{
-    de::DeserializeSeed,
-    Serialize,
-};
+use serde::{de::DeserializeSeed, Serialize};
 
 use big_brain::prelude::{FirstToScore, Highest};
 use big_brain::thinker::Thinker;
@@ -36,10 +33,10 @@ use async_compat::Compat;
 
 use crate::account::Accounts;
 
-use crate::combat::{AttackType, Combo, Combat};
+use crate::combat::{AttackType, Combat, Combo};
 use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
 use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
-use crate::effect::{Effects, Effect};
+use crate::effect::{Effect, Effects};
 use crate::encounter::Encounter;
 use crate::experiment::{self, Experiment, ExperimentPlugin, ExperimentState, Experiments};
 use crate::item::{self, Item, ItemPlugin, Items};
@@ -100,12 +97,8 @@ impl MapEvents {
 #[derive(Resource, Reflect, Deref, DerefMut)]
 pub struct VisibleEvents(Vec<MapEvent>);
 
-
-
 #[derive(Resource, Deref, DerefMut, Debug, Default)]
 pub struct GameTick(pub i32);
-
-
 
 // Indexes for IDs
 #[derive(Resource, Clone, Debug)]
@@ -117,8 +110,6 @@ pub struct Ids {
     pub player_hero_map: HashMap<i32, i32>,
     pub obj_entity_map: HashMap<i32, Entity>,
 }
-
-
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct ExploredMap(pub HashMap<i32, Vec<(i32, i32)>>);
@@ -239,7 +230,7 @@ pub struct Stats {
 pub struct Misc {
     pub image: String,
     pub hsl: Vec<i32>,
-    pub groups: Vec<i32>
+    pub groups: Vec<i32>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -306,7 +297,7 @@ pub struct Obj {
     pub viewshed: Viewshed,
     pub misc: Misc,
     pub stats: Stats,
-    pub effects: Effects
+    pub effects: Effects,
 }
 
 #[derive(WorldQuery)]
@@ -458,7 +449,7 @@ pub enum VisibleEvent {
         state: String,
     },
     EffectExpiredEvent {
-        effect: Effect
+        effect: Effect,
     },
     SoundObjEvent {
         sound: String,
@@ -505,7 +496,7 @@ pub enum VisibleEvent {
     SleepEvent {
         obj_id: i32,
     },
-    NoEvent
+    NoEvent,
 }
 
 #[derive(Resource, Component, Reflect, Default, Deref, DerefMut, Debug)]
@@ -514,9 +505,8 @@ pub struct GameEvents(pub HashMap<i32, GameEvent>);
 
 impl MapEntities for GameEvents {
     fn map_entities(&mut self, entity_mapper: &mut EntityMapper) {
-
         for (_index, game_event) in self.iter_mut() {
-            match game_event.game_event_type  {
+            match game_event.game_event_type {
                 GameEventType::RemoveEntity { mut entity } => {
                     entity = entity_mapper.get_or_reserve(entity);
                 }
@@ -559,7 +549,6 @@ impl Plugin for GamePlugin {
             .add_systems(PreUpdate, update_game_tick)
             .add_systems(PreUpdate, snapshot_system)
             .add_systems(Update, new_obj_event_system)
-            
             .add_systems(Update, remove_obj_event_system)
             .add_systems(Update, move_event_system)
             .add_systems(Update, state_change_event_system)
@@ -597,7 +586,7 @@ impl Game {
     pub fn setup(
         mut commands: Commands,
         mut items: ResMut<Items>,
-        mut recipes: ResMut<Recipes>,    
+        mut recipes: ResMut<Recipes>,
         mut resources: ResMut<Resources>,
         templates: Res<Templates>,
         map: Res<Map>,
@@ -761,6 +750,7 @@ fn move_event_system(
                         .entity(map_event.entity_id)
                         .remove::<EventInProgress>();
 
+                    //TODO Move this logic to another function
                     for obj in query.iter() {
                         debug!(
                             "entity: {:?} id: {:?} player_id: {:?} pos: {:?}",
@@ -768,11 +758,16 @@ fn move_event_system(
                         );
                         if (map_event.player_id != obj.player_id.0)
                             && (obj.pos.x == *dst_x && obj.pos.y == *dst_y)
+                            &&    is_blocking_state(obj.state.clone())
                         {
                             is_dst_open = false;
                         }
 
-                        colliding_objs.push((obj.player_id.clone(), obj.id.clone(), obj.pos.clone()));
+                        colliding_objs.push((
+                            obj.player_id.clone(),
+                            obj.id.clone(),
+                            obj.pos.clone(),
+                        ));
                         all_map_objs.push(network::map_obj(obj));
                     }
 
@@ -795,6 +790,7 @@ fn move_event_system(
 
                                 let spawn_chance = 0.25;
                                 let random_num = rng.gen::<f32>();
+                                debug!("random_num: {:?}", random_num);
 
                                 // TODO move to encounter module
                                 if random_num < spawn_chance {
@@ -810,6 +806,7 @@ fn move_event_system(
                                         let tile_type =
                                             Map::tile_type(adjacent_pos.x, adjacent_pos.y, &map);
                                         let npc_list = Encounter::npc_list(tile_type);
+                                        let mut rng = rand::thread_rng();
                                         let index = rng.gen_range(0..npc_list.len());
                                         let npc_type = npc_list[index].to_string();
 
@@ -848,14 +845,15 @@ fn move_event_system(
                                     }
                                 }
 
-
                                 let mut new_objs = Vec::new();
 
                                 // Get new objs in viewshed
                                 for map_obj in all_map_objs.iter() {
-                                    
                                     if obj.id.0 != map_obj.id {
-                                        let distance = Map::distance((obj.pos.x, obj.pos.y), (map_obj.x, map_obj.y));
+                                        let distance = Map::distance(
+                                            (obj.pos.x, obj.pos.y),
+                                            (map_obj.x, map_obj.y),
+                                        );
                                         if obj.viewshed.range >= distance {
                                             new_objs.push(map_obj.clone());
                                         }
@@ -873,6 +871,8 @@ fn move_event_system(
                                     send_to_client(obj.player_id.0, map_packet, &clients);
                                 }
                             }
+                        } else {
+                            debug!("Tile is not opened.");
                         }
                     }
 
@@ -1811,7 +1811,7 @@ fn broadcast_event_system(
 fn effect_expired_event_system(
     game_tick: Res<GameTick>,
     mut map_events: ResMut<MapEvents>,
-    mut effect_query: Query<&mut Effects>
+    mut effect_query: Query<&mut Effects>,
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -1914,13 +1914,16 @@ fn use_item_system(
 
                     match (item.class.as_str(), item.subclass.as_str()) {
                         (item::POTION, item::HEALTH) => {
-                            let healing_attrval = item.attrs.get(&item::AttrKey::Healing).expect("Missing Healing attribute.");
+                            let healing_attrval = item
+                                .attrs
+                                .get(&item::AttrKey::Healing)
+                                .expect("Missing Healing attribute.");
 
                             debug!("Healing AttrVal: {:?}", healing_attrval);
 
                             let healing_value = match healing_attrval {
                                 item::AttrVal::Num(val) => *val as i32,
-                                _ => panic!("Invalid healing attribute value")
+                                _ => panic!("Invalid healing attribute value"),
                             };
 
                             if item_owner.stats.hp < item_owner.stats.base_hp {
@@ -2060,10 +2063,9 @@ fn drink_eat_system(
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
                         if let Ok(mut thirst) = thirsts.get_mut(map_event.entity_id) {
                             if let Some(thirst_attrval) = item.attrs.get(&item::AttrKey::Thirst) {
-
                                 let thirst_value = match thirst_attrval {
                                     item::AttrVal::Num(val) => *val,
-                                    _ => panic!("Invalid thirst attribute value")
+                                    _ => panic!("Invalid thirst attribute value"),
                                 };
 
                                 thirst.thirst -= thirst_value;
@@ -2135,7 +2137,7 @@ fn drink_eat_system(
                             if let Some(feed_attrval) = item.attrs.get(&item::AttrKey::Feed) {
                                 let feed_value = match feed_attrval {
                                     item::AttrVal::Num(val) => *val,
-                                    _ => panic!("Invalid feed attribute value")
+                                    _ => panic!("Invalid feed attribute value"),
                                 };
 
                                 hunger.hunger -= feed_value;
@@ -2303,7 +2305,7 @@ fn visible_event_system(
 
                             if viewshed.range >= dst_distance {
                                 let change_event = network::ChangeEvents::ObjMove {
-                                     event: "obj_move".to_string(),
+                                    event: "obj_move".to_string(),
                                     obj: new_obj.to_owned(),
                                     src_x: *dst_x,
                                     src_y: *dst_y,
@@ -2505,7 +2507,7 @@ fn perception_system(
     )>,
 ) {
     let mut perceptions_to_send: HashMap<i32, HashSet<network::MapObj>> = HashMap::new();
-    // Could use HashSet here due to the trait `FromIterator<&std::collections::HashSet<(i32, i32)>>` is not implemented for `Vec<(i32, i32)>`
+    // Could not use HashSet here due to the trait `FromIterator<&std::collections::HashSet<(i32, i32)>>` is not implemented for `Vec<(i32, i32)>`
     let mut tiles_to_send: HashMap<i32, Vec<(i32, i32)>> = HashMap::new();
 
     for perception_player in perception_updates.iter() {
@@ -2615,6 +2617,28 @@ fn perception_system(
                         .or_default()
                         .insert(visible_obj);
                 }
+
+                // Add observer to perception data
+                let observer_obj = network_obj(
+                    id2.0,                    
+                    player2.0,
+                    pos2.x,
+                    pos2.y,
+                    name2.0.to_owned(),
+                    template2.0.to_owned(),
+                    class2.0.to_owned(),
+                    subclass2.0.to_owned(),
+                    ObjUtil::state_to_str(state2.to_owned()),
+                    viewshed2.range,
+                    misc2.image.to_owned(),
+                    misc2.hsl.to_owned(),
+                    misc2.groups.to_owned(),
+                );
+
+                perceptions_to_send
+                    .entry(*perception_player)
+                    .or_default()
+                    .insert(observer_obj);
 
                 // Get visible tiles by player owned obj
                 let visible_tiles_pos = Map::range((pos2.x, pos2.y), viewshed2.range);
@@ -2881,13 +2905,13 @@ fn snapshot_system(world: &mut World) {
 
         fn serialize(snapshot: &Snapshot, registry: &AppTypeRegistry) -> String {
             let serializer = SnapshotSerializer { snapshot, registry };
-    
+
             let mut buf = Vec::new();
             let format = serde_json::ser::PrettyFormatter::with_indent(b"    ");
             let mut ser = serde_json::Serializer::with_formatter(&mut buf, format);
-    
+
             serializer.serialize(&mut ser).unwrap();
-    
+
             String::from_utf8(buf).unwrap()
         }
 
@@ -2896,7 +2920,7 @@ fn snapshot_system(world: &mut World) {
             .extract_resource::<MapEvents>()
             .extract_resource::<GameEvents>()
             /* .extract_entities_matching(|e| {
-                e.contains::<Merchant>() 
+                e.contains::<Merchant>()
             }) */
             .build();
 
@@ -3150,7 +3174,7 @@ fn spawn_npc(
                 base_speed: npc_template.base_speed,
                 base_vision: npc_template.base_vision,
             },
-            effects: Effects(HashMap::new())
+            effects: Effects(HashMap::new()),
         };
 
         let entity = commands
@@ -3246,20 +3270,45 @@ fn find_valid_pos(
     all_obj_pos: &Vec<(PlayerId, Id, Position)>,
     map: &Map,
 ) -> Option<Position> {
-    for (x, y) in neighbours {
-        let is_passable = Map::is_passable(x, y, &map);
-        let is_valid_pos = Map::is_valid_pos((x, y));
-        let is_not_blocked = is_not_blocked(player_id, x, y, &all_obj_pos);
 
-        if is_passable && is_valid_pos && is_not_blocked {
-            return Some(Position { x: x, y: y });
-        }
+    let valid_neighbours : Vec<(i32, i32)> = neighbours.into_iter().filter(|(x, y)| is_valid_pos(*x, *y, player_id, all_obj_pos, map)).collect();
+
+    if valid_neighbours.len() > 0 {
+
+        let mut rng = rand::thread_rng();
+        let index = rng.gen_range(0..valid_neighbours.len());
+        let (pos_x, pos_y) = valid_neighbours[index];
+         
+        return Some(Position{x: pos_x, y: pos_y});
+    } else {
+        return None;
     }
-
-    return None;
 }
 
-fn is_not_blocked(_player_id: i32, x: i32, y: i32, all_obj_pos: &Vec<(PlayerId, Id, Position)>) -> bool {
+fn is_valid_pos(
+    x: i32,
+    y: i32,
+    player_id: i32,
+    all_obj_pos: &Vec<(PlayerId, Id, Position)>,
+    map: &Map,
+) -> bool {
+    let is_passable = Map::is_passable(x, y, &map);
+    let is_valid_pos = Map::is_valid_pos((x, y));
+    let is_not_blocked = is_not_blocked(player_id, x, y, &all_obj_pos);
+
+    if is_passable && is_valid_pos && is_not_blocked {
+        return true;
+    }    
+
+    return false;
+}
+
+fn is_not_blocked(
+    _player_id: i32,
+    x: i32,
+    y: i32,
+    all_obj_pos: &Vec<(PlayerId, Id, Position)>,
+) -> bool {
     // TODO reconsider if player id should be compared
     for (_obj_player_id, _obj_id, obj_pos) in all_obj_pos.iter() {
         if x == obj_pos.x && y == obj_pos.y {

@@ -58,7 +58,7 @@ impl Encounter {
             TileType::Desert => return vec!["Scorpion", "Giant Rat", "Skeleton"],
             TileType::HillsDesert => return vec!["Scorpion", "Giant Rat", "Skeleton"],
             //_ => return vec!["Giant Rat", "Wolf", "Skeleton"],
-            _ => return vec!["Giant Rat"],
+            _ => return vec!["Wolf"],
         }
     }
 
