@@ -22,6 +22,28 @@ pub enum AttrKey {
     BleedChance,
     ConcussedChance,
     DisarmedChance,
+    AllAttributes,
+    Creativity,
+    Dexterity,
+    Endurance,
+    Focus,
+    Intellect,
+    Spirit,
+    Strength,
+    Toughness,
+    AxeDamage,
+    SwordDamage,
+    HammerDamage,
+    DaggerDamage,
+    SpearDamage,
+    AxeSpeed,
+    BowDamage,
+    HeavyArmorDefense,
+    HeavyArmorDurability,
+    MeidumArmorDefense,
+    MeidumArmorDurabilility,
+    StructureHp,
+    StructureDefense
 }
 
 impl AttrKey {
@@ -42,6 +64,30 @@ impl AttrKey {
             AttrKey::ConcussedChance => Effect::Concussed,
             AttrKey::DisarmedChance => Effect::Disarmed, 
             _ => panic!("Invalid Proc AttrKey, could not find Effect")
+        }
+    }
+
+    pub fn str_to_key(val: String) -> AttrKey {
+        match val.as_str() {
+            "All Attributes" => AttrKey::AllAttributes,
+            "Creativity" => AttrKey::Creativity,
+            "Dexterity" => AttrKey::Dexterity,
+            "Endurance" => AttrKey::Endurance,
+            "Focus" => AttrKey::Focus,
+            "Intellect" => AttrKey::Intellect,
+            "Spirit" => AttrKey::Spirit,
+            "Strength" => AttrKey::Strength,
+            "Toughness" => AttrKey::Toughness,
+            "Axe Damage" => AttrKey::AxeDamage,
+            "Sword Damage" => AttrKey::SwordDamage,
+            "Hammer Damage" => AttrKey::HammerDamage,
+            "Dagger Damage" => AttrKey::DaggerDamage,
+            "Spear Damage" => AttrKey::SpearDamage,      
+            "Axe Speed" => AttrKey::AxeSpeed,
+            "Bow Damage" => AttrKey::BowDamage,
+            "Heavy Armor Defense" => AttrKey::HeavyArmorDefense,
+            "Heavy Armor Durability" => AttrKey::HeavyArmorDurability,
+            _ => AttrKey::AllAttributes
         }
     }
 }
@@ -219,7 +265,7 @@ impl Items {
                 .iter()
                 .position(|item| item.owner == owner && item.name == name)
             {
-                let mut merged_item = &mut self.items[merged_index];
+                let merged_item = &mut self.items[merged_index];
                 merged_item.quantity += quantity;
 
                 return (merged_item.clone(), true);

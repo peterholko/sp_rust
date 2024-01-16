@@ -649,7 +649,7 @@ impl Game {
         commands.insert_resource(explored_map);
 
         // Initialize game world
-        Resource::spawn_all_resources(&mut resources, &templates.res_templates, map);
+        Resource::spawn_all_resources(&mut resources, &templates, map);
 
         // Initialize items, recipes
         items.set_templates(templates.item_templates.clone());
@@ -758,7 +758,7 @@ fn move_event_system(
                         );
                         if (map_event.player_id != obj.player_id.0)
                             && (obj.pos.x == *dst_x && obj.pos.y == *dst_y)
-                            &&    is_blocking_state(obj.state.clone())
+                            && is_blocking_state(obj.state.clone())
                         {
                             is_dst_open = false;
                         }
@@ -2620,7 +2620,7 @@ fn perception_system(
 
                 // Add observer to perception data
                 let observer_obj = network_obj(
-                    id2.0,                    
+                    id2.0,
                     player2.0,
                     pos2.x,
                     pos2.y,
@@ -2682,10 +2682,14 @@ fn perception_system(
                 data: perception_data,
             };
 
+            debug!("clients: {:?}", clients);
             for (_client_id, client) in clients.lock().unwrap().iter() {
                 if client.player_id == *player_id {
+
+
                     client
                         .sender
+                        //TODO handle disconnection
                         .try_send(serde_json::to_string(&perception_packet).unwrap())
                         .expect("Could not send message");
                 }
@@ -3270,16 +3274,17 @@ fn find_valid_pos(
     all_obj_pos: &Vec<(PlayerId, Id, Position)>,
     map: &Map,
 ) -> Option<Position> {
-
-    let valid_neighbours : Vec<(i32, i32)> = neighbours.into_iter().filter(|(x, y)| is_valid_pos(*x, *y, player_id, all_obj_pos, map)).collect();
+    let valid_neighbours: Vec<(i32, i32)> = neighbours
+        .into_iter()
+        .filter(|(x, y)| is_valid_pos(*x, *y, player_id, all_obj_pos, map))
+        .collect();
 
     if valid_neighbours.len() > 0 {
-
         let mut rng = rand::thread_rng();
         let index = rng.gen_range(0..valid_neighbours.len());
         let (pos_x, pos_y) = valid_neighbours[index];
-         
-        return Some(Position{x: pos_x, y: pos_y});
+
+        return Some(Position { x: pos_x, y: pos_y });
     } else {
         return None;
     }
@@ -3298,7 +3303,7 @@ fn is_valid_pos(
 
     if is_passable && is_valid_pos && is_not_blocked {
         return true;
-    }    
+    }
 
     return false;
 }

@@ -15,6 +15,39 @@
   quantity_rate: [0, 50, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1
+  quality_rate: [60, 30, 10]
+  characteristics: [Melee Weapon, Armor, Attributes]
+
+- name: Flameforge Copper Ore
+  type: Ore
+  terrain:
+    - Plains Hills
+    - Grassland Hills
+  #quantity_rate: [25, 25, 20, 15, 8, 5, 2]
+  yield_rate: [50, 25, 15, 8, 2]
+  yield_mod: [0.05, 0.15, 0.5, 1.0, 4.0]
+  quantity_rate: [0, 50, 20, 15, 8, 5, 2]
+  quantity: [0, 10, 25, 100, 200, 500, 1000]
+  skill_req: 0
+  level: 1
+  quality_rate: [60, 30, 10]
+  characteristics: [Melee Weapon, Armor, Attributes]
+
+- name: Emberfall Copper Ore
+  type: Ore
+  terrain:
+    - Plains Hills
+    - Grassland Hills
+  #quantity_rate: [25, 25, 20, 15, 8, 5, 2]
+  yield_rate: [50, 25, 15, 8, 2]
+  yield_mod: [0.05, 0.15, 0.5, 1.0, 4.0]
+  quantity_rate: [0, 50, 20, 15, 8, 5, 2]
+  quantity: [0, 10, 25, 100, 200, 500, 1000]
+  skill_req: 0
+  level: 1
+  quality_rate: [60, 30, 10]
+  characteristics: [Melee Weapon, Armor, Attributes]
 
 - name: Flowstate Copper Ore
   type: Ore
@@ -25,6 +58,8 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1
+  characteristics: [Melee Weapon, Armor, Attributes]
 
 - name: Piercefield Copper Ore
   type: Ore
@@ -35,6 +70,8 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1
+  characteristics: [Melee Weapon, Armor, Attributes]
 
 - name: Quickforge Iron Ore
   type: Ore
@@ -49,6 +86,8 @@
   quantity_rate: [0, 60, 15, 10, 8, 5, 2]
   quantity: [0, 5, 10, 50, 100, 200, 500]
   skill_req: 25
+  level: 2
+  characteristics: [Axe, Attributes] 
 
 - name: Stronghold Mithril Ore
   type: Ore
@@ -63,6 +102,9 @@
   quantity_rate: [0, 75, 10, 8, 4, 2, 1]
   quantity: [0, 1, 1, 2, 10, 50, 200]
   skill_req: 50
+  level: 3
+  characteristics: [Sword Damage, Spear Damage, Heavy Armor Defense, Attributes]
+  max_characteristics: 3
 
 - name: Cragroot Maple Wood
   type: Wood
@@ -78,6 +120,7 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0 
+  level: 1
 
 - name: Springbranch Maple Wood
   type: Wood
@@ -92,7 +135,8 @@
   yield_mod: [0.05, 0.15, 0.5, 1.0, 4.0]
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
-  skill_req: 0 
+  skill_req: 0
+  level: 1 
 
 - name: Wrapwood Birch
   type: Wood
@@ -107,7 +151,25 @@
   yield_mod: [0.05, 0.15, 0.5, 1.0, 4.0]
   quantity_rate: [40, 20, 15, 10, 8, 5, 2]
   quantity: [0, 5, 10, 50, 100, 200, 500]
-  skill_req: 25 
+  skill_req: 25
+  level: 1
+
+- name: Windstride Raw Hide
+  type: Hide
+  terrain: 
+    - Deciduous Forest
+    - Rainforest
+    - Jungle
+    - Frozen Forest
+    - Pine Forest
+    - Palm Forest
+  yield_rate: [50, 25, 15, 8, 2]
+  yield_mod: [0.05, 0.15, 0.5, 1.0, 4.0]
+  quantity_rate: [25, 25, 20, 15, 8, 5, 2]
+  quantity: [0, 10, 25, 100, 200, 500, 1000]
+  skill_req: 0
+  level: 1 
+  characteristics: [Medium Armor]
 
 - name: Amitanian Grape
   type: Plant
@@ -121,6 +183,7 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1
 
 - name: Honeybell Berries
   type: Plant
@@ -132,6 +195,7 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1
 
 - name: Spring Water
   type: Water
@@ -145,3 +209,4 @@
   quantity_rate: [25, 25, 20, 15, 8, 5, 2]
   quantity: [0, 10, 25, 100, 200, 500, 1000]
   skill_req: 0
+  level: 1

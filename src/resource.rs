@@ -1,5 +1,7 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
+use core::num;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 
@@ -8,12 +10,14 @@ use rand::distributions::WeightedIndex;
 use rand::Rng;
 
 use crate::game::{Ids, Position};
-use crate::item::{Item, Items};
+use crate::item::{Item, Items, self, AttrKey};
 use crate::map::Map;
 use crate::network;
 use crate::obj::ObjUtil;
 use crate::skill::{self, Skill, Skills};
-use crate::templates::{ResReq, ResTemplate, ResTemplates, ItemTemplate};
+use crate::templates::{
+    CharacteristicTemplates, ItemTemplate, ResReq, ResTemplate, ResTemplates, Templates,
+};
 
 pub const ORE: &str = "Ore";
 pub const WOOD: &str = "Wood";
@@ -30,15 +34,23 @@ pub const HIGH: &str = "high";
 pub const AVERAGE: &str = "average";
 pub const LOW: &str = "low";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Characteristic {
+    pub name: String,
+    pub range: Vec<i32>
+}
+
 #[derive(Debug, Clone)]
 pub struct Resource {
     pub name: String,
+    pub res_type: String,
     pub pos: Position,
     pub max: i32,
     pub yield_level: i32,
     pub yield_mod: f32,
     pub quantity_level: i32,
     pub quantity: i32,
+    pub characteristics: Vec<Characteristic>,
     pub reveal: bool, //pub obj_id: Option<i32>,
 }
 
@@ -48,9 +60,12 @@ pub struct Resources(HashMap<Position, HashMap<String, Resource>>);
 impl Resource {
     pub fn spawn_all_resources(
         resources: &mut ResMut<Resources>,
-        res_templates: &ResTemplates,
+        templates: &Templates,
         map: Res<Map>,
     ) {
+        let res_templates = &templates.res_templates;
+        let characteristic_templates = &templates.characteristics_templates;
+
         let mut terrain_list: HashMap<String, Vec<ResTemplate>> = HashMap::new();
         let mut rng = rand::thread_rng();
 
@@ -93,13 +108,68 @@ impl Resource {
                         let yield_level = (yield_sample + 1) as i32;
                         let yield_mod = res_template.yield_mod[yield_sample];
 
+                        let mut char_available_list = Vec::new();
+                        let mut char_selected_list = Vec::new();
+
+                        if let Some(res_characteristics) = &mut res_template.characteristics.clone()
+                        {
+                            let mut num_characteristics = 2;
+
+                            if let Some(num) = &res_template.max_characteristics {
+                                num_characteristics = *num;
+                            }
+
+                            debug!("num_characteristics: {:?}", num_characteristics);
+
+                            for res_characteristic in res_characteristics.iter() {
+                                let char_templates =
+                                    characteristic_templates.get(res_characteristic.to_string());
+
+                                for char_template in char_templates.iter() {
+                                    let level_range =
+                                        &char_template.ranges[(res_template.level - 1) as usize];
+
+                                        
+                                    // Generate characteristic value and round to 2 decimal places
+                                    //let characteristic_value = f32::trunc(rng.gen_range(min..max)  * 100.0) / 100.0;;
+
+                                    let characteristic = Characteristic {
+                                        name: char_template.name.to_string(),
+                                        range: level_range.to_vec()
+                                    };
+
+                                    debug!("{:?}", characteristic);
+
+                                    char_available_list.push(characteristic);
+                                }
+
+                                debug!("{:?}", char_available_list);
+
+                                // let index = rng.gen_range(0..characteristics.len());
+                                // let characteristic_name = &characteristics[index];
+                            }
+
+                            debug!("characteristic_list: {:?}", char_available_list);
+                            for i in 0..num_characteristics {
+                                let index = rng.gen_range(0..char_available_list.len());
+                                let selected_char = &char_available_list[index];
+
+                                debug!("selected_char: {:?}", selected_char);
+                                char_selected_list.push(selected_char.clone());
+
+                                char_available_list.remove(index);
+                            }
+                        }
+
                         Resource::create(
                             res_template.name.to_string(),
+                            res_template.res_type.to_string(),
                             yield_level,
                             yield_mod,
                             quantity_level,
                             quantity,
                             Position { x: pos.0, y: pos.1 },
+                            char_selected_list,
                             resources,
                         );
                     }
@@ -109,31 +179,39 @@ impl Resource {
     }
 
     pub fn create(
-        resource_type: String,
+        name: String,
+        res_type: String,
         yield_level: i32,
         yield_mod: f32,
         quantity_level: i32,
         quantity: i32,
         position: Position,
+        characteristics: Vec<Characteristic>,
         resources: &mut Resources,
     ) {
         let resource = Resource {
-            name: resource_type.clone(),
+            name: name.clone(),
+            res_type: res_type.clone(),
             pos: position,
             max: quantity,
             yield_level: yield_level,
             yield_mod: yield_mod,
             quantity_level: quantity_level,
             quantity: quantity,
+            characteristics: characteristics.clone(),
             reveal: false,
         };
 
+        if characteristics.len() > 0 {
+            debug!("{:?}", resource);
+        }
+
         if let Some(resources_on_tile) = resources.get_mut(&position) {
-            resources_on_tile.insert(resource_type.clone(), resource);
+            resources_on_tile.insert(name.clone(), resource);
         } else {
             let mut resources_on_tile = HashMap::new();
 
-            resources_on_tile.insert(resource_type.clone(), resource);
+            resources_on_tile.insert(name.clone(), resource);
 
             resources.insert(position, resources_on_tile);
         }
@@ -150,6 +228,7 @@ impl Resource {
                         color: (resource.yield_level + resource.quantity_level) / 2,
                         yield_label: Resource::yield_level_to_label(resource.yield_level),
                         quantity_label: Resource::quantity_level_to_label(resource.quantity_level),
+                        characteristics: resource.characteristics.clone(),
                     };
 
                     tile_resources.push(tile_resource);
@@ -262,7 +341,7 @@ impl Resource {
             return resources_on_tile
                 .clone()
                 .into_values()
-                .filter(|x| x.reveal == true)
+                .filter(|x| x.reveal == true && x.res_type == res_type)
                 .collect();
         }
 
@@ -283,12 +362,9 @@ impl Resource {
         res_templates: &ResTemplates,
         ids: &mut Ids,
     ) -> Vec<network::Item> {
-        //TODO move elsewhere...
         let mut rng = rand::thread_rng();
 
         let resources_on_tile = Resource::get_by_type(position, res_type.clone(), resources);
-
-        println!("Resources on tile: {:?}", resources_on_tile);
 
         let mut items_to_update: Vec<network::Item> = Vec::new();
 
@@ -296,11 +372,9 @@ impl Resource {
             if let Some(res_template) = res_templates.get(&resource.name) {
                 let skill_name = Resource::type_to_skill(res_type.clone());
 
-                println!("Skill name: {:?}", skill_name);
                 let mut skill_value = 0;
 
                 if let Some(skill) = Skill::get_by_name(obj_id, skill_name, skills) {
-                    println!("Skill: {:?}", skill);
                     skill_value = skill.level;
                 }
 
@@ -320,10 +394,41 @@ impl Resource {
                     );
 
                     if (current_total_weight + new_item_weight) < capacity {
-                        let (new_item, _merged) = items.create(
+                        let mut item_attrs = HashMap::new();
+
+                        let mut quality_rate = Vec::new();
+
+                        if let Some(template_quality_rate) = &res_template.quality_rate {
+                            quality_rate = template_quality_rate.clone();
+                        } else {
+                            quality_rate = vec![60, 30, 10];
+                        }
+
+                        // Determine quality
+                        let dist = WeightedIndex::new(quality_rate).unwrap();
+                        let sample = dist.sample(&mut rng);
+                        let quality_level = sample as i32;
+
+                        debug!("Quality Level: {:?}", quality_level);
+
+                        for characteristic in resource.characteristics.iter() {
+                            debug!("{:?} {:?}", characteristic.name, characteristic.range);
+                            //let characteristic_value = rng.gen_range(characteristic.min..characteristic.max);
+                            let characteristic_value = characteristic.range[quality_level as usize];
+                            debug!("{:?}", characteristic_value);
+
+                            let attr_key = AttrKey::str_to_key(characteristic.name.clone());                            
+
+                            item_attrs.insert(attr_key, item::AttrVal::Num(characteristic_value as f32));
+                        }
+
+                        debug!("item_attrs: {:?}", item_attrs);
+
+                        let new_item = items.new_with_attrs(
                             dest_obj_id,
                             resource.name.clone(),
-                            1, //TODO should this be only 1 ?
+                            1, //TODO should this be only 1 
+                            item_attrs.clone()
                         );
 
                         info!("Gather item created: {:?}", new_item);

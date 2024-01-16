@@ -292,7 +292,7 @@
   base_def: 0
   base_speed: 5
   base_vision: 2
-  capacity: 300
+  capacity: 500
 
 - name: Novice Ranger
   class: unit
@@ -305,7 +305,7 @@
   base_def: 0
   base_speed: 5
   base_vision: 2
-  capacity: 300
+  capacity: 500
 
 - name: Novice Mage
   class: unit
@@ -318,7 +318,7 @@
   base_def: 0
   base_speed: 5
   base_vision: 2
-  capacity: 300
+  capacity: 500
 
 - name: Skilled Warrior
   class: unit

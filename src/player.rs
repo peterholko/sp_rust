@@ -4424,7 +4424,7 @@ fn new_player(
             damage_range: hero_template.dmg_range,
             base_speed: hero_template.base_speed,
             base_vision: hero_template.base_vision,
-        },
+        },        
         effects: Effects(HashMap::new())
     };
 
@@ -4472,7 +4472,7 @@ fn new_player(
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(100.0));
-
+    
     items.new_with_attrs(
         hero_id,
         "Honeybell Berries".to_string(),
@@ -4485,10 +4485,13 @@ fn new_player(
 
     items.new_with_attrs(hero_id, "Health Potion".to_string(), 1, item_attrs2);
 
+    let hero_attrs = generate_hero_attrs();
+
     // Spawn hero
     let hero_entity_id = commands
         .spawn((
             hero,
+            hero_attrs,
             SubclassHero, // Hero component tag
         ))
         .id();
@@ -5020,4 +5023,20 @@ fn process_item_transfer_structure(
     }
 
     return Vec::new();
+}
+
+//TODO move to another module
+fn generate_hero_attrs() -> BaseAttrs {
+    let attrs = BaseAttrs {
+        creativity: 10,
+        dexterity: 10,
+        endurance: 10,
+        focus: 10,
+        intellect: 10,
+        spirit: 10,
+        strength: 10,
+        toughness: 10,
+    };
+
+    return attrs;
 }

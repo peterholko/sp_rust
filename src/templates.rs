@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,7 +17,8 @@ pub struct Templates {
     pub obj_templates: ObjTemplates,
     pub recipe_templates: RecipeTemplates,
     pub effect_templates: EffectTemplates,
-    pub combo_templates: ComboTemplates
+    pub combo_templates: ComboTemplates,
+    pub characteristics_templates: CharacteristicTemplates
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -127,6 +129,51 @@ pub struct ResTemplate {
     pub quantity_rate: Vec<i32>,
     pub quantity: Vec<i32>,
     pub skill_req: i32,
+    pub level: i32,
+    pub quality_rate: Option<Vec<i32>>,
+    pub characteristics: Option<Vec<String>>,
+    pub max_characteristics: Option<i32>
+}
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct CharacteristicTemplates(HashMap<String, CharacteristicTemplate>);
+
+#[derive(Debug, Resource, Clone, PartialEq, Hash, Eq, Serialize, Deserialize)]
+pub struct CharacteristicTemplate {
+    pub name: String,
+    pub ranges: Vec<Vec<i32>>,
+    pub tag: Vec<String>,
+}
+
+impl CharacteristicTemplates {
+    pub fn load(&mut self, characteristic_templates: Vec<CharacteristicTemplate>) {                 
+
+        for characteristic_template in characteristic_templates.iter() {
+            debug!("{:?}", characteristic_template);
+            self.insert(characteristic_template.name.clone(), characteristic_template.clone() );
+        }
+    }
+
+    pub fn get(&self, name: String) -> Vec<CharacteristicTemplate> {        
+        debug!("Finding name: {:?}", name);
+
+        let mut characteristics = HashSet::new();
+
+        // First try to find by the name value
+        for (template_name, characteristic_template) in self.iter() {
+            if name == *template_name {
+                characteristics.insert(characteristic_template.clone());
+            }
+
+            for tag in characteristic_template.tag.iter() {
+                if name == *tag {
+                    characteristics.insert(characteristic_template.clone());
+                }
+            }
+        }
+
+        return characteristics.into_iter().collect();
+    }
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -307,6 +354,16 @@ impl Plugin for TemplatesPlugin {
         let mut comobo_templates = ComboTemplates(HashMap::new());
         comobo_templates.load(combo_template_list);
 
+        // Load characteristic template data
+        let characteristic_template_file =
+            fs::File::open("characteristic_template.yaml").expect("Could not open file.");
+
+        let characteristic_template_list: Vec<CharacteristicTemplate> =
+            serde_yaml::from_reader(characteristic_template_file).expect("Could not read values.");
+        
+        let mut characteristic_templates = CharacteristicTemplates(HashMap::new());
+        characteristic_templates.load(characteristic_template_list);
+
         let templates = Templates {
             item_templates: item_templates,
             res_templates: ResTemplates(res_templates),
@@ -314,7 +371,8 @@ impl Plugin for TemplatesPlugin {
             obj_templates: ObjTemplates(obj_templates),
             recipe_templates: RecipeTemplates(recipe_templates),
             effect_templates: effect_templates,
-            combo_templates: comobo_templates
+            combo_templates: comobo_templates,
+            characteristics_templates: characteristic_templates
         };
 
         app.insert_resource(templates);

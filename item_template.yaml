@@ -13,6 +13,24 @@
     - Valleyrun Copper Ingot
     - Valleyrun Copper Dust
 
+- name: Flameforge Copper Ore
+  class: Ore
+  subclass: Copper Ore
+  image: copperore
+  weight: 10
+  produces:
+    - Flameforge Copper Ingot
+    - Flameforge Copper Dust
+
+- name: Emberfall Copper Ore
+  class: Ore
+  subclass: Copper Ore
+  image: copperore
+  weight: 10
+  produces:
+    - Emberfall Copper Ingot
+    - Emberfall Copper Dust    
+
 - name: Flowstate Copper Ore
   class: Ore
   subclass: Copper Ore
