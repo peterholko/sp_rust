@@ -18,7 +18,7 @@ pub struct Templates {
     pub recipe_templates: RecipeTemplates,
     pub effect_templates: EffectTemplates,
     pub combo_templates: ComboTemplates,
-    pub characteristics_templates: CharacteristicTemplates
+    pub res_property_templates: ResPropertyTemplates
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -131,48 +131,48 @@ pub struct ResTemplate {
     pub skill_req: i32,
     pub level: i32,
     pub quality_rate: Option<Vec<i32>>,
-    pub characteristics: Option<Vec<String>>,
-    pub max_characteristics: Option<i32>
+    pub properties: Option<Vec<String>>,
+    pub max_properties: Option<i32>
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
-pub struct CharacteristicTemplates(HashMap<String, CharacteristicTemplate>);
+pub struct ResPropertyTemplates(HashMap<String, ResPropertyTemplate>);
 
 #[derive(Debug, Resource, Clone, PartialEq, Hash, Eq, Serialize, Deserialize)]
-pub struct CharacteristicTemplate {
+pub struct ResPropertyTemplate {
     pub name: String,
     pub ranges: Vec<Vec<i32>>,
     pub tag: Vec<String>,
 }
 
-impl CharacteristicTemplates {
-    pub fn load(&mut self, characteristic_templates: Vec<CharacteristicTemplate>) {                 
+impl ResPropertyTemplates {
+    pub fn load(&mut self, res_property_templates: Vec<ResPropertyTemplate>) {                 
 
-        for characteristic_template in characteristic_templates.iter() {
-            debug!("{:?}", characteristic_template);
-            self.insert(characteristic_template.name.clone(), characteristic_template.clone() );
+        for res_property_template in res_property_templates.iter() {
+            debug!("{:?}", res_property_template);
+            self.insert(res_property_template.name.clone(), res_property_template.clone() );
         }
     }
 
-    pub fn get(&self, name: String) -> Vec<CharacteristicTemplate> {        
+    pub fn get(&self, name: String) -> Vec<ResPropertyTemplate> {        
         debug!("Finding name: {:?}", name);
 
-        let mut characteristics = HashSet::new();
+        let mut res_properties = HashSet::new();
 
         // First try to find by the name value
-        for (template_name, characteristic_template) in self.iter() {
+        for (template_name, res_property_template) in self.iter() {
             if name == *template_name {
-                characteristics.insert(characteristic_template.clone());
+                res_properties.insert(res_property_template.clone());
             }
 
-            for tag in characteristic_template.tag.iter() {
+            for tag in res_property_template.tag.iter() {
                 if name == *tag {
-                    characteristics.insert(characteristic_template.clone());
+                    res_properties.insert(res_property_template.clone());
                 }
             }
         }
 
-        return characteristics.into_iter().collect();
+        return res_properties.into_iter().collect();
     }
 }
 
@@ -355,14 +355,14 @@ impl Plugin for TemplatesPlugin {
         comobo_templates.load(combo_template_list);
 
         // Load characteristic template data
-        let characteristic_template_file =
-            fs::File::open("characteristic_template.yaml").expect("Could not open file.");
+        let res_property_template_file =
+            fs::File::open("res_property_template.yaml").expect("Could not open file.");
 
-        let characteristic_template_list: Vec<CharacteristicTemplate> =
-            serde_yaml::from_reader(characteristic_template_file).expect("Could not read values.");
+        let res_property_template_list: Vec<ResPropertyTemplate> =
+            serde_yaml::from_reader(res_property_template_file).expect("Could not read values.");
         
-        let mut characteristic_templates = CharacteristicTemplates(HashMap::new());
-        characteristic_templates.load(characteristic_template_list);
+        let mut res_property_templates = ResPropertyTemplates(HashMap::new());
+        res_property_templates.load(res_property_template_list);
 
         let templates = Templates {
             item_templates: item_templates,
@@ -372,7 +372,7 @@ impl Plugin for TemplatesPlugin {
             recipe_templates: RecipeTemplates(recipe_templates),
             effect_templates: effect_templates,
             combo_templates: comobo_templates,
-            characteristics_templates: characteristic_templates
+            res_property_templates: res_property_templates
         };
 
         app.insert_resource(templates);

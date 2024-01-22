@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     account::{Account, Accounts},
-    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil, item, resource::Characteristic,
+    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil, item, resource::Property,
 };
 use crate::{
     game::{Client, Clients, HeroClassList},
@@ -647,7 +647,7 @@ pub struct TileResource {
     pub color: i32,
     pub yield_label: String,
     pub quantity_label: String,
-    pub characteristics: Vec<Characteristic>,
+    pub characteristics: Vec<Property>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

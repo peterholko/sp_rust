@@ -16,7 +16,7 @@ use crate::network;
 use crate::obj::ObjUtil;
 use crate::skill::{self, Skill, Skills};
 use crate::templates::{
-    CharacteristicTemplates, ItemTemplate, ResReq, ResTemplate, ResTemplates, Templates,
+    ResPropertyTemplates, ItemTemplate, ResReq, ResTemplate, ResTemplates, Templates,
 };
 
 pub const ORE: &str = "Ore";
@@ -35,7 +35,7 @@ pub const AVERAGE: &str = "average";
 pub const LOW: &str = "low";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Characteristic {
+pub struct Property {
     pub name: String,
     pub range: Vec<i32>
 }
@@ -50,7 +50,7 @@ pub struct Resource {
     pub yield_mod: f32,
     pub quantity_level: i32,
     pub quantity: i32,
-    pub characteristics: Vec<Characteristic>,
+    pub properties: Vec<Property>,
     pub reveal: bool, //pub obj_id: Option<i32>,
 }
 
@@ -64,7 +64,7 @@ impl Resource {
         map: Res<Map>,
     ) {
         let res_templates = &templates.res_templates;
-        let characteristic_templates = &templates.characteristics_templates;
+        let res_property_templates = &templates.res_property_templates;
 
         let mut terrain_list: HashMap<String, Vec<ResTemplate>> = HashMap::new();
         let mut rng = rand::thread_rng();
@@ -111,30 +111,32 @@ impl Resource {
                         let mut char_available_list = Vec::new();
                         let mut char_selected_list = Vec::new();
 
-                        if let Some(res_characteristics) = &mut res_template.characteristics.clone()
+                        if let Some(properties) = &mut res_template.properties.clone()
                         {
-                            let mut num_characteristics = 2;
+                            let mut num_properties = 2;
 
-                            if let Some(num) = &res_template.max_characteristics {
-                                num_characteristics = *num;
+                            if let Some(num) = &res_template.max_properties {
+                                num_properties = *num;
                             }
 
-                            debug!("num_characteristics: {:?}", num_characteristics);
+                            debug!("num_characteristics: {:?}", num_properties);
 
-                            for res_characteristic in res_characteristics.iter() {
-                                let char_templates =
-                                    characteristic_templates.get(res_characteristic.to_string());
+                            for property in properties.iter() {
+                                let property_templates =
+                                    res_property_templates.get(property.to_string());
 
-                                for char_template in char_templates.iter() {
+                                for property_template in property_templates.iter() {
                                     let level_range =
-                                        &char_template.ranges[(res_template.level - 1) as usize];
-
+                                        &property_template.ranges[(res_template.level - 1) as usize];
+                                    
+                                    let min = level_range[0];
+                                    let max = level_range[1];
                                         
-                                    // Generate characteristic value and round to 2 decimal places
-                                    //let characteristic_value = f32::trunc(rng.gen_range(min..max)  * 100.0) / 100.0;;
+                                    // Generate property value and round to 2 decimal places
+                                    let property_value = rng.gen_range(min..=max);
 
-                                    let characteristic = Characteristic {
-                                        name: char_template.name.to_string(),
+                                    let characteristic = Property {
+                                        name: property_template.name.to_string(),
                                         range: level_range.to_vec()
                                     };
 
@@ -150,7 +152,7 @@ impl Resource {
                             }
 
                             debug!("characteristic_list: {:?}", char_available_list);
-                            for i in 0..num_characteristics {
+                            for i in 0..num_properties {
                                 let index = rng.gen_range(0..char_available_list.len());
                                 let selected_char = &char_available_list[index];
 
@@ -186,7 +188,7 @@ impl Resource {
         quantity_level: i32,
         quantity: i32,
         position: Position,
-        characteristics: Vec<Characteristic>,
+        characteristics: Vec<Property>,
         resources: &mut Resources,
     ) {
         let resource = Resource {
@@ -198,7 +200,7 @@ impl Resource {
             yield_mod: yield_mod,
             quantity_level: quantity_level,
             quantity: quantity,
-            characteristics: characteristics.clone(),
+            properties: characteristics.clone(),
             reveal: false,
         };
 
@@ -228,7 +230,7 @@ impl Resource {
                         color: (resource.yield_level + resource.quantity_level) / 2,
                         yield_label: Resource::yield_level_to_label(resource.yield_level),
                         quantity_label: Resource::quantity_level_to_label(resource.quantity_level),
-                        characteristics: resource.characteristics.clone(),
+                        characteristics: resource.properties.clone(),
                     };
 
                     tile_resources.push(tile_resource);
@@ -411,7 +413,7 @@ impl Resource {
 
                         debug!("Quality Level: {:?}", quality_level);
 
-                        for characteristic in resource.characteristics.iter() {
+                        for characteristic in resource.properties.iter() {
                             debug!("{:?} {:?}", characteristic.name, characteristic.range);
                             //let characteristic_value = rng.gen_range(characteristic.min..characteristic.max);
                             let characteristic_value = characteristic.range[quality_level as usize];
