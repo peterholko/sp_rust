@@ -39,7 +39,92 @@ Pros:
 Cons: 
     1. The randomness of the resource properties could frustrate the player if they are looking for any amount of a specific resource. 
 
+Consider adding 3 or 5 ***** stars for the specific resource property and once the primary resource is refined then those stars will be randomly generated into the actual specific numerical property value
 
+Veins/Grove/Deposit architecture:
+
+ - Valleyrun Copper Ore
+    Quality: ****
+ 
+ => Valleyrun Copper ingot
+    Quality: ****
+
+
+Wants: 
+
+1. Regional Variations - to force item type regionization
+2. Enable interesting exploration via discovering new resources
+3. Refining should do something more than just turn raw into refined items.
+    - Reduce the negative property and enhance the positive property
+    - Allows mixing/combining of different ore
+
+
+Jan 17 
+
+
+Idea #1:
+
+On world generation, randomize clusters of resources with specific randomized properties. 
+
+    Valleyrun Copper Ore cluster (distributed over multiple hill tiles)
+        +5 Endurance
+        -1 Spirit
+        +1 Strength
+
+
+    Flameforge Copper Ore cluster (distributed over multiple hill tiles, can overlap with other clusters)    
+        +2 Axe Damage
+        -1 Hammer Speed
+        +2 Heavy Armor Defense
+
+
+    Another idea is to random a property but with a range and refining the resource will set the property 
+
+Next, allow mining action to uncover and randomly generate new clusters, 
+    -Should new clusters be the re-rolled clusters or using the same static properties generated at world gen time?
+
+Exploring should be slightly enhanced: 
+
+    1. Some other indicator rather than the number of undiscovered resources.  
+
+    2. Add Exploration levels (1-5), 
+        - Exploration level determine how much to reveal on the tile
+        - Untamed levels (wildness) is linked but reduced by clearing monsters on it.
+
+        Exploration level 1, reveals level 1 resources, etc... ?
+
+Process:
+
+1. Generate clusters (3 nearby tiles of the resource, 1 resource will be focal point of the cluster with higher yield/quantity)
+
+Questions: 
+-How many copper ores to generate?   
+-Regionality, still distributed by tile type, snow vs desert vs plains hills ?
+
+Goals:
+-Specialization & regionality (possible some logic to prevent overlaping or perfect distrbution of properties)
+
+
+
+
+
+
+
+
+Idea #2
+
+Randomize properties on the resource without any value (except maybe positive or negative) 
+
+    Something like: 
+
+    Valleyrun Copper Ore     (Refined) =>    Valleyrun Copper Ingot
+        +++Endurance                              +++Endurance
+        --Spirit                                  --Spirit
+         +Strength                                +Strength 
+
+Idea #3:
+
+*** Randomize property on ore by veins (i.e. tiles or something else) then group the ores under a single item, could be very complex to handle.  
 
 
 

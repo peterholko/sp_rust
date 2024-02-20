@@ -7,12 +7,11 @@ use std::collections::HashMap;
 
 use crate::effect::{self, Effect, Effects};
 use crate::game::{
-    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, PlayerId, Position, State,
-    Stats, Subclass, Template, VisibleEvent, VisibleEvents,
+    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, PlayerId, Position, State, StateDead, Stats, Subclass, Template, VisibleEvent, VisibleEvents
 };
 use crate::item::{self, AttrKey, Item, Items, DAMAGE};
 use crate::map::Map;
-use crate::obj::ObjUtil;
+use crate::obj::Obj;
 use crate::skill::{Skill, SkillUpdated, Skills};
 use crate::templates::{
     ComboTemplate, EffectTemplate, ObjTemplate, SkillTemplate, SkillTemplates, Templates,
@@ -216,6 +215,10 @@ impl Combat {
 
         if target.stats.hp <= 0 {
             *target.state = State::Dead;
+
+            debug!("Target {:?} is dead", target.entity);
+            commands.entity(target.entity).insert(StateDead{dead_at: game_tick.0});
+
             commands.entity(target.entity).remove::<ThinkerBuilder>();
             //commands.entity(target.entity).despawn();
 
@@ -360,6 +363,11 @@ impl Combat {
 
         if target.stats.hp <= 0 {
             *target.state = State::Dead;
+            
+            debug!("Target {:?} is dead", target.entity);
+            commands.entity(target.entity).insert(StateDead{dead_at: game_tick.0});
+
+
             commands.entity(target.entity).remove::<ThinkerBuilder>();
             //commands.entity(target.entity).despawn();
 
@@ -524,7 +532,6 @@ impl Combat {
                         };
 
                         map_events.new(
-                            ids.new_map_event_id(),
                             target.entity,
                             target.id,
                             target.player_id,
@@ -539,7 +546,6 @@ impl Combat {
                         };
 
                         map_events.new(
-                            ids.new_map_event_id(),
                             target.entity,
                             target.id,
                             target.player_id,
@@ -611,7 +617,6 @@ impl Combat {
     }
 
     pub fn add_damage_event(
-        event_id: i32,
         game_tick: i32,
         attack_type: String,
         damage: i32,
@@ -620,7 +625,7 @@ impl Combat {
         target: &CombatQueryItem,
         map_events: &mut ResMut<MapEvents>,
     ) {
-        let target_state_str = ObjUtil::state_to_str(target.state.clone());
+        let target_state_str = Obj::state_to_str(target.state.clone());
 
         let damage_event = VisibleEvent::DamageEvent {
             target_id: target.id.0,
@@ -632,7 +637,6 @@ impl Combat {
         };
 
         map_events.new(
-            event_id,
             attacker.entity,
             attacker.id,
             attacker.player_id,

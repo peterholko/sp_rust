@@ -14,6 +14,7 @@ use crate::game::*;
 use crate::game::State;    
 use crate::item::*;
 use crate::map::Map;
+use crate::obj::Obj;
 use crate::templates::Templates;
 
 pub const NO_TARGET: i32 = -1;
@@ -49,6 +50,12 @@ pub fn nearby_target_system(
             let mut target_id = NO_TARGET;
 
             for target in target_query.iter() {
+
+                // Skip dead targets
+                if Obj::is_dead(target.state) {
+                    continue;
+                }
+
                 let distance = Map::dist(*npc_pos, *target.pos);
 
                 if npc_viewshed.range >= distance {
@@ -138,7 +145,6 @@ pub fn attack_target_system(
                             *npc.state = State::Moving;
 
                             map_events.new(
-                                ids.new_map_event_id(),
                                 *actor,
                                 npc.id,
                                 npc.player_id,
@@ -154,8 +160,7 @@ pub fn attack_target_system(
                             };
                             let event_id = ids.new_map_event_id();
 
-                            map_events.new(
-                                event_id,
+                            let move_map_event = map_events.new(
                                 *actor,
                                 npc.id,
                                 npc.player_id,
@@ -166,7 +171,7 @@ pub fn attack_target_system(
 
                             commands
                                 .entity(*actor)
-                                .insert(EventInProgress { event_id: event_id });
+                                .insert(EventInProgress { event_id: move_map_event.event_id });
 
                             commands.entity(*actor).insert(MoveToInProgress);
                         }
@@ -206,7 +211,6 @@ pub fn attack_target_system(
 
                         // Add visible damage event to broadcast to everyone nearby
                         Combat::add_damage_event(
-                            ids.new_map_event_id(),
                             game_tick.0,
                             "quick".to_string(),
                             damage,
@@ -219,10 +223,7 @@ pub fn attack_target_system(
                         // Add Cooldown Event
                         let cooldown_event = VisibleEvent::CooldownEvent { duration: 30 };
 
-                        let event_id = ids.new_map_event_id();
-
-                        map_events.new(
-                            event_id,
+                        let cooldown_map_event = map_events.new(
                             *actor,
                             npc.id,
                             npc.player_id,
@@ -233,7 +234,7 @@ pub fn attack_target_system(
 
                         commands
                             .entity(*actor)
-                            .insert(EventInProgress { event_id: event_id });
+                            .insert(EventInProgress { event_id: cooldown_map_event.event_id });
                     } else {
                         if *npc.state == State::None {
                             if let Some(path_result) = Map::find_path(
@@ -260,7 +261,6 @@ pub fn attack_target_system(
                                 *npc.state = State::Moving;
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     npc.id,
                                     npc.player_id,
@@ -275,10 +275,7 @@ pub fn attack_target_system(
                                     dst_y: next_pos.1,
                                 };
 
-                                let event_id = ids.new_map_event_id();
-
-                                map_events.new(
-                                    event_id,
+                                let move_map_event = map_events.new(
                                     *actor,
                                     npc.id,
                                     npc.player_id,
@@ -289,7 +286,7 @@ pub fn attack_target_system(
 
                                 commands
                                     .entity(*actor)
-                                    .insert(EventInProgress { event_id: event_id });
+                                    .insert(EventInProgress { event_id: move_map_event.event_id });
                             }
                         }
                     }
@@ -414,7 +411,6 @@ pub fn merchant_move_system(
                         *obj.state = State::Moving;
 
                         map_events.new(
-                            ids.new_map_event_id(),
                             *actor,
                             obj.id,
                             obj.player_id,
@@ -428,10 +424,8 @@ pub fn merchant_move_system(
                             dst_x: next_pos.0,
                             dst_y: next_pos.1,
                         };
-                        let event_id = ids.new_map_event_id();
 
-                        map_events.new(
-                            event_id,
+                        let move_map_event = map_events.new(
                             *actor,
                             obj.id,
                             obj.player_id,
@@ -442,7 +436,7 @@ pub fn merchant_move_system(
 
                         commands
                             .entity(*actor)
-                            .insert(EventInProgress { event_id: event_id });
+                            .insert(EventInProgress { event_id: move_map_event.event_id });
 
                         commands.entity(*actor).insert(MoveToInProgress);
                     } else {

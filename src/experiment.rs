@@ -321,6 +321,13 @@ impl Experiment {
         };
 
         if experiment.state == ExperimentState::Discovery {
+
+            let mut slot = None;
+
+            if let Some(recipe_template_slot) = recipe_template.slot {
+                slot = Some(recipe_template_slot);
+            }
+
             let recipe = network::Recipe {
                 name: recipe_template.name,
                 image: recipe_template.image,
@@ -328,7 +335,7 @@ impl Experiment {
                 class: recipe_template.class,
                 subclass: recipe_template.subclass,
                 tier: recipe_template.tier,
-                slot: recipe_template.slot,
+                slot: slot,
                 damage: recipe_template.damage,
                 speed: recipe_template.speed,
                 armor: recipe_template.armor,

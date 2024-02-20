@@ -285,7 +285,7 @@
   class: unit
   subclass: hero
   template: Novice Warrior
-  base_hp: 10000
+  base_hp: 1000
   base_stamina: 10000
   base_dmg: 1
   dmg_range: 1
@@ -373,7 +373,7 @@
   base_def: 0
   build_time: 20
   level: 0
-  capacity: 100
+  capacity: 200
   refine: [Wood, Ore]
   req: 
     - type: Wood

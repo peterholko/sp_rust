@@ -4,14 +4,14 @@ use std::collections::HashMap;
 
 use rand::{random, Rng};
 
-use crate::game::{BaseAttrs, Id, MapEvents, PlayerId, Position, State, VisibleEvent};
+use crate::effect::Effects;
+use crate::game::{
+    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed, VisibleEvent
+};
 use crate::item::{Item, Items};
 use crate::map::TileType;
 use crate::skill::{Skill, Skills};
 use crate::templates::{ObjTemplate, ObjTemplates, SkillTemplate, SkillTemplates, Templates};
-
-#[derive(Debug, Clone)]
-pub struct ObjUtil;
 
 pub const TEMPLATE: &str = "template";
 pub const POSITION: &str = "position";
@@ -40,7 +40,70 @@ pub const STATE_DRINKING: &str = "drinking";
 pub const STATE_EATING: &str = "eating";
 pub const STATE_SLEEPING: &str = "sleeping";
 
-impl ObjUtil {
+#[derive(Bundle, Clone)]
+pub struct Obj {
+    pub id: Id,
+    pub player_id: PlayerId,
+    pub position: Position,
+    pub name: Name,
+    pub template: Template,
+    pub class: Class,
+    pub subclass: Subclass,
+    pub state: State,
+    pub viewshed: Viewshed,
+    pub misc: Misc,
+    pub stats: Stats,
+    pub effects: Effects,
+}
+
+impl Obj {
+    pub fn create(
+        commands: &mut Commands,
+        ids: &mut ResMut<Ids>,
+        player_id: i32,
+        template_name: String,
+        pos: Position,
+        state: State,
+        templates: &Res<Templates>
+    ) -> (i32, Entity) {
+        let template = ObjTemplate::get_template_by_name(template_name, &templates);
+        let obj_id = ids.new_obj_id();
+
+        let obj = Obj {
+            id: Id(obj_id),
+            player_id: PlayerId(player_id),
+            position: pos,
+            name: Name(template.name),
+            template: Template(template.template.clone()),
+            class: Class(template.class),
+            subclass: Subclass(template.subclass),
+            state: state,
+            viewshed: Viewshed { range: 0 },
+            misc: Misc {
+                image: str::replace(template.template.as_str(), " ", "").to_lowercase(),
+                hsl: Vec::new(),
+                groups: Vec::new(),
+            },
+            stats: Stats {
+                hp: 1,
+                base_hp: template.base_hp.unwrap_or(100),
+                stamina: template.base_stamina,
+                base_stamina: template.base_stamina,
+                base_def: template.base_def.unwrap_or(0),
+                base_damage: template.base_dmg,
+                damage_range: template.dmg_range,
+                base_speed: template.base_speed,
+                base_vision: template.base_vision,
+            },
+            effects: Effects(HashMap::new()),
+        };
+
+        let entity_id = commands.spawn(obj).id();
+        ids.new_entity_obj_mapping(obj_id, entity_id);
+
+        (obj_id, entity_id)
+    }
+
     pub fn state_to_enum(state: String) -> State {
         match state.as_str() {
             STATE_NONE => State::None,
@@ -85,6 +148,10 @@ impl ObjUtil {
         return state_string.to_string();
     }
 
+    pub fn is_dead(obj_state: &State) -> bool {
+        return *obj_state == State::Dead; 
+    }
+
     pub fn get_capacity(template: &String, obj_templates: &ObjTemplates) -> i32 {
         for obj_template in obj_templates.iter() {
             if obj_template.template == *template {
@@ -106,7 +173,6 @@ impl ObjUtil {
     }
 
     pub fn add_sound_obj_event(
-        event_id: i32,
         game_tick: i32,
         sound: String,
         entity: Entity,
@@ -121,7 +187,6 @@ impl ObjUtil {
         };
 
         map_events.new(
-            event_id,
             entity,
             &obj_id,
             &player_id,

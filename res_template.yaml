@@ -18,6 +18,7 @@
   level: 1
   quality_rate: [60, 30, 10]
   properties: [Melee Weapon, Armor, Attributes]
+  num_properties: 2
 
 - name: Flameforge Copper Ore
   type: Ore
@@ -33,6 +34,7 @@
   level: 1
   quality_rate: [60, 30, 10]
   properties: [Melee Weapon, Armor, Attributes]
+  num_properties: 2
 
 - name: Emberfall Copper Ore
   type: Ore
@@ -48,6 +50,7 @@
   level: 1
   quality_rate: [60, 30, 10]
   properties: [Melee Weapon, Armor, Attributes]
+  num_properties: 2
 
 - name: Flowstate Copper Ore
   type: Ore
@@ -60,6 +63,7 @@
   skill_req: 0
   level: 1
   properties: [Melee Weapon, Armor, Attributes]
+  num_properties: 2
 
 - name: Piercefield Copper Ore
   type: Ore
@@ -72,6 +76,7 @@
   skill_req: 0
   level: 1
   properties: [Melee Weapon, Armor, Attributes]
+  num_properties: 2
 
 - name: Quickforge Iron Ore
   type: Ore
@@ -87,7 +92,8 @@
   quantity: [0, 5, 10, 50, 100, 200, 500]
   skill_req: 25
   level: 2
-  properties: [Axe, Attributes] 
+  properties: [Axe, Attributes]
+  num_properties: 2
 
 - name: Stronghold Mithril Ore
   type: Ore
@@ -104,7 +110,7 @@
   skill_req: 50
   level: 3
   properties: [Sword Damage, Spear Damage, Heavy Armor Defense, Attributes]
-  max_properties: 3
+  num_properties: 3
 
 - name: Cragroot Maple Wood
   type: Wood

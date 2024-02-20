@@ -21,19 +21,20 @@ use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
     is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
     GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Merchant, Misc,
-    Name, NetworkReceiver, Obj, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
+    Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
     SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent, CREATIVITY,
     DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
-use crate::network::{self, send_to_client, ResponsePacket, StructureList};
-use crate::obj::{self, ObjUtil};
+use crate::network::{self, send_to_client, ResponsePacket, StatsData, StructureList};
+use crate::obj::{self, Obj};
 use crate::recipe::{self, Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
 use crate::structure::{self, Plan, Plans, Structure};
 use crate::templates::{ObjTemplate, ResReq, Templates};
+use crate::terrain_feature::{TerrainFeature, TerrainFeatures};
 use crate::villager::{self, Villager};
 
 #[derive(Resource, Deref, DerefMut)]
@@ -72,6 +73,17 @@ pub enum PlayerEvent {
         source_id: i32,
         res_type: String,
     },
+    Refine {
+        player_id: i32,
+    },
+    Craft {
+        player_id: i32,
+        recipe_name: String,
+    },
+    GetStats {
+        player_id: i32,
+        id: i32,
+    },
     InfoObj {
         player_id: i32,
         id: i32,
@@ -93,6 +105,11 @@ pub enum PlayerEvent {
         structure_id: i32,
     },
     InfoTile {
+        player_id: i32,
+        x: i32,
+        y: i32,
+    },
+    InfoTileResources {
         player_id: i32,
         x: i32,
         y: i32,
@@ -265,7 +282,7 @@ struct CoreQuery {
     template: &'static Template,
     state: &'static State,
     misc: &'static Misc,
-    effects: &'static Effects
+    effects: &'static Effects,
 }
 
 #[derive(WorldQuery)]
@@ -328,7 +345,7 @@ impl Plugin for PlayerPlugin {
                 login_system,
                 move_system,
                 attack_system,
-                gather_system,
+                gather_refine_system,
                 info_obj_system,
                 info_skills_system,
                 info_attrs_system,
@@ -501,22 +518,28 @@ fn move_system(
                     break;
                 };
 
+                if Obj::is_dead(hero.state) {
+                    let error = ResponsePacket::Error {
+                        errmsg: "The dead cannot move.".to_owned(),
+                    };
+                    send_to_client(*player_id, error, &clients);
+                    continue;
+                }
+
                 if !Map::is_passable(*x, *y, &map) {
-                    println!("Position is not passable");
                     let error = ResponsePacket::Error {
                         errmsg: "Tile is not passable.".to_owned(),
                     };
                     send_to_client(*player_id, error, &clients);
-                    break;
+                    continue;
                 }
 
                 if !is_pos_empty(*player_id, *x, *y, &query) {
-                    println!("Position is not empty");
                     let error = ResponsePacket::Error {
                         errmsg: "Tile is occupied.".to_owned(),
                     };
                     send_to_client(*player_id, error, &clients);
-                    break;
+                    continue;
                 }
 
                 // Remove events that are cancellable
@@ -559,7 +582,6 @@ fn move_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     hero_entity,
                     hero.id,
                     hero.player_id,
@@ -575,7 +597,6 @@ fn move_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     hero_entity,
                     hero.id,
                     hero.player_id,
@@ -638,6 +659,14 @@ fn attack_system(
                     continue;
                 };
 
+                if Obj::is_dead(&attacker.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot attack.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 // Check if attacker is owned by player
                 if attacker.player_id.0 != *player_id {
                     let packet = ResponsePacket::Error {
@@ -676,12 +705,11 @@ fn attack_system(
                     &map,
                     &mut ids,
                     &game_tick,
-                    &mut map_events
+                    &mut map_events,
                 );
 
                 // Add visible damage event to broadcast to everyone nearby
                 Combat::add_damage_event(
-                    ids.new_map_event_id(),
                     game_tick.0,
                     attack_type.to_string(),
                     damage,
@@ -724,7 +752,7 @@ fn attack_system(
             PlayerEvent::Combo {
                 player_id,
                 source_id,
-                target_id, 
+                target_id,
                 combo_type,
             } => {
                 events_to_remove.push(*event_id);
@@ -748,6 +776,14 @@ fn attack_system(
                     );
                     continue;
                 };
+
+                if Obj::is_dead(&attacker.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot attack.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 // Check if attacker is owned by player
                 if attacker.player_id.0 != *player_id {
@@ -786,14 +822,13 @@ fn attack_system(
                     &map,
                     &mut ids,
                     &game_tick,
-                    &mut map_events
+                    &mut map_events,
                 );
 
                 debug!("Found combo: {:?}", combo);
 
                 // Add visible damage event to broadcast to everyone nearby
                 Combat::add_damage_event(
-                    ids.new_map_event_id(),
                     game_tick.0,
                     "combo".to_string(),
                     damage,
@@ -866,7 +901,7 @@ fn attack_system(
     }
 }
 
-fn gather_system(
+fn gather_refine_system(
     mut events: ResMut<PlayerEvents>,
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
@@ -874,7 +909,10 @@ fn gather_system(
     mut map_events: ResMut<MapEvents>,
     resources: Res<Resources>,
     skills: ResMut<Skills>,
+    mut items: ResMut<Items>,
+    recipes: Res<Recipes>,
     hero_query: Query<CoreQuery, With<SubclassHero>>,
+    structure_query: Query<StructureQuery, With<ClassStructure>>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
 
@@ -890,18 +928,26 @@ fn gather_system(
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
-                    break;
+                    continue;
                 };
 
                 let Some(hero_entity) = ids.get_entity(hero_id) else {
                     error!("Cannot find hero entity for hero {:?}", hero_id);
-                    break;
+                    continue;
                 };
 
                 let Ok(hero) = hero_query.get(hero_entity) else {
                     error!("Cannot find hero for {:?}", hero_entity);
-                    break;
+                    continue;
                 };
+
+                if Obj::is_dead(&hero.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot gather.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 let gather_event = VisibleEvent::GatherEvent {
                     res_type: res_type.clone(),
@@ -916,7 +962,6 @@ fn gather_system(
                 );*/
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     hero_entity,
                     hero.id,
                     hero.player_id,
@@ -934,17 +979,17 @@ fn gather_system(
 
                 let Some(hero_id) = ids.get_hero(*player_id) else {
                     error!("Cannot find hero for player {:?}", *player_id);
-                    break;
+                    continue;
                 };
 
                 let Some(hero_entity) = ids.get_entity(hero_id) else {
                     error!("Cannot find hero entity for hero {:?}", hero_id);
-                    break;
+                    continue;
                 };
 
                 let Ok(hero) = hero_query.get(hero_entity) else {
                     error!("Cannot find hero for {:?}", hero_entity);
-                    break;
+                    continue;
                 };
 
                 let nearby_resources = Resource::get_nearby_resources(*hero.pos, &resources);
@@ -954,6 +999,184 @@ fn gather_system(
                 };
 
                 send_to_client(*player_id, nearby_resources_packet, &clients);
+            }
+            PlayerEvent::Refine { player_id } => {
+                debug!("PlayerEvent::Refine");
+                events_to_remove.push(*event_id);
+
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    continue;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find hero entity for hero {:?}", hero_id);
+                    continue;
+                };
+
+                let Ok(hero) = hero_query.get(hero_entity) else {
+                    error!("Cannot find hero for {:?}", hero_entity);
+                    continue;
+                };
+
+                if Obj::is_dead(&hero.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot refine.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let mut refining_structure = None;
+
+                // Get structure from hero position
+                for structure in structure_query.iter() {
+                    if structure.pos.x == hero.pos.x && structure.pos.y == hero.pos.y {
+                        refining_structure = Some(structure);
+                    }
+                }
+
+                let Some(refining_structure) = refining_structure else {
+                    error!("No structure available to refine. {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No structure available to refine.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                };
+
+                if refining_structure.player_id.0 != *player_id {
+                    error!("Structure not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let refine_event = VisibleEvent::RefineEvent {
+                    structure_id: refining_structure.id.0,
+                };
+
+                /*Skill::update(
+                    obj_id.0,
+                    "Mining".to_string(),
+                    100,
+                    &templates.skill_templates,
+                    &mut skills,
+                );*/
+
+                map_events.new(
+                    hero_entity,
+                    hero.id,
+                    hero.player_id,
+                    hero.pos,
+                    game_tick.0 + 8, // in the future
+                    refine_event,
+                );
+            }
+            PlayerEvent::Craft {
+                player_id,
+                recipe_name,
+            } => {
+                debug!("PlayerEvent::Craft");
+                events_to_remove.push(*event_id);
+
+                let Some(hero_id) = ids.get_hero(*player_id) else {
+                    error!("Cannot find hero for player {:?}", *player_id);
+                    continue;
+                };
+
+                let Some(hero_entity) = ids.get_entity(hero_id) else {
+                    error!("Cannot find hero entity for hero {:?}", hero_id);
+                    continue;
+                };
+
+                let Ok(hero) = hero_query.get(hero_entity) else {
+                    error!("Cannot find hero for {:?}", hero_entity);
+                    continue;
+                };
+
+                if Obj::is_dead(&hero.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot craft.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                let Some(mut recipe) = recipes.get_by_name(recipe_name.clone()) else {
+                    error!("Invalid recipe name {:?}", *recipe_name);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Invalid recipe".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                };
+
+                let mut crafting_structure = None;
+
+                // Get structure from hero position
+                for structure in structure_query.iter() {
+                    if structure.pos.x == hero.pos.x && structure.pos.y == hero.pos.y {
+                        crafting_structure = Some(structure);
+                    }
+                }
+
+                let Some(crafting_structure) = crafting_structure else {
+                    error!("No structure available to craft. {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "No structure available to craft.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                };
+
+                if crafting_structure.player_id.0 != *player_id {
+                    error!("Structure not owned by player {:?}", *player_id);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Structure not owned by player".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
+                if !Structure::has_req(crafting_structure.id.0, &mut recipe.req, &mut items) {
+                    error!("Insufficient resources to craft {:?}", *recipe_name);
+                    let packet = ResponsePacket::Error {
+                        errmsg: "Insufficient resources to craft".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    break;
+                }
+
+                //Crafting state change
+                let state_change_event = VisibleEvent::StateChangeEvent {
+                    new_state: obj::STATE_CRAFTING.to_string(),
+                };
+
+                map_events.new(
+                    hero.entity,
+                    &hero.id,
+                    hero.player_id,
+                    &hero.pos,
+                    game_tick.0 + 1, // in the future
+                    state_change_event,
+                );
+
+                let craft_event = VisibleEvent::CraftEvent {
+                    structure_id: crafting_structure.id.0,
+                    recipe_name: recipe_name.clone(),
+                };
+
+                map_events.new(
+                    hero.entity,
+                    &hero.id,
+                    hero.player_id,
+                    &hero.pos,
+                    game_tick.0 + 100, // in the future
+                    craft_event,
+                );
             }
             _ => {}
         }
@@ -981,6 +1204,40 @@ fn info_obj_system(
 
     for (event_id, event) in events.iter() {
         match event {
+            PlayerEvent::GetStats { player_id, id } => {
+                events_to_remove.push(*event_id);
+
+                let Some(entity) = ids.get_entity(*id) else {
+                    error!("Cannot find entity for {:?}", id);
+                    break;
+                };
+
+                let Ok(obj) = query.get(entity) else {
+                    error!("Cannot find obj for {:?}", entity);
+                    break;
+                };
+
+                if obj.player_id.0 != *player_id {
+                    // Silent error
+                    error!("GetStats request for object not owned by player.");
+                    continue;
+                };
+
+                if let Ok(stats) = stats_query.get(obj.entity) {
+                    let packet = ResponsePacket::Stats {
+                        data: StatsData {
+                            id: *id,
+                            hp: stats.hp,
+                            base_hp: stats.base_hp,
+                            stamina: stats.stamina.unwrap_or(100),
+                            base_stamina: stats.base_stamina.unwrap_or(100),
+                            effects: Vec::new(),
+                        },
+                    };
+
+                    send_to_client(*player_id, packet, &clients);
+                }
+            }
             PlayerEvent::InfoObj { player_id, id } => {
                 events_to_remove.push(*event_id);
 
@@ -990,7 +1247,7 @@ fn info_obj_system(
                 };
 
                 let Ok(obj) = query.get(entity) else {
-                    error!("Cannot find villager for {:?}", entity);
+                    error!("Cannot find obj for {:?}", entity);
                     break;
                 };
 
@@ -1025,7 +1282,7 @@ fn info_obj_system(
                         let mut order = None;
 
                         let mut total_weight = Some(items.get_total_weight(obj.id.0));
-                        let mut capacity = Some(ObjUtil::get_capacity(
+                        let mut capacity = Some(Obj::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
                         ));
@@ -1059,7 +1316,7 @@ fn info_obj_system(
                                 template: obj.template.0.to_string(),
                                 class: obj.class.0.to_string(),
                                 subclass: obj.subclass.0.to_string(),
-                                state: ObjUtil::state_to_str(obj.state.to_owned()),
+                                state: Obj::state_to_str(obj.state.to_owned()),
                                 image: obj.misc.image.clone(),
                                 hsl: obj.misc.hsl.clone(),
                                 items: items_packet,
@@ -1083,7 +1340,7 @@ fn info_obj_system(
                                 template: obj.template.0.to_string(),
                                 class: obj.class.0.to_string(),
                                 subclass: obj.subclass.0.to_string(),
-                                state: ObjUtil::state_to_str(obj.state.to_owned()),
+                                state: Obj::state_to_str(obj.state.to_owned()),
                                 image: obj.misc.image.clone(),
                                 hsl: obj.misc.hsl.clone(),
                                 items: items_packet,
@@ -1113,7 +1370,7 @@ fn info_obj_system(
                         let mut effects = Some(Vec::new());
 
                         let total_weight = Some(items.get_total_weight(obj.id.0));
-                        let capacity = Some(ObjUtil::get_capacity(
+                        let capacity = Some(Obj::get_capacity(
                             &obj.template.0.to_string(),
                             &templates.obj_templates,
                         ));
@@ -1121,7 +1378,7 @@ fn info_obj_system(
                             obj.template.0.to_string(),
                             &templates.obj_templates,
                         )
-                        .unwrap();
+                        .expect("Cannot find structure template");
 
                         // Required stats for all objects
                         let mut hp = None;
@@ -1155,7 +1412,7 @@ fn info_obj_system(
                             template: obj.template.0.to_string(),
                             class: obj.class.0.to_string(),
                             subclass: obj.subclass.0.to_string(),
-                            state: ObjUtil::state_to_str(obj.state.to_owned()),
+                            state: Obj::state_to_str(obj.state.to_owned()),
                             image: obj.misc.image.clone(),
                             hsl: obj.misc.hsl.clone(),
                             items: items_packet,
@@ -1171,7 +1428,7 @@ fn info_obj_system(
                         };
                     }
                 } else {
-                    let mut items_packet = None;                    
+                    let mut items_packet = None;
 
                     // Add items if object is dead
                     if *obj.state == State::Dead {
@@ -1180,7 +1437,7 @@ fn info_obj_system(
 
                     let mut effects = Vec::new();
 
-                    // Get effects 
+                    // Get effects
                     for (key, _val) in obj.effects.0.iter() {
                         effects.push(key.clone().to_str());
                     }
@@ -1192,7 +1449,7 @@ fn info_obj_system(
                         template: obj.template.0.to_string(),
                         class: obj.class.0.to_string(),
                         subclass: obj.subclass.0.to_string(),
-                        state: ObjUtil::state_to_str(obj.state.to_owned()),
+                        state: Obj::state_to_str(obj.state.to_owned()),
                         image: obj.misc.image.clone(),
                         hsl: obj.misc.hsl.clone(),
                         items: items_packet,
@@ -1384,7 +1641,6 @@ fn info_advance_system(
                     };
 
                     map_events.new(
-                        ids.new_map_event_id(),
                         entity,
                         &obj.id,
                         &obj.player_id,
@@ -1525,6 +1781,7 @@ fn info_tile_system(
     clients: Res<Clients>,
     map: Res<Map>,
     resources: Res<Resources>,
+    terrain_features: Res<TerrainFeatures>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
 
@@ -1550,11 +1807,29 @@ fn info_tile_system(
                     passable: Map::is_passable(*x, *y, &map),
                     wildness: "high".to_owned(),
                     resources: Resource::get_on_tile(Position { x: *x, y: *y }, &resources),
+                    terrain_features: TerrainFeature::get_by_tile(
+                        Position { x: *x, y: *y },
+                        &terrain_features,
+                    ),
                 };
 
                 send_to_client(*player_id, info_tile_packet, &clients);
             }
+            PlayerEvent::InfoTileResources { player_id, x, y } => {
+                debug!("PlayerEvent::InfoTileResources x: {:?} y: {:?}", *x, *y);
+                events_to_remove.push(*event_id);
 
+                let tile_type = Map::tile_type(*x, *y, &map);
+
+                let info_tile_resources_packet = ResponsePacket::InfoTileResources {
+                    x: *x,
+                    y: *y,
+                    name: Map::tile_name(tile_type),
+                    resources: Resource::get_on_tile(Position { x: *x, y: *y }, &resources),
+                };
+
+                send_to_client(*player_id, info_tile_resources_packet, &clients);
+            }
             _ => {}
         }
     }
@@ -1591,7 +1866,7 @@ fn info_item_system(
                     break;
                 };
 
-                let capacity = ObjUtil::get_capacity(&obj.template.0, &templates.obj_templates);
+                let capacity = Obj::get_capacity(&obj.template.0, &templates.obj_templates);
                 let total_weight = items.get_total_weight(*id);
 
                 let inventory_items = items.get_by_owner_packet(*id);
@@ -1748,10 +2023,9 @@ fn item_transfer_system(
                 events_to_remove.push(*event_id);
 
                 if let Some(item) = items.find_by_id(*item_id) {
-                    debug!("Item found: {:?}", item);                   
+                    debug!("Item found: {:?}", item);
 
                     debug!("Entity ID map: {:?}", ids.obj_entity_map);
-
 
                     let Some(owner_entity) = ids.get_entity(item.owner) else {
                         error!("Cannot find owner entity from id: {:?}", item.owner);
@@ -1809,7 +2083,7 @@ fn item_transfer_system(
                     let target_total_weight = items.get_total_weight(target.id.0);
                     let transfer_item_weight = (item.quantity as f32 * item.weight) as i32;
                     let target_capacity =
-                        ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
+                        Obj::get_capacity(&target.template.0, &templates.obj_templates);
 
                     // Structure founded and under construction use case
                     if target.class.0 == "structure" && *target.state == State::Founded {
@@ -1850,7 +2124,7 @@ fn item_transfer_system(
                         }
 
                         let source_capacity =
-                            ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
+                            Obj::get_capacity(&owner.template.0, &templates.obj_templates);
                         let source_total_weight = items.get_total_weight(owner.id.0);
 
                         let source_items = items.get_by_owner_packet(item.owner);
@@ -1913,7 +2187,7 @@ fn item_transfer_system(
                                 Structure::process_req_items(structure_items, structure_req);
 
                             let source_capacity =
-                                ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
+                                Obj::get_capacity(&owner.template.0, &templates.obj_templates);
                             let source_total_weight = items.get_total_weight(owner.id.0);
 
                             let source_items = items.get_by_owner_packet(item.owner);
@@ -1960,7 +2234,7 @@ fn item_transfer_system(
                         items.transfer(item.id, target.id.0);
 
                         let source_capacity =
-                            ObjUtil::get_capacity(&owner.template.0, &templates.obj_templates);
+                            Obj::get_capacity(&owner.template.0, &templates.obj_templates);
                         let source_total_weight = items.get_total_weight(owner.id.0);
 
                         let source_items = items.get_by_owner_packet(item.owner);
@@ -2054,7 +2328,7 @@ fn item_transfer_system(
                 }
 
                 let source_capacity =
-                    ObjUtil::get_capacity(&source.template.0, &templates.obj_templates);
+                    Obj::get_capacity(&source.template.0, &templates.obj_templates);
                 let source_total_weight = items.get_total_weight(source.id.0);
 
                 let mut target_capacity = -1; // -1 representing unknown
@@ -2062,7 +2336,7 @@ fn item_transfer_system(
 
                 if target.player_id.0 == *player_id {
                     target_capacity =
-                        ObjUtil::get_capacity(&target.template.0, &templates.obj_templates);
+                        Obj::get_capacity(&target.template.0, &templates.obj_templates);
                     target_total_weight = items.get_total_weight(target.id.0);
                 }
 
@@ -2310,6 +2584,7 @@ fn info_hire_system(
 
 fn order_follow_system(
     mut commands: Commands,
+    clients: Res<Clients>,
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
     mut events: ResMut<PlayerEvents>,
@@ -2335,6 +2610,23 @@ fn order_follow_system(
                     error!("Cannot find hero entity for hero {:?}", hero_id);
                     break;
                 };
+
+                // Get hero state
+                let mut hero_state = State::None;
+
+                for q in &query {
+                    if q.id.0 == hero_id {
+                        hero_state = q.state.clone();
+                    }
+                }
+
+                if Obj::is_dead(&hero_state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot give.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 // Add OrderFollow component to source and set hero_entity as target
                 for q in &query {
@@ -2385,6 +2677,8 @@ fn order_gather_system(
                     break;
                 };
 
+                // TODO check if hero is dead
+
                 if villager.player_id.0 != *player_id {
                     error!("Villager not owned by player {:?}", *player_id);
                     let packet = ResponsePacket::Error {
@@ -2407,8 +2701,7 @@ fn order_gather_system(
                     res_type: res_type.to_string(),
                 });
 
-                ObjUtil::add_sound_obj_event(
-                    ids.new_map_event_id(),
+                Obj::add_sound_obj_event(
                     game_tick.0,
                     Villager::order_to_speech(&Order::Gather {
                         res_type: res_type.to_string(),
@@ -2489,18 +2782,26 @@ fn create_foundation_system(
                 // Validation checks and get hero entity
                 let Some(hero_entity) = ids.get_entity(*source_id) else {
                     error!("Cannot find hero entity for {:?}", source_id);
-                    break;
+                    continue;
                 };
 
                 let Ok(hero) = hero_query.get(hero_entity) else {
                     error!("Query failed to find entity {:?}", hero_entity);
-                    break;
+                    continue;
                 };
+
+                if Obj::is_dead(&hero.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot build structures.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
 
                 // Check if hero is owned by player
                 if hero.player_id.0 != *player_id {
                     error!("Hero is not owned by player {:?}", *player_id);
-                    break;
+                    continue;
                 }
 
                 // Get structure template
@@ -2512,7 +2813,7 @@ fn create_foundation_system(
                         errmsg: "Invalid structure name".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
-                    break;
+                    continue;
                 };
 
                 let structure_id = ids.new_obj_id();
@@ -2531,7 +2832,8 @@ fn create_foundation_system(
                     state: State::Founded,
                     viewshed: Viewshed { range: 0 },
                     misc: Misc {
-                        image: structure_template.template.to_string().to_lowercase(),
+                        image: str::replace(structure_template.template.as_str(), " ", "")
+                            .to_lowercase(),
                         hsl: Vec::new(),
                         groups: Vec::new(),
                     },
@@ -2546,7 +2848,7 @@ fn create_foundation_system(
                         base_speed: None,
                         base_vision: None,
                     },
-                    effects: Effects(HashMap::new())
+                    effects: Effects(HashMap::new()),
                 };
 
                 let structure_attrs = StructureAttrs {
@@ -2565,21 +2867,15 @@ fn create_foundation_system(
                 ids.new_entity_obj_mapping(structure_id, structure_entity_id);
 
                 // Insert new obj event
-                let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
-                let map_event_id = ids.new_map_event_id();
-
-                let map_state_event = MapEvent {
-                    event_id: map_event_id,
-                    entity_id: structure_entity_id,
-                    obj_id: structure_id,
-                    player_id: *player_id,
-                    pos_x: hero.pos.x,
-                    pos_y: hero.pos.y,
-                    run_tick: game_tick.0 + 1, // Add one game tick
-                    map_event_type: new_obj_event,
-                };
-
-                map_events.insert(map_event_id, map_state_event);
+                map_events.add(
+                    VisibleEvent::NewObjEvent { new_player: false },
+                    structure_entity_id,
+                    structure_id,
+                    *player_id,
+                    hero.pos.x,
+                    hero.pos.y,
+                    game_tick.0 + 1,
+                );
 
                 let packet = ResponsePacket::CreateFoundation {
                     result: "success".to_string(),
@@ -2710,7 +3006,6 @@ fn build_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     builder.entity,
                     &builder.id,
                     &builder.player_id,
@@ -2725,7 +3020,6 @@ fn build_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     structure.entity,
                     &structure.id,
                     &structure.player_id,
@@ -2741,7 +3035,6 @@ fn build_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     builder.entity,
                     &builder.id,
                     &structure.player_id,
@@ -2838,7 +3131,6 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     builder_entity,
                     &builder.id,
                     &builder.player_id,
@@ -2853,7 +3145,6 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     structure.entity,
                     &structure.id,
                     &structure.player_id,
@@ -2870,7 +3161,6 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     structure_entity,
                     &structure.id,
                     &structure.player_id,
@@ -2922,6 +3212,14 @@ fn explore_system(
                     continue;
                 };
 
+                if Obj::is_dead(&hero.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot explore.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 // If hero is not already exploring
                 // TODO expand the action and state checking across all actions
                 if *hero.state == State::Exploring {
@@ -2939,7 +3237,6 @@ fn explore_system(
                 };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     hero.entity,
                     &hero.id,
                     hero.player_id,
@@ -2952,7 +3249,6 @@ fn explore_system(
                 let explore_event = VisibleEvent::ExploreEvent;
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     hero.entity,
                     &hero.id,
                     hero.player_id,
@@ -3170,6 +3466,14 @@ fn equip_system(
                     continue;
                 };
 
+                if Obj::is_dead(&owner.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot equip items.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 // Check if entity is owned by player
                 if owner.player_id.0 != *player_id {
                     let packet = ResponsePacket::Error {
@@ -3321,8 +3625,7 @@ fn order_refine_system(
                     info!("Adding Order Refine to {:?}", villager.id);
 
                     //Add speech
-                    ObjUtil::add_sound_obj_event(
-                        ids.new_map_event_id(),
+                    Obj::add_sound_obj_event(
                         game_tick.0,
                         Villager::order_to_speech(&Order::Refine),
                         villager.entity,
@@ -3410,8 +3713,7 @@ fn order_craft_system(
                             });
 
                             //Add speech
-                            ObjUtil::add_sound_obj_event(
-                                ids.new_map_event_id(),
+                            Obj::add_sound_obj_event(
                                 game_tick.0,
                                 Villager::order_to_speech(&Order::Craft {
                                     recipe_name: recipe_name.to_string(),
@@ -3491,8 +3793,7 @@ fn order_explore_system(
                 for q in &query {
                     if q.id.0 == *villager_id {
                         //Add speech
-                        ObjUtil::add_sound_obj_event(
-                            ids.new_map_event_id(),
+                        Obj::add_sound_obj_event(
                             game_tick.0,
                             Villager::order_to_speech(&Order::Explore),
                             villager.entity,
@@ -3584,8 +3885,7 @@ fn order_experiment_system(
 
                     commands.entity(villager.entity).insert(Order::Experiment);
 
-                    ObjUtil::add_sound_obj_event(
-                        ids.new_map_event_id(),
+                    Obj::add_sound_obj_event(
                         game_tick.0,
                         Villager::order_to_speech(&Order::Experiment),
                         villager.entity,
@@ -3638,6 +3938,14 @@ fn use_item_system(
                     continue;
                 };
 
+                if Obj::is_dead(&owner.state) {
+                    let packet = ResponsePacket::Error {
+                        errmsg: "The dead cannot use items.".to_string(),
+                    };
+                    send_to_client(*player_id, packet, &clients);
+                    continue;
+                }
+
                 // Check if entity is owned by player
                 if owner.player_id.0 != *player_id {
                     let packet = ResponsePacket::Error {
@@ -3652,20 +3960,15 @@ fn use_item_system(
                     item_owner_id: owner.id.0,
                 };
 
-                let map_event_id = ids.new_map_event_id();
-
-                let map_state_event = MapEvent {
-                    event_id: map_event_id,
-                    entity_id: owner_entity,
-                    obj_id: owner.id.0,
-                    player_id: *player_id,
-                    pos_x: owner.pos.x,
-                    pos_y: owner.pos.y,
-                    run_tick: game_tick.0 + 1, // Add one game tick
-                    map_event_type: use_item_event,
-                };
-
-                map_events.insert(map_event_id, map_state_event);
+                map_events.add(
+                    use_item_event,
+                    owner_entity,
+                    owner.id.0,
+                    *player_id,
+                    owner.pos.x,
+                    owner.pos.y,
+                    game_tick.0 + 1,
+                )
             }
             _ => {}
         }
@@ -3716,20 +4019,16 @@ fn remove_system(
                 debug!("Removing obj: {:?}", obj.id.0);
 
                 let remove_event = VisibleEvent::RemoveObjEvent;
-                let map_event_id = ids.new_map_event_id();
 
-                let map_state_event = MapEvent {
-                    event_id: map_event_id,
-                    entity_id: entity,
-                    obj_id: obj.id.0,
-                    player_id: *player_id,
-                    pos_x: obj.pos.x,
-                    pos_y: obj.pos.y,
-                    run_tick: game_tick.0 + 1, // Add one game tick
-                    map_event_type: remove_event,
-                };
-
-                map_events.insert(map_event_id, map_state_event);
+                map_events.add(
+                    remove_event,
+                    entity,
+                    obj.id.0,
+                    *player_id,
+                    obj.pos.x,
+                    obj.pos.y,
+                    game_tick.0 + 1,
+                );
             }
             _ => {}
         }
@@ -4016,7 +4315,6 @@ fn hire_system(
                 let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
 
                 map_events.new(
-                    ids.new_map_event_id(),
                     target_entity,
                     &Id(*target_id),
                     &PlayerId(*player_id),
@@ -4410,7 +4708,7 @@ fn new_player(
         state: State::None,
         viewshed: Viewshed { range: range },
         misc: Misc {
-            image: "novicewarrior".into(),
+            image: str::replace(hero_template.template.as_str(), " ", "").to_lowercase(),
             hsl: Vec::new(),
             groups: Vec::new(),
         },
@@ -4424,18 +4722,20 @@ fn new_player(
             damage_range: hero_template.dmg_range,
             base_speed: hero_template.base_speed,
             base_vision: hero_template.base_vision,
-        },        
-        effects: Effects(HashMap::new())
+        },
+        effects: Effects(HashMap::new()),
     };
 
     // Create hero items
     items.new(hero_id, "Cragroot Maple Wood".to_string(), 10);
     items.new(hero_id, "Cragroot Maple Wood".to_string(), 5);
     items.new(hero_id, "Cragroot Maple Wood".to_string(), 5);
-    items.new(hero_id, "Windstride Raw Hide".to_string(), 5);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 25);
     items.new(hero_id, "Valleyrun Copper Ingot".to_string(), 5);
     items.new(hero_id, "Cragroot Maple Timber".to_string(), 5);
     items.new(hero_id, "Gold Coins".to_string(), 50);
+    items.new(hero_id, "Copper Helm".to_string(), 1);
+    /*items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
@@ -4448,12 +4748,10 @@ fn new_player(
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
-    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
-    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
+    items.new(hero_id, "Windstride Raw Hide".to_string(), 1);*/
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Damage, item::AttrVal::Num(11.0));
-    item_attrs.insert(item::AttrKey::Equipable, item::AttrVal::Bool(true));
     item_attrs.insert(item::AttrKey::DeepWoundChance, item::AttrVal::Num(0.9));
 
     items.new_with_attrs(
@@ -4465,14 +4763,14 @@ fn new_player(
 
     items.new_with_attrs(
         hero_id,
-        "Copper Training Axe".to_string(),
+        "Copper Broad Axe".to_string(),
         1,
         item_attrs.clone(),
     );
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(100.0));
-    
+
     items.new_with_attrs(
         hero_id,
         "Honeybell Berries".to_string(),
@@ -4559,7 +4857,7 @@ fn new_player(
             base_speed: villager_template.base_speed,
             base_vision: villager_template.base_vision,
         },
-        effects: Effects(HashMap::new())
+        effects: Effects(HashMap::new()),
     };
 
     // Villager generate skills
@@ -4715,6 +5013,7 @@ fn new_player(
 
     // Starting recipes
     recipes.create(player_id, "Training Pick Axe".to_string());
+    recipes.create(player_id, "Copper Training Axe".to_string());
 
     //Starting plans
     plans.add(player_id, "Crafting Tent".to_string(), 0, 0);
@@ -4725,6 +5024,27 @@ fn new_player(
     plans.add(player_id, "Mine".to_string(), 0, 0);
 
     let structure_id = ids.new_obj_id();
+
+    // Create monolith
+    let (obj_id, entity) = Obj::create(
+        commands,
+        ids,
+        player_id,
+        "Monolith".to_string(),
+        Position { x: 16, y: 36 },
+        State::None,
+        &templates,
+    );
+
+    map_events.add(
+        VisibleEvent::NewObjEvent { new_player: false },
+        entity,
+        obj_id,
+        player_id,
+        16,
+        36,
+        game_tick.0 + 1,
+    );
 
     let structure_name = "Burrow".to_string();
     let structure_template = ObjTemplate::get_template(structure_name.clone(), templates);
@@ -4746,7 +5066,7 @@ fn new_player(
         },
         stats: Stats {
             hp: 1,
-            base_hp: structure_template.base_hp.unwrap(), // Convert option to non-option
+            base_hp: structure_template.base_hp.unwrap_or(100), // Convert option to non-option
             stamina: None,
             base_stamina: None,
             base_def: 0,
@@ -4755,7 +5075,7 @@ fn new_player(
             base_speed: None,
             base_vision: None,
         },
-        effects: Effects(HashMap::new())
+        effects: Effects(HashMap::new()),
     };
 
     let structure_attrs = StructureAttrs {
@@ -4775,20 +5095,16 @@ fn new_player(
 
     // Insert new obj event
     let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
-    let map_event_id = ids.new_map_event_id();
 
-    let map_state_event = MapEvent {
-        event_id: map_event_id,
-        entity_id: structure_entity_id,
-        obj_id: structure_id,
-        player_id: player_id,
-        pos_x: 16,
-        pos_y: 37,
-        run_tick: game_tick.0 + 1, // Add one game tick
-        map_event_type: new_obj_event,
-    };
-
-    map_events.insert(map_event_id, map_state_event);
+    map_events.add(
+        new_obj_event,
+        structure_entity_id,
+        structure_id,
+        player_id,
+        16,
+        37,
+        game_tick.0 + 1,
+    );
 
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Thirst, item::AttrVal::Num(50.0));
@@ -4903,7 +5219,7 @@ fn new_player(
             base_speed: villager_template.base_speed,
             base_vision: villager_template.base_vision,
         },
-        effects: Effects(HashMap::new())
+        effects: Effects(HashMap::new()),
     };
 
     // Villager generate skills
@@ -5003,7 +5319,6 @@ fn process_item_transfer_structure(
                 } else if *match_req_item_cquantity < item.quantity {
                     // Split to create new item. Required here as item quantity is greater than req quantity
                     if let Some(new_split_item) = items.split(item.id, *match_req_item_cquantity) {
-
                         // Transfer the new item
                         items.transfer(new_split_item.id, structure.id.0);
 

@@ -137,6 +137,58 @@ pub enum ExperimentItemType {
     Reagent,
 }
 
+#[derive(Debug, Reflect, Clone, PartialEq)]
+pub enum Slot {
+    Invalid,
+    Helm,
+    Shoulder,
+    Chest,
+    Pants,
+    Boots,
+    MainHand,
+}
+
+impl Slot {
+    pub fn str_to_slot(slot: String) -> Slot {
+        match slot.as_str() {        
+            "Helm" => Slot::Helm,
+            "Shoulder" => Slot::Shoulder,
+            "Chest" => Slot::Chest,
+            "Pants" => Slot::Pants,
+            "Boots" => Slot::Boots,
+            "Main Hand" => Slot::MainHand,
+            _ => {
+                error!("Invalid slot: {:?}", slot);
+                Slot::Invalid
+            }
+        }
+    }
+
+    pub fn to_str(slot: Option<Slot>) -> Option<String> {
+
+        if let Some(slot) = slot {
+
+            let slot_str = match slot {
+                Slot::Helm => "Helm",
+                Slot::Shoulder => "Shoulder",
+                Slot::Chest => "Chest",
+                Slot::Pants => "Pants",
+                Slot::Boots => "Boots",
+                Slot::MainHand => "Main Hand",
+                _ => {
+                    error!("Invalid slot: {:?}", slot);
+                    "Invalid"
+                }
+            };
+
+            return Some(slot_str.to_string());
+        } else {
+            return None;
+        }
+    }
+}
+
+
 #[derive(Debug, Reflect, Clone)]
 pub struct Item {
     pub id: i32,
@@ -145,6 +197,7 @@ pub struct Item {
     pub quantity: i32,
     pub class: String,
     pub subclass: String,
+    pub slot: Option<Slot>, 
     pub image: String,
     pub weight: f32,
     pub equipped: bool,
@@ -170,6 +223,7 @@ impl Items {
         let mut subclass = "Invalid".to_string();
         let mut image = "Invalid".to_string();
         let mut weight = 0.0;
+        let mut slot = None;
 
         for item_template in self.item_templates.iter() {
             if name == item_template.name {
@@ -177,6 +231,10 @@ impl Items {
                 subclass = item_template.subclass.clone();
                 image = item_template.image.clone();
                 weight = item_template.weight;
+                
+                if let Some(item_template_slot) = &item_template.slot {
+                    slot = Some(Slot::str_to_slot(item_template_slot.to_string()));
+                }
             }
         }
 
@@ -189,6 +247,7 @@ impl Items {
             quantity: quantity,
             class: class,
             subclass: subclass,
+            slot: slot,
             image: image,
             weight: weight,
             equipped: false,
@@ -208,11 +267,12 @@ impl Items {
         name: String,
         quantity: i32,
         attrs: HashMap<AttrKey, AttrVal>,
-    ) -> Item {
+    ) -> (Item, bool) {
         let mut class = "Invalid".to_string();
         let mut subclass = "Invalid".to_string();
         let mut image = "Invalid".to_string();
         let mut weight = 0.0;
+        let mut slot = None;
 
         for item_template in self.item_templates.iter() {
             if name == item_template.name {
@@ -220,27 +280,69 @@ impl Items {
                 subclass = item_template.subclass.clone();
                 image = item_template.image.clone();
                 weight = item_template.weight;
+
+                if let Some(item_template_slot) = &item_template.slot {
+                    slot = Some(Slot::str_to_slot(item_template_slot.to_string()));
+                }
             }
         }
 
-        let new_item = Item {
-            id: self.get_next_id(),
-            owner: owner,
-            name: name,
-            quantity: quantity,
-            class: class,
-            subclass: subclass,
-            image: image,
-            weight: weight,
-            equipped: false,
-            experiment: None,
-            attrs: attrs,
-        };
+        // Can new item be merged into existing
+        if Item::can_merge_by_class(class.clone()) {
+            if let Some(merged_index) = self
+                .items
+                .iter()
+                .position(|item| item.owner == owner && item.name == name)
+            {
+                let merged_item = &mut self.items[merged_index];
+                merged_item.quantity += quantity;
 
-        self.items.push(new_item.clone());
+                return (merged_item.clone(), true);
+            } else {
+                // Create the new item
+                let new_item = Item {
+                    id: self.get_next_id(),
+                    owner: owner,
+                    name: name,
+                    quantity: quantity,
+                    class: class,
+                    subclass: subclass,
+                    slot: slot,
+                    image: image,
+                    weight: weight,
+                    equipped: false,
+                    experiment: None,
+                    attrs: attrs,
+                };
 
-        debug!("New Item by new_with_attrs(): {:?}", new_item.clone());
-        new_item
+                self.items.push(new_item.clone());
+
+                // Return new item to send to client
+                return (new_item, false);
+            }
+        } else {
+            // Create the new item
+                // Create the new item
+                let new_item = Item {
+                    id: self.get_next_id(),
+                    owner: owner,
+                    name: name,
+                    quantity: quantity,
+                    class: class,
+                    subclass: subclass,
+                    slot: slot,
+                    image: image,
+                    weight: weight,
+                    equipped: false,
+                    experiment: None,
+                    attrs: attrs,
+                };
+
+                self.items.push(new_item.clone());
+
+            // Return new item to send to client
+            return (new_item, false);
+        }
     }
 
     pub fn create(&mut self, owner: i32, name: String, quantity: i32) -> (Item, bool) {
@@ -259,7 +361,7 @@ impl Items {
         }
 
         // Can new item be merged into existing
-        if Item::can_merge(class) {
+        if Item::can_merge_by_class(class) {
             if let Some(merged_index) = self
                 .items
                 .iter()
@@ -290,7 +392,7 @@ impl Items {
             // Immutable item to transfer
             let item_to_transfer = self.items[transfer_index].clone();
 
-            if Item::can_merge(item_to_transfer.class.clone()) {
+            if Item::can_merge_by_class(item_to_transfer.class.clone()) {
                 if let Some(merged_index) = self
                     .items
                     .iter()
@@ -331,6 +433,7 @@ impl Items {
                 let mut subclass = "Invalid".to_string();
                 let mut image = "Invalid".to_string();
                 let mut weight = 0.0;
+                let mut slot = None;
 
                 for item_template in self.item_templates.iter() {
                     if item.name == item_template.name {
@@ -338,6 +441,10 @@ impl Items {
                         subclass = item_template.subclass.clone();
                         image = item_template.image.clone();
                         weight = item_template.weight;
+
+                        if let Some(item_template_slot) = &item_template.slot {
+                            slot = Some(Slot::str_to_slot(item_template_slot.to_string()));
+                        }                        
                     }
                 }
 
@@ -348,6 +455,7 @@ impl Items {
                     quantity: quantity,
                     class: class,
                     subclass: subclass,
+                    slot: slot,
                     image: image,
                     weight: weight,
                     equipped: false,
@@ -380,6 +488,14 @@ impl Items {
         }
     }
 
+    pub fn transfer_all_items(&mut self, source_id: i32, target_id: i32) {
+        let source_items = self.get_by_owner(source_id);
+
+        for source_item in source_items.iter() {
+            self.transfer(source_item.id, target_id);
+        }
+    }
+
     pub fn craft(
         &mut self,
         owner: i32,
@@ -397,6 +513,7 @@ impl Items {
         let mut subclass = "Invalid".to_string();
         let mut image = "Invalid".to_string();
         let mut weight = 0.0;
+        let mut slot = None;
 
         for recipe_template in recipe_templates.iter() {
             if recipe_name == recipe_template.name {
@@ -404,6 +521,10 @@ impl Items {
                 subclass = recipe_template.subclass.clone();
                 image = recipe_template.image.clone();
                 weight = recipe_template.weight as f32 * (quantity as f32);
+
+                if let Some(recipe_template_slot) = &recipe_template.slot {
+                    slot = Some(Slot::str_to_slot(recipe_template_slot.to_string()));
+                }
             }
         }
 
@@ -415,13 +536,15 @@ impl Items {
             image = custom_image;
         }
 
+
         let new_item = Item {
-            id: self.items.len() as i32 + 1,
+            id: self.get_next_id(),
             owner: owner,
             name: name,
             quantity: quantity,
             class: class,
             subclass: subclass,
+            slot: slot,
             image: image,
             weight: weight,
             equipped: false,
@@ -460,6 +583,7 @@ impl Items {
 
         for item in self.items.iter() {
             if item.owner == owner {
+
                 let item_packet = network::Item {
                     id: item.id,
                     owner: item.owner,
@@ -467,6 +591,7 @@ impl Items {
                     quantity: item.quantity,
                     class: item.class.clone(),
                     subclass: item.subclass.clone(),
+                    slot: Slot::to_str(item.slot.clone()),
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
@@ -497,6 +622,7 @@ impl Items {
                         quantity: item.quantity,
                         class: item.class.clone(),
                         subclass: item.subclass.clone(),
+                        slot: Slot::to_str(item.slot.clone()),
                         image: item.image.clone(),
                         weight: item.weight,
                         equipped: item.equipped,
@@ -513,6 +639,7 @@ impl Items {
 
     pub fn get_packet(&self, item_id: i32) -> Option<network::Item> {
         for item in self.items.iter() {
+
             if item.id == item_id {
                 return Some(network::Item {
                     id: item.id,
@@ -521,6 +648,7 @@ impl Items {
                     quantity: item.quantity,
                     class: item.class.clone(),
                     subclass: item.subclass.clone(),
+                    slot: Slot::to_str(item.slot.clone()),
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
@@ -542,6 +670,7 @@ impl Items {
                     quantity: item.quantity,
                     class: item.class.clone(),
                     subclass: item.subclass.clone(),
+                    slot: Slot::to_str(item.slot.clone()),
                     image: item.image.clone(),
                     weight: item.weight,
                     equipped: item.equipped,
@@ -822,6 +951,7 @@ impl Item {
             quantity: item.quantity,
             class: item.class.clone(),
             subclass: item.subclass.clone(),
+            slot: Slot::to_str(item.slot),
             image: item.image.clone(),
             weight: item.weight,
             equipped: item.equipped,
@@ -904,13 +1034,14 @@ impl Item {
         }
     }
 
-    fn can_merge(item_class: String) -> bool {
+    fn can_merge_by_class(item_class: String) -> bool {
         match item_class.as_str() {
             WEAPON => false,
             ARMOR => false,
             _ => true,
         }
     }
+
 }
 
 pub struct ItemPlugin;

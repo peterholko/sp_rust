@@ -46,7 +46,7 @@ use crate::item::*;
 use crate::map::Map;
 use crate::map::MapPos;
 use crate::obj;
-use crate::obj::ObjUtil;
+use crate::obj::Obj;
 use crate::player;
 use crate::player::*;
 use crate::structure;
@@ -552,8 +552,7 @@ pub fn process_order_system(
                                 {
                                     if *villager.state == State::None {
                                         debug!("Executing Following");
-                                        ObjUtil::add_sound_obj_event(
-                                            ids.new_map_event_id(),
+                                        Obj::add_sound_obj_event(
                                             game_tick.0,
                                             Villager::order_to_speech(&Order::Follow {
                                                 target: *target,
@@ -658,7 +657,6 @@ pub fn process_order_system(
                                             *villager.state = State::Moving;
 
                                             map_events.new(
-                                                ids.new_map_event_id(),
                                                 *actor,
                                                 villager.id,
                                                 villager.player_id,
@@ -673,10 +671,7 @@ pub fn process_order_system(
                                                 dst_y: next_pos.1,
                                             };
 
-                                            let event_id = ids.new_map_event_id();
-
-                                            map_events.new(
-                                                event_id,
+                                            let move_map_event = map_events.new(
                                                 *actor,
                                                 villager.id,
                                                 villager.player_id,
@@ -687,7 +682,7 @@ pub fn process_order_system(
 
                                             commands
                                                 .entity(*actor)
-                                                .insert(EventInProgress { event_id: event_id });
+                                                .insert(EventInProgress { event_id: move_map_event.event_id });
                                         }
                                     } else {
                                         debug!("Follower is still moving");
@@ -707,7 +702,6 @@ pub fn process_order_system(
                                 };
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -757,7 +751,6 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;
 
                                         map_events.new(
-                                            ids.new_map_event_id(),
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -772,10 +765,7 @@ pub fn process_order_system(
                                             dst_y: next_pos.1,
                                         };
 
-                                        let event_id = ids.new_map_event_id();
-
-                                        map_events.new(
-                                            event_id,
+                                        let move_map_event = map_events.new(
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -786,11 +776,10 @@ pub fn process_order_system(
 
                                         commands
                                             .entity(*actor)
-                                            .insert(EventInProgress { event_id: event_id });
+                                            .insert(EventInProgress { event_id: move_map_event.event_id });
                                     }
                                 } else {
-                                    // Create operate or refine event
-                                    let event_id = ids.new_map_event_id();
+                                    let mut map_event;
 
                                     match villager.order {
                                         Order::Refine => {
@@ -800,8 +789,7 @@ pub fn process_order_system(
 
                                             *villager.state = State::Refining;
 
-                                            map_events.new(
-                                                event_id,
+                                            map_event = map_events.new(
                                                 *actor,
                                                 villager.id,
                                                 villager.player_id,
@@ -818,8 +806,7 @@ pub fn process_order_system(
                                             //TODO look up subclass of structure and replace operating with mining, lumberjacking, etc...
                                             *villager.state = State::Operating;
 
-                                            map_events.new(
-                                                event_id,
+                                            map_event = map_events.new(
                                                 *actor,
                                                 villager.id,
                                                 villager.player_id,
@@ -832,11 +819,11 @@ pub fn process_order_system(
                                             error!("Invalid order type: {:?}", villager.order);
                                             continue;
                                         }
+                                        
                                     }
-
                                     commands
-                                        .entity(*actor)
-                                        .insert(EventInProgress { event_id: event_id });
+                                    .entity(*actor)
+                                    .insert(EventInProgress { event_id: map_event.event_id });
 
                                     *state = ActionState::Success;
                                 }
@@ -882,7 +869,6 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;                                    
 
                                         map_events.new(
-                                            ids.new_map_event_id(),
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -899,8 +885,7 @@ pub fn process_order_system(
 
                                         let event_id = ids.new_map_event_id();
 
-                                        map_events.new(
-                                            event_id,
+                                        let map_event = map_events.new(
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -911,7 +896,7 @@ pub fn process_order_system(
 
                                         commands
                                             .entity(*actor)
-                                            .insert(EventInProgress { event_id: event_id });
+                                            .insert(EventInProgress { event_id: map_event.event_id });
                                     }
                                 } else {
                                     // Create craft event
@@ -928,7 +913,6 @@ pub fn process_order_system(
                                     *villager.state = State::Crafting; 
 
                                     map_events.new(
-                                        ids.new_map_event_id(),
                                         *actor,
                                         villager.id,
                                         villager.player_id,
@@ -939,8 +923,7 @@ pub fn process_order_system(
 
                                     let event_id = ids.new_map_event_id();
 
-                                    map_events.new(
-                                        event_id,
+                                    let map_event = map_events.new(
                                         *actor,
                                         villager.id,
                                         villager.player_id,
@@ -951,7 +934,7 @@ pub fn process_order_system(
 
                                     commands
                                         .entity(*actor)
-                                        .insert(EventInProgress { event_id: event_id });
+                                        .insert(EventInProgress { event_id: map_event.event_id });
 
                                     *state = ActionState::Success;
                                 }
@@ -997,7 +980,6 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;
 
                                         map_events.new(
-                                            ids.new_map_event_id(),
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -1012,10 +994,7 @@ pub fn process_order_system(
                                             dst_y: next_pos.1,
                                         };
 
-                                        let event_id = ids.new_map_event_id();
-
-                                        map_events.new(
-                                            event_id,
+                                        let map_event = map_events.new(
                                             *actor,
                                             villager.id,
                                             villager.player_id,
@@ -1026,7 +1005,7 @@ pub fn process_order_system(
 
                                         commands
                                             .entity(*actor)
-                                            .insert(EventInProgress { event_id: event_id });
+                                            .insert(EventInProgress { event_id: map_event.event_id });
                                     }
                                 } else {
                                     // Create experiment event
@@ -1042,7 +1021,6 @@ pub fn process_order_system(
                                     *villager.state = State::Experimenting;
 
                                     map_events.new(
-                                        ids.new_map_event_id(),
                                         *actor,
                                         villager.id,
                                         villager.player_id,
@@ -1051,10 +1029,7 @@ pub fn process_order_system(
                                         state_change_event,
                                     );
 
-                                    let event_id = ids.new_map_event_id();
-
-                                    map_events.new(
-                                        event_id,
+                                    let map_event = map_events.new(
                                         *actor,
                                         villager.id,
                                         villager.player_id,
@@ -1065,7 +1040,7 @@ pub fn process_order_system(
 
                                     commands
                                         .entity(*actor)
-                                        .insert(EventInProgress { event_id: event_id });
+                                        .insert(EventInProgress { event_id: map_event.event_id });
 
                                     // Update experiment state to progressing
                                     let updated_experiment = Experiment::update_state(
@@ -1094,7 +1069,6 @@ pub fn process_order_system(
                                 let explore_event = VisibleEvent::ExploreEvent;
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -1168,8 +1142,7 @@ pub fn flee_system(
 
                     // Add before changing state otherwise there will be multiple speeches
                     if villager_attrs.activity != villager::Activity::Fleeing {
-                        ObjUtil::add_sound_obj_event(
-                            ids.new_map_event_id(),
+                        Obj::add_sound_obj_event(
                             game_tick.0,
                             "Run for your lives!!!".to_owned(),
                             *actor,
@@ -1218,7 +1191,6 @@ pub fn flee_system(
                             };
 
                             map_events.new(
-                                ids.new_map_event_id(),
                                 *actor,
                                 villager.id,
                                 villager.player_id,
@@ -1235,8 +1207,7 @@ pub fn flee_system(
 
                             let event_id = ids.new_map_event_id();
 
-                            map_events.new(
-                                event_id,
+                            let map_event = map_events.new(
                                 *actor,
                                 villager.id,
                                 villager.player_id,
@@ -1248,7 +1219,7 @@ pub fn flee_system(
                             debug!("MoveToHero - Adding EventInProgress {:?}", event_id);
                             commands
                                 .entity(*actor)
-                                .insert(EventInProgress { event_id: event_id });
+                                .insert(EventInProgress { event_id: map_event.event_id });
 
                             commands.entity(*actor).insert(MoveToInProgress);                        
                         } else {
@@ -1327,8 +1298,7 @@ pub fn find_drink_system(
 
                 // Add before changing state otherwise there will be multiple speeches
                 if villager.attrs.activity != villager::Activity::Drinking {
-                    ObjUtil::add_sound_obj_event(
-                        ids.new_map_event_id(),
+                    Obj::add_sound_obj_event(
                         game_tick.0,
                         "Time to grab a cold ale".to_owned(),
                         *actor,
@@ -1420,7 +1390,6 @@ pub fn move_to_water_source_action_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -1435,10 +1404,7 @@ pub fn move_to_water_source_action_system(
                                     dst_y: next_pos.1,
                                 };
 
-                                let event_id = ids.new_map_event_id();
-
-                                map_events.new(
-                                    event_id,
+                                let map_event = map_events.new(
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -1447,10 +1413,9 @@ pub fn move_to_water_source_action_system(
                                     move_event,
                                 );
 
-                                debug!("MoveToWater - Adding EventInProgress {:?}", event_id);
                                 commands
                                     .entity(*actor)
-                                    .insert(EventInProgress { event_id: event_id });
+                                    .insert(EventInProgress { event_id: map_event.event_id });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
                             } else {
@@ -1607,7 +1572,6 @@ pub fn drink_action_system(
                     *villager.state = State::Drinking;
 
                     map_events.new(
-                        ids.new_map_event_id(),
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -1616,10 +1580,7 @@ pub fn drink_action_system(
                         state_change_event,
                     );
 
-                    let event_id = ids.new_map_event_id();
-
-                    map_events.new(
-                        event_id,
+                    let map_event = map_events.new(
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -1628,10 +1589,9 @@ pub fn drink_action_system(
                         drink_event,
                     );
 
-                    debug!("Drink - Adding EventInProgress {:?}", event_id);
                     commands
                         .entity(*actor)
-                        .insert(EventInProgress { event_id: event_id });
+                        .insert(EventInProgress { event_id: map_event.event_id });
 
                     *state = ActionState::Executing;
                 }
@@ -1774,8 +1734,7 @@ pub fn find_food_system(
 
                 // Add before changing state otherwise there will be multiple speeches
                 if villager.attrs.activity != villager::Activity::Eating {
-                    ObjUtil::add_sound_obj_event(
-                        ids.new_map_event_id(),
+                    Obj::add_sound_obj_event(
                         game_tick.0,
                         "Time to fill my stomach".to_owned(),
                         *actor,
@@ -1863,7 +1822,6 @@ pub fn move_to_food_action_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -1880,8 +1838,7 @@ pub fn move_to_food_action_system(
 
                                 let event_id = ids.new_map_event_id();
 
-                                map_events.new(
-                                    event_id,
+                                let map_event = map_events.new(
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -1890,10 +1847,9 @@ pub fn move_to_food_action_system(
                                     move_event,
                                 );
 
-                                debug!("MoveToFood - Adding EventInProgress {:?}", event_id);
                                 commands
                                     .entity(*actor)
-                                    .insert(EventInProgress { event_id: event_id });
+                                    .insert(EventInProgress { event_id: map_event.event_id });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
                             } else {  
@@ -2051,7 +2007,6 @@ pub fn eat_action_system(
                     *villager.state = State::Eating;
 
                     map_events.new(
-                        ids.new_map_event_id(),
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -2060,10 +2015,7 @@ pub fn eat_action_system(
                         state_change_event,
                     );
 
-                    let event_id = ids.new_map_event_id();
-
-                    map_events.new(
-                        event_id,
+                    let map_event = map_events.new(
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -2072,10 +2024,9 @@ pub fn eat_action_system(
                         eat_event,
                     );
 
-                    debug!("Eat - Adding EventInProgress {:?}", event_id);
                     commands
                         .entity(*actor)
-                        .insert(EventInProgress { event_id: event_id });
+                        .insert(EventInProgress { event_id: map_event.event_id });
 
                     *state = ActionState::Executing;
                 }
@@ -2191,8 +2142,7 @@ pub fn find_shelter_system(
 
                     // Add before changing state otherwise there will be multiple speeches
                     if villager.attrs.activity != villager::Activity::Sleeping {
-                        ObjUtil::add_sound_obj_event(
-                            ids.new_map_event_id(),
+                        Obj::add_sound_obj_event(
                             game_tick.0,
                             "Time to sleep".to_owned(),
                             *actor,
@@ -2280,8 +2230,7 @@ pub fn move_to_shelter_system(
 
                                 // Add before changing state otherwise there will be multiple speeches
                                 if villager.attrs.activity != villager::Activity::Sleeping {
-                                    ObjUtil::add_sound_obj_event(
-                                        ids.new_map_event_id(),
+                                    Obj::add_sound_obj_event(
                                         game_tick.0,
                                         "Finally bedtime".to_owned(),
                                         *actor,
@@ -2300,7 +2249,6 @@ pub fn move_to_shelter_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    ids.new_map_event_id(),
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -2315,10 +2263,8 @@ pub fn move_to_shelter_system(
                                     dst_y: next_pos.1,
                                 };
 
-                                let event_id = ids.new_map_event_id();
 
-                                map_events.new(
-                                    event_id,
+                                let map_event = map_events.new(
                                     *actor,
                                     villager.id,
                                     villager.player_id,
@@ -2327,10 +2273,9 @@ pub fn move_to_shelter_system(
                                     move_event,
                                 );
 
-                                debug!("MoveToShelter - Adding EventInProgress {:?}", event_id);
                                 commands
                                     .entity(*actor)
-                                    .insert(EventInProgress { event_id: event_id });
+                                    .insert(EventInProgress { event_id: map_event.event_id });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
                             } else {
@@ -2423,7 +2368,6 @@ pub fn sleep_action_system(
                     *villager.state = State::Sleeping;
 
                     map_events.new(
-                        ids.new_map_event_id(),
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -2432,10 +2376,7 @@ pub fn sleep_action_system(
                         state_change_event,
                     );
 
-                    let event_id = ids.new_map_event_id();
-
-                    map_events.new(
-                        event_id,
+                    let map_event = map_events.new(
                         *actor,
                         villager.id,
                         villager.player_id,
@@ -2444,13 +2385,9 @@ pub fn sleep_action_system(
                         sleep_event,
                     );
 
-                    debug!(
-                        "Sleep - Adding EventInProgress {:?} at game tick: {:?}",
-                        event_id, game_tick.0
-                    );
                     commands
                         .entity(*actor)
-                        .insert(EventInProgress { event_id: event_id });
+                        .insert(EventInProgress { event_id: map_event.event_id });
 
                     *state = ActionState::Executing;
                 }

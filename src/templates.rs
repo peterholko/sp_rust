@@ -18,7 +18,8 @@ pub struct Templates {
     pub recipe_templates: RecipeTemplates,
     pub effect_templates: EffectTemplates,
     pub combo_templates: ComboTemplates,
-    pub res_property_templates: ResPropertyTemplates
+    pub res_property_templates: ResPropertyTemplates,
+    pub terrain_feature_templates: TerrainFeatureTemplates
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -132,7 +133,7 @@ pub struct ResTemplate {
     pub level: i32,
     pub quality_rate: Option<Vec<i32>>,
     pub properties: Option<Vec<String>>,
-    pub max_properties: Option<i32>
+    pub num_properties: Option<i32>
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -197,7 +198,7 @@ pub struct RecipeTemplate {
     pub class: String,
     pub subclass: String,
     pub tier: Option<i32>,
-    pub slot: String,
+    pub slot: Option<String>,
     pub damage: Option<i32>,
     pub speed: Option<f32>,
     pub armor: Option<i32>,
@@ -289,6 +290,28 @@ impl ComboTemplates {
     }
 }
 
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
+pub struct TerrainFeatureTemplate {
+    pub name: String,
+    pub image: String,
+    pub description: String,
+    pub bonus: String,
+    pub terrain: Vec<String>
+}
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct TerrainFeatureTemplates(HashMap<String, TerrainFeatureTemplate>);
+
+impl TerrainFeatureTemplates {
+    pub fn load(&mut self, terrain_feature_templates: Vec<TerrainFeatureTemplate>) {                 
+
+        for terrain_feature_templates in terrain_feature_templates.iter() {
+            self.insert(terrain_feature_templates.name.clone(), terrain_feature_templates.clone() );
+        }
+    }
+}
+
+
 /// The systems that make structures tick.
 pub struct TemplatesPlugin;
 
@@ -354,7 +377,7 @@ impl Plugin for TemplatesPlugin {
         let mut comobo_templates = ComboTemplates(HashMap::new());
         comobo_templates.load(combo_template_list);
 
-        // Load characteristic template data
+        // Load properties template data
         let res_property_template_file =
             fs::File::open("res_property_template.yaml").expect("Could not open file.");
 
@@ -364,6 +387,14 @@ impl Plugin for TemplatesPlugin {
         let mut res_property_templates = ResPropertyTemplates(HashMap::new());
         res_property_templates.load(res_property_template_list);
 
+        // Load terrain features template data
+        let terrain_feature_template_file = fs::File::open("terrain_feature_template.yaml").expect("Could not open file.");
+
+        let terrain_feature_template_list: Vec<TerrainFeatureTemplate> = serde_yaml::from_reader(terrain_feature_template_file).expect("Could not read values.");
+
+        let mut terrain_feature_templates = TerrainFeatureTemplates(HashMap::new());
+        terrain_feature_templates.load(terrain_feature_template_list);
+
         let templates = Templates {
             item_templates: item_templates,
             res_templates: ResTemplates(res_templates),
@@ -372,7 +403,8 @@ impl Plugin for TemplatesPlugin {
             recipe_templates: RecipeTemplates(recipe_templates),
             effect_templates: effect_templates,
             combo_templates: comobo_templates,
-            res_property_templates: res_property_templates
+            res_property_templates: res_property_templates,
+            terrain_feature_templates: terrain_feature_templates
         };
 
         app.insert_resource(templates);

@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use std::collections::HashMap;
 
-use crate::network;
+use crate::{item, network, recipe};
 use crate::templates::{RecipeTemplate, RecipeTemplates, ResReq, Templates};
 
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct Recipe {
     pub class: String,
     pub subclass: String,
     pub tier: Option<i32>,
-    pub slot: String,
+    pub slot: Option<item::Slot>,
     pub damage: Option<i32>,
     pub speed: Option<f32>,
     pub armor: Option<i32>,
@@ -41,7 +41,14 @@ impl Recipes {
         name: String,
     ) {
         for recipe_template in self.recipe_templates.iter() {
+
             if name == recipe_template.name {
+
+                let mut slot = None;
+                if let Some(recipe_template_slot) = &recipe_template.slot {
+                    slot = Some(item::Slot::str_to_slot(recipe_template_slot.to_string()));
+                }
+
                 let new_recipe = Recipe {
                     name: recipe_template.name.clone(),
                     image: recipe_template.image.clone(),
@@ -50,7 +57,7 @@ impl Recipes {
                     class: recipe_template.class.clone(),
                     subclass: recipe_template.subclass.clone(),
                     tier: recipe_template.tier,
-                    slot: recipe_template.slot.clone(),
+                    slot: slot,
                     damage: recipe_template.damage,
                     speed: recipe_template.speed,
                     armor: recipe_template.armor,
@@ -102,6 +109,7 @@ impl Recipes {
             recipe_structure.retain(|c| !c.is_whitespace());
 
             if recipe.owner == owner && recipe_structure == structure {
+                
                 let recipe_packet = network::Recipe {
                     name: recipe.name.clone(),
                     image: recipe.image.clone(),
@@ -109,7 +117,7 @@ impl Recipes {
                     class: recipe.class.clone(),
                     subclass: recipe.subclass.clone(),
                     tier: recipe.tier.clone(),
-                    slot: recipe.slot.clone(),
+                    slot: item::Slot::to_str(recipe.slot.clone()),
                     damage: recipe.damage,
                     speed: recipe.speed,
                     armor: recipe.armor,

@@ -37,6 +37,7 @@ mod skill;
 mod structure;
 mod templates;
 mod villager;
+mod terrain_feature;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 

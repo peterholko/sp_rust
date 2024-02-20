@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use core::num;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::HashMap;
 
@@ -13,7 +12,7 @@ use crate::game::{Ids, Position};
 use crate::item::{Item, Items, self, AttrKey};
 use crate::map::Map;
 use crate::network;
-use crate::obj::ObjUtil;
+use crate::obj::Obj;
 use crate::skill::{self, Skill, Skills};
 use crate::templates::{
     ResPropertyTemplates, ItemTemplate, ResReq, ResTemplate, ResTemplates, Templates,
@@ -37,7 +36,7 @@ pub const LOW: &str = "low";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Property {
     pub name: String,
-    pub range: Vec<i32>
+    pub value: i32
 }
 
 #[derive(Debug, Clone)]
@@ -57,11 +56,12 @@ pub struct Resource {
 #[derive(Resource, Deref, DerefMut, Debug)]
 pub struct Resources(HashMap<Position, HashMap<String, Resource>>);
 
+
 impl Resource {
     pub fn spawn_all_resources(
         resources: &mut ResMut<Resources>,
         templates: &Templates,
-        map: Res<Map>,
+        map: &Res<Map>,
     ) {
         let res_templates = &templates.res_templates;
         let res_property_templates = &templates.res_property_templates;
@@ -90,6 +90,7 @@ impl Resource {
             if let Some(res_template_list) =
                 terrain_list.get(tile_info.tile_type.to_string().as_str())
             {
+                debug!("res_template_list: {:?}", res_template_list);
                 for res_template in res_template_list.iter() {
                     // Randomize quantity
                     let dist = WeightedIndex::new(&res_template.quantity_rate).unwrap();
@@ -108,18 +109,18 @@ impl Resource {
                         let yield_level = (yield_sample + 1) as i32;
                         let yield_mod = res_template.yield_mod[yield_sample];
 
-                        let mut char_available_list = Vec::new();
-                        let mut char_selected_list = Vec::new();
+                        let mut property_available_list = Vec::new();
+                        let mut property_selected_list = Vec::new();
 
                         if let Some(properties) = &mut res_template.properties.clone()
                         {
-                            let mut num_properties = 2;
+                            let mut num_properties = 1;
 
-                            if let Some(num) = &res_template.max_properties {
+                            if let Some(num) = &res_template.num_properties {
                                 num_properties = *num;
                             }
 
-                            debug!("num_characteristics: {:?}", num_properties);
+                            //debug!("num_properties: {:?}", num_properties);
 
                             for property in properties.iter() {
                                 let property_templates =
@@ -135,31 +136,31 @@ impl Resource {
                                     // Generate property value and round to 2 decimal places
                                     let property_value = rng.gen_range(min..=max);
 
-                                    let characteristic = Property {
+                                    let property = Property {
                                         name: property_template.name.to_string(),
-                                        range: level_range.to_vec()
+                                        value: property_value
                                     };
 
-                                    debug!("{:?}", characteristic);
+                                    debug!("{:?}", property);
 
-                                    char_available_list.push(characteristic);
+                                    property_available_list.push(property);
                                 }
 
-                                debug!("{:?}", char_available_list);
+                                debug!("{:?}", property_available_list);
 
                                 // let index = rng.gen_range(0..characteristics.len());
                                 // let characteristic_name = &characteristics[index];
                             }
 
-                            debug!("characteristic_list: {:?}", char_available_list);
-                            for i in 0..num_properties {
-                                let index = rng.gen_range(0..char_available_list.len());
-                                let selected_char = &char_available_list[index];
+                            //debug!("property_available_list: {:?}", property_available_list);
+                            for _i in 0..num_properties {
+                                let index = rng.gen_range(0..property_available_list.len());
+                                let selected_property = &property_available_list[index];
 
-                                debug!("selected_char: {:?}", selected_char);
-                                char_selected_list.push(selected_char.clone());
+                                //debug!("selected_property: {:?}", selected_property);
+                                property_selected_list.push(selected_property.clone());
 
-                                char_available_list.remove(index);
+                                property_available_list.remove(index);
                             }
                         }
 
@@ -171,7 +172,7 @@ impl Resource {
                             quantity_level,
                             quantity,
                             Position { x: pos.0, y: pos.1 },
-                            char_selected_list,
+                            property_selected_list,
                             resources,
                         );
                     }
@@ -230,7 +231,7 @@ impl Resource {
                         color: (resource.yield_level + resource.quantity_level) / 2,
                         yield_label: Resource::yield_level_to_label(resource.yield_level),
                         quantity_label: Resource::quantity_level_to_label(resource.quantity_level),
-                        characteristics: resource.properties.clone(),
+                        properties: resource.properties.clone(),
                     };
 
                     tile_resources.push(tile_resource);
@@ -413,20 +414,18 @@ impl Resource {
 
                         debug!("Quality Level: {:?}", quality_level);
 
-                        for characteristic in resource.properties.iter() {
-                            debug!("{:?} {:?}", characteristic.name, characteristic.range);
-                            //let characteristic_value = rng.gen_range(characteristic.min..characteristic.max);
-                            let characteristic_value = characteristic.range[quality_level as usize];
-                            debug!("{:?}", characteristic_value);
+                        for property in resource.properties.iter() {
+                            debug!("{:?} {:?}", property.name, property.value);
+                            //let characteristic_value = rng.gen_range(characteristic.min..characteristic.max);               
 
-                            let attr_key = AttrKey::str_to_key(characteristic.name.clone());                            
+                            let attr_key = AttrKey::str_to_key(property.name.clone());                            
 
-                            item_attrs.insert(attr_key, item::AttrVal::Num(characteristic_value as f32));
+                            item_attrs.insert(attr_key, item::AttrVal::Num(property.value as f32));
                         }
 
                         debug!("item_attrs: {:?}", item_attrs);
 
-                        let new_item = items.new_with_attrs(
+                        let (new_item, _merged) = items.new_with_attrs(
                             dest_obj_id,
                             resource.name.clone(),
                             1, //TODO should this be only 1 

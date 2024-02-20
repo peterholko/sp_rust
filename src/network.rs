@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     account::{Account, Accounts},
-    templates::ResReq, game::{Obj, ObjQueryMutReadOnlyItem}, obj::ObjUtil, item, resource::Property,
+    templates::ResReq, game::{ObjQueryMutReadOnlyItem}, obj::Obj, item, resource::Property,
 };
 use crate::{
     game::{Client, Clients, HeroClassList},
@@ -66,6 +66,8 @@ enum NetworkPacket {
     InfoUpgrade { structureid: i32 },    
     #[serde(rename = "info_tile")]
     InfoTile { x: i32, y: i32 },
+    #[serde(rename = "info_tile_resources")]
+    InfoTileResources { x: i32, y: i32 },
     #[serde(rename = "info_inventory")]
     InfoInventory { id: i32 },
     #[serde(rename = "info_item")]
@@ -84,6 +86,10 @@ enum NetworkPacket {
     ItemSplit { item: i32, quantity: i32 },
     #[serde(rename = "gather")]
     Gather { sourceid: i32, restype: String },
+    #[serde(rename = "refine")]
+    Refine {},
+    #[serde(rename = "craft")]
+    Craft {recipe: String},   
     #[serde(rename = "order_follow")]
     OrderFollow { sourceid: i32 },
     #[serde(rename = "order_gather")]
@@ -327,7 +333,15 @@ pub enum ResponsePacket {
         passable: bool,
         wildness: String,
         resources: Vec<TileResource>,
+        terrain_features: Vec<TileTerrainFeature>
     },
+    #[serde(rename = "info_tile_resources")]
+    InfoTileResources {
+        x: i32,
+        y: i32,
+        name: String,
+        resources: Vec<TileResource>,
+    },    
     #[serde(rename = "info_inventory")]
     InfoInventory {
         id: i32,
@@ -588,6 +602,7 @@ pub struct Item {
     pub owner: i32,
     pub class: String,
     pub subclass: String,
+    pub slot: Option<String>,
     pub image: String,
     pub weight: f32,
     pub equipped: bool,
@@ -624,7 +639,7 @@ pub struct Recipe {
     pub class: String,
     pub subclass: String,
     pub tier: Option<i32>,
-    pub slot: String,
+    pub slot: Option<String>,
     pub damage: Option<i32>,
     pub speed: Option<f32>,
     pub armor: Option<i32>,
@@ -647,7 +662,14 @@ pub struct TileResource {
     pub color: i32,
     pub yield_label: String,
     pub quantity_label: String,
-    pub characteristics: Vec<Property>,
+    pub properties: Vec<Property>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct TileTerrainFeature {
+    pub name: String,
+    pub image: String,
+    pub bonus: String
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -740,7 +762,7 @@ pub fn map_obj(
         template: obj.template.0.clone(),
         class: obj.class.0.clone(),
         subclass: obj.subclass.0.clone(),
-        state: ObjUtil::state_to_str(obj.state.clone()),
+        state: Obj::state_to_str(obj.state.clone()),
         vision: obj.viewshed.range,
         image: obj.misc.image.clone(),
         hsl: obj.misc.hsl.clone(),
@@ -915,18 +937,7 @@ async fn handle_connection(
                                                 handle_selected_class(player_id, classname, accounts.clone(), client_to_game_sender.clone())
                                             }
                                             NetworkPacket::GetStats{id} => {
-                                                println!("GetStats: {:?}", id);
-
-                                                ResponsePacket::Stats{
-                                                    data: StatsData {
-                                                        id: 1,
-                                                        hp: 100,
-                                                        base_hp: 100,
-                                                        stamina: 10000,
-                                                        base_stamina: 10000,
-                                                        effects: Vec::new()
-                                                    }
-                                                }
+                                                handle_get_stats(player_id, id, client_to_game_sender.clone())
                                             }
                                             NetworkPacket::ImageDef{name} => {
                                                 println!("ImageDef name: {:?}", name);
@@ -969,6 +980,9 @@ async fn handle_connection(
                                             NetworkPacket::InfoTile{x, y} => {
                                                 handle_info_tile(player_id, x, y, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::InfoTileResources{x, y} => {
+                                                handle_info_tile_resources(player_id, x, y, client_to_game_sender.clone())
+                                            }                                            
                                             NetworkPacket::InfoInventory{id} => {
                                                 handle_info_inventory(player_id, id, client_to_game_sender.clone())
                                             }
@@ -995,7 +1009,13 @@ async fn handle_connection(
                                             }
                                             NetworkPacket::Gather{sourceid, restype} => {
                                                 handle_gather(player_id, sourceid, restype, client_to_game_sender.clone())
+                                            }                                            
+                                            NetworkPacket::Refine{} => {
+                                                handle_refine(player_id, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::Craft{recipe} => {
+                                                handle_craft(player_id, recipe, client_to_game_sender.clone())
+                                            }                                            
                                             NetworkPacket::OrderFollow{sourceid} => {
                                                 handle_order_follow(player_id, sourceid, client_to_game_sender.clone())
                                             }
@@ -1253,6 +1273,22 @@ fn handle_selected_class(
     }
 }
 
+fn handle_get_stats(
+    player_id: i32,
+    id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {    
+    client_to_game_sender
+        .send(PlayerEvent::GetStats {
+            player_id: player_id,
+            id: id
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
 fn handle_move(
     player_id: i32,
     x: i32,
@@ -1395,6 +1431,24 @@ fn handle_info_tile(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::InfoTile {
+            player_id: player_id,
+            x: x,
+            y: y,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::None
+}
+
+fn handle_info_tile_resources(
+    player_id: i32,
+    x: i32,
+    y: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::InfoTileResources {
             player_id: player_id,
             x: x,
             y: y,
@@ -1556,6 +1610,36 @@ fn handle_gather(
             player_id: player_id,
             source_id: sourceid,
             res_type: restype,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_refine(
+    player_id: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Refine {
+            player_id: player_id,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_craft(
+    player_id: i32,
+    recipe: String,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::Craft {
+            player_id: player_id,
+            recipe_name: recipe
         })
         .expect("Could not send message");
 

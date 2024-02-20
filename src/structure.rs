@@ -141,8 +141,9 @@ impl Structure {
         return true;
     }
 
-    pub fn consume_reqs(structure_id: i32, req_items: Vec<ResReq>, items: &mut ResMut<Items>) {
+    pub fn consume_reqs(structure_id: i32, req_items: Vec<ResReq>, items: &mut ResMut<Items>) -> Vec<Item> {
         let structure_items = items.get_by_owner(structure_id).clone();
+        let mut consumed_items = Vec::new();
 
         for req_item in req_items.iter() {
             for structure_item in structure_items.iter() {
@@ -151,9 +152,12 @@ impl Structure {
                     || req_item.req_type == structure_item.subclass
                 {
                     items.remove_quantity(structure_item.id, req_item.quantity);
+                    consumed_items.push(structure_item.clone());
                 }
             }
         }
+
+        return consumed_items;
     }
 
     pub fn process_req_items(
