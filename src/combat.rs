@@ -88,6 +88,22 @@ pub struct CombatQuery {
     pub combo_tracker: Option<&'static mut ComboTracker>,
 }
 
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct CombatSpellQuery { 
+    pub entity: Entity,
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub template: &'static Template,
+    pub state: &'static mut State,
+    pub misc: &'static mut Misc,
+    pub stats: &'static mut Stats,
+    pub effects: &'static mut Effects,
+}
+
 #[derive(Debug, Clone)]
 pub struct Combat;
 
@@ -390,6 +406,22 @@ impl Combat {
         }
 
         return (total_damage as i32, combo_name, skill_updated);
+    }
+
+    pub fn process_spell_damage(
+        commands: &mut Commands,
+        game_tick: &Res<GameTick>,
+        target: &mut CombatSpellQueryItem
+    ) -> i32 {
+        
+        target.stats.hp -= 1;
+
+        if target.stats.hp <= 0 {
+            debug!("Target {:?} is dead", target.entity);
+            commands.entity(target.entity).insert(StateDead{dead_at: game_tick.0});
+        }
+    
+        return 1;
     }
 
     fn process_weapon_procs(

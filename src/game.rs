@@ -19,6 +19,7 @@ use rand::Rng;
 
 use std::collections::hash_map::Entry;
 use std::fmt::Error;
+use std::thread::spawn;
 use std::{
     collections::HashMap,
     collections::HashSet,
@@ -35,8 +36,11 @@ use async_compat::Compat;
 
 use crate::account::Accounts;
 
-use crate::combat::{AttackType, Combat, Combo};
-use crate::components::npc::{ChaseAttack, VisibleTarget, VisibleTargetScorer};
+use crate::combat::{AttackType, Combat, CombatQuery, CombatSpellQuery, Combo};
+use crate::components::npc::{
+    ChaseAndAttack, ChaseAndCast, FleeScorer, FleeToHome, RaiseDead, VisibleCorpse,
+    VisibleCorpseScorer, VisibleTarget, VisibleTargetScorer,
+};
 use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
 use crate::effect::{Effect, Effects};
 use crate::encounter::Encounter;
@@ -47,7 +51,7 @@ use crate::network::{self, network_obj, send_to_client, BroadcastEvents};
 use crate::network::{ResponsePacket, StatsData};
 use crate::obj::{self, Obj};
 use crate::player::{self, ActiveInfos, PlayerEvent, PlayerEvents, PlayerPlugin};
-use crate::plugins::ai::npc::NO_TARGET;
+use crate::plugins::ai::npc::{NECROMANCER, NO_TARGET};
 use crate::plugins::ai::AIPlugin;
 use crate::recipe::{Recipe, RecipePlugin, Recipes};
 use crate::resource::{Resource, ResourcePlugin, Resources};
@@ -79,7 +83,7 @@ impl MapEvents {
         pos_x: i32,
         pos_y: i32,
         run_tick: i32,
-    ) {
+    ) -> Uuid {
         let map_event_id = Uuid::new_v4();
 
         let map_event = MapEvent {
@@ -94,6 +98,8 @@ impl MapEvents {
         };
 
         self.insert(map_event_id, map_event);
+
+        return map_event_id;
     }
 }
 
@@ -172,6 +178,7 @@ pub enum State {
     Eating,
     Sleeping,
     Aboard,
+    Casting,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -197,6 +204,9 @@ pub struct SubclassNPC; //Subclass Villager
 pub struct ClassStructure; //Class Structure
 
 #[derive(Debug, Component)]
+pub struct ClassCorpse; //Class Corpse
+
+#[derive(Debug, Component)]
 pub struct AI;
 
 #[derive(Debug, Reflect, Component, Default)]
@@ -207,6 +217,18 @@ pub struct Merchant {
     pub dest: Position,
     pub in_port_at: i32,
     pub hauling: Vec<i32>,
+}
+
+#[derive(Debug, Reflect, Component, Default)]
+#[reflect(Component)]
+pub struct Minions {
+    pub ids: Vec<i32>,
+}
+
+#[derive(Debug, Reflect, Component, Default)]
+#[reflect(Component)]
+pub struct Home {
+    pub pos: Position,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -231,7 +253,7 @@ pub struct Stats {
     pub damage_range: Option<i32>,
     pub base_damage: Option<i32>,
     pub base_speed: Option<i32>,
-    pub base_vision: Option<i32>,
+    pub base_vision: Option<u32>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -488,6 +510,13 @@ pub enum VisibleEvent {
     SleepEvent {
         obj_id: i32,
     },
+    SpellRaiseDeadEvent {
+        corpse_id: i32,
+    },
+    SpellDamageEvent {
+        spell: Spell,
+        target_id: i32,
+    },
     NoEvent,
 }
 
@@ -518,10 +547,28 @@ pub struct GameEvent {
 #[derive(Clone, Reflect, Debug)]
 
 pub enum GameEventType {
-    Login { player_id: i32 },
-    SpawnNPC { npc_type: String, pos: Position },
-    RemoveEntity { entity: Entity },
-    CancelEvents { event_ids: Vec<uuid::Uuid> },
+    Login {
+        player_id: i32,
+    },
+    SpawnNPC {
+        npc_type: String,
+        pos: Position,
+        npc_id: Option<i32>,
+    },
+    NecroEvent {
+        pos: Position,
+    },
+    RemoveEntity {
+        entity: Entity,
+    },
+    CancelEvents {
+        event_ids: Vec<uuid::Uuid>,
+    },
+}
+
+#[derive(Clone, Reflect, Debug)]
+pub enum Spell {
+    ShadowBolt,
 }
 
 impl Plugin for GamePlugin {
@@ -552,7 +599,8 @@ impl Plugin for GamePlugin {
             .add_systems(Update, craft_event_system)
             .add_systems(Update, experiment_event_system)
             .add_systems(Update, explore_event_system)
-            .add_systems(Update, broadcast_event_system)
+            .add_systems(Update, spell_raise_dead_event_system)
+            .add_systems(Update, spell_damage_event_system)
             .add_systems(Update, broadcast_event_system)
             .add_systems(Update, effect_expired_event_system)
             .add_systems(Update, cooldown_event_system)
@@ -813,6 +861,7 @@ fn move_event_system(
                                         let event_type = GameEventType::SpawnNPC {
                                             npc_type: npc_type,
                                             pos: adjacent_pos,
+                                            npc_id: None,
                                         };
                                         let event_id = ids.new_map_event_id();
 
@@ -1779,6 +1828,225 @@ fn explore_event_system(
     }
 }
 
+// Each spell requires a separate system
+fn spell_raise_dead_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    pos_query: Query<&Position>,
+    mut caster_query: Query<(&mut State, &mut Minions)>,
+    mut map_events: ResMut<MapEvents>,
+    mut game_events: ResMut<GameEvents>,
+    mut visible_events: ResMut<VisibleEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::SpellRaiseDeadEvent { corpse_id } => {
+                    debug!("Processing CastSpellEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(corpse_entity) = ids.get_entity(*corpse_id) else {
+                        error!("Cannot find corpse from {:?}", corpse_id);
+                        continue;
+                    };
+
+                    let Ok(corpse_pos) = pos_query.get(corpse_entity) else {
+                        error!("Cannot find corpse position {:?}", corpse_entity);
+                        continue;
+                    };
+
+                    let Some(caster_entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find caster from {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    let Ok((mut caster_state, mut caster_minions)) =
+                        caster_query.get_mut(caster_entity)
+                    else {
+                        error!("Cannot find caster state {:?}", caster_entity);
+                        continue;
+                    };
+
+                    // Change state to casting
+                    *caster_state = State::None;
+
+                    let state_change_event = VisibleEvent::StateChangeEvent {
+                        new_state: obj::STATE_NONE.to_string(),
+                    };
+
+                    // Caster visible state change
+                    let visible_state_change = MapEvent {
+                        event_id: Uuid::new_v4(),
+                        entity_id: map_event.entity_id,
+                        obj_id: map_event.obj_id,
+                        player_id: map_event.player_id,
+                        pos_x: map_event.pos_x,
+                        pos_y: map_event.pos_y,
+                        run_tick: game_tick.0 + 1,
+                        map_event_type: state_change_event.clone(),
+                    };
+
+                    visible_events.push(visible_state_change);
+
+                    let minion_id = ids.new_obj_id();
+
+                    // Add to list of minions
+                    caster_minions.ids.push(minion_id);
+
+                    let event_type = GameEventType::SpawnNPC {
+                        npc_type: "Zombie".to_string(),
+                        pos: *corpse_pos,
+                        npc_id: Some(minion_id),
+                    };
+
+                    let event_id = ids.new_map_event_id();
+
+                    let event = GameEvent {
+                        event_id: event_id,
+                        run_tick: game_tick.0 + 1, // Add one game tick
+                        game_event_type: event_type,
+                    };
+
+                    game_events.insert(event.event_id, event);
+
+                    // Remove corpse
+                    commands.entity(corpse_entity).despawn();
+
+                    let remove_obj_event = MapEvent {
+                        event_id: Uuid::new_v4(),
+                        entity_id: corpse_entity,
+                        obj_id: *corpse_id,
+                        player_id: -1,
+                        pos_x: corpse_pos.x,
+                        pos_y: corpse_pos.y,
+                        run_tick: game_tick.0 + 1,
+                        map_event_type: VisibleEvent::RemoveObjEvent,
+                    };
+
+                    visible_events.push(remove_obj_event);
+
+                    // Add event in progress to caster
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
+fn spell_damage_event_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut query: Query<CombatSpellQuery>,
+    mut map_events: ResMut<MapEvents>,
+    mut game_events: ResMut<GameEvents>,
+    mut visible_events: ResMut<VisibleEvents>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.map_event_type {
+                VisibleEvent::SpellDamageEvent { spell, target_id } => {
+                    debug!("Processing CastSpellEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(caster_entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find caster from {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    let Some(target_entity) = ids.get_entity(*target_id) else {
+                        error!("Cannot find caster from {:?}", target_id);
+                        continue;
+                    };
+
+                    let entities = [caster_entity, target_entity];
+
+                    let Ok([mut caster, mut target]) = query.get_many_mut(entities) else {
+                        error!("Cannot find caster or target from entities {:?}", entities);
+                        continue;
+                    };
+
+                    if Obj::is_dead(&caster.state) {
+                        continue;
+                    }
+
+                    // Process spell damage
+                    Combat::process_spell_damage(&mut commands, &game_tick, &mut target);
+
+                    let target_state_str = Obj::state_to_str(target.state.clone());
+
+                    let damage_event = VisibleEvent::DamageEvent {
+                        target_id: target.id.0,
+                        target_pos: target.pos.clone(),
+                        attack_type: "Shadow Bolt".to_string(),
+                        damage: 1,
+                        combo: None,
+                        state: target_state_str,
+                    };
+
+                    let damage_map_event = MapEvent {
+                        event_id: Uuid::new_v4(),
+                        entity_id: map_event.entity_id,
+                        obj_id: map_event.obj_id,
+                        player_id: map_event.player_id,
+                        pos_x: map_event.pos_x,
+                        pos_y: map_event.pos_y,
+                        run_tick: game_tick.0 + 1,
+                        map_event_type: damage_event.clone(),
+                    };
+
+                    visible_events.push(damage_map_event);
+
+                    // Change state to casting
+                    *caster.state = State::None;
+
+                    let state_change_event = VisibleEvent::StateChangeEvent {
+                        new_state: obj::STATE_NONE.to_string(),
+                    };
+
+                    // Caster visible state change
+                    let visible_state_change = MapEvent {
+                        event_id: Uuid::new_v4(),
+                        entity_id: map_event.entity_id,
+                        obj_id: map_event.obj_id,
+                        player_id: map_event.player_id,
+                        pos_x: map_event.pos_x,
+                        pos_y: map_event.pos_y,
+                        run_tick: game_tick.0 + 1,
+                        map_event_type: state_change_event.clone(),
+                    };
+
+                    visible_events.push(visible_state_change);
+
+                    // Add event in progress to caster
+                    commands
+                        .entity(map_event.entity_id)
+                        .remove::<EventInProgress>();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}
+
 fn broadcast_event_system(
     game_tick: Res<GameTick>,
     mut visible_events: ResMut<VisibleEvents>,
@@ -2723,34 +2991,94 @@ fn game_event_system(
                     events_to_remove.push(*event_id);
                     perception_updates.insert(*player_id);
                 }
-                GameEventType::SpawnNPC { npc_type, pos } => {
+                GameEventType::SpawnNPC {
+                    npc_type,
+                    pos,
+                    npc_id,
+                } => {
                     debug!("Processing SpawnNPC");
                     events_to_remove.push(*event_id);
 
-                    let spawn_result = spawn_npc(
+                    let result;
+
+                    if let Some(npc_id) = npc_id {
+                        result = spawn_npc_with_id(
+                            *npc_id,
+                            1000,
+                            *pos,
+                            npc_type.to_string(),
+                            &mut commands,
+                            &mut ids,
+                            &mut items,
+                            &templates,
+                        );
+                    } else {
+                        result = spawn_npc(
+                            1000,
+                            *pos,
+                            npc_type.to_string(),
+                            &mut commands,
+                            &mut ids,
+                            &mut items,
+                            &templates,
+                        );
+                    }
+
+                    let (entity, npc_id, player_id, pos) = result;
+
+                    map_events.add(
+                        VisibleEvent::NewObjEvent { new_player: false },
+                        entity,
+                        npc_id.0,
+                        player_id.0,
+                        pos.x,
+                        pos.y,
+                        game_tick.0 + 1,
+                    );
+                }
+                GameEventType::NecroEvent { pos } => {
+                    debug!("Processing NecroEvent");
+                    events_to_remove.push(*event_id);
+
+                    let (entity, npc_id, player_id, pos) = spawn_necromancer(
                         1000,
                         *pos,
-                        npc_type.to_string(),
                         &mut commands,
                         &mut ids,
                         &mut items,
                         &templates,
                     );
 
-                    match spawn_result {
-                        Ok((entity, npc_id, player_id, pos)) => {
-                            map_events.add(
-                                VisibleEvent::NewObjEvent { new_player: false },
-                                entity,
-                                npc_id.0,
-                                player_id.0,
-                                pos.x,
-                                pos.y,
-                                game_tick.0 + 4
-                            );
-                        }
-                        Err(err_msg) => error!(err_msg),
-                    }
+                    map_events.add(
+                        VisibleEvent::NewObjEvent { new_player: false },
+                        entity,
+                        npc_id.0,
+                        player_id.0,
+                        pos.x,
+                        pos.y,
+                        game_tick.0 + 1,
+                    );
+
+                    // Create human corpse
+                    let (corpse_id, entity) = Obj::create(
+                        &mut commands,
+                        &mut ids,
+                        player_id.0,
+                        "Human Corpse".to_string(),
+                        Position { x: 16, y: 34 },
+                        State::Dead,
+                        &templates,
+                    );
+
+                    map_events.add(
+                        VisibleEvent::NewObjEvent { new_player: false },
+                        entity,
+                        corpse_id,
+                        player_id.0,
+                        16,
+                        34,
+                        game_tick.0 + 1,
+                    );
                 }
                 GameEventType::CancelEvents { event_ids } => {
                     debug!("Processing CancelEvents: {:?}", event_ids);
@@ -3020,7 +3348,6 @@ fn remove_dead_system(
     if (game_tick.0 % 10) == 0 {
         for (entity, id, player_id, pos, dead_state) in dead_state_query.iter() {
             if (game_tick.0 - dead_state.dead_at) > 500 {
-
                 map_events.add(
                     VisibleEvent::RemoveObjEvent,
                     entity,
@@ -3030,8 +3357,7 @@ fn remove_dead_system(
                     pos.y,
                     game_tick.0 + 1,
                 );
-            } else if(game_tick.0 - dead_state.dead_at) > 100 {
-
+            } else if (game_tick.0 - dead_state.dead_at) > 100 {
                 // Remove dead object faster if it contains no items
                 if items.get_by_owner(id.0).is_empty() {
                     map_events.add(
@@ -3041,8 +3367,8 @@ fn remove_dead_system(
                         player_id.0,
                         pos.x,
                         pos.y,
-                        game_tick.0 + 1
-                    )
+                        game_tick.0 + 1,
+                    );
                 }
             }
         }
@@ -3282,76 +3608,122 @@ fn spawn_npc(
     ids: &mut ResMut<Ids>,
     mut items: &mut ResMut<Items>,
     templates: &Res<Templates>,
-) -> Result<(Entity, Id, PlayerId, Position), &'static str> {
-    let mut npc_template = None;
+) -> (Entity, Id, PlayerId, Position) {
+    let npc_id = ids.new_obj_id();
+    return spawn_npc_with_id(
+        npc_id, player_id, pos, template, commands, ids, items, templates,
+    );
+}
 
-    // Look up npc template
-    for obj_template in templates.obj_templates.iter() {
-        if template == obj_template.template {
-            npc_template = Some(obj_template);
-        }
-    }
+fn spawn_npc_with_id(
+    npc_id: i32,
+    player_id: i32,
+    pos: Position,
+    template: String,
+    commands: &mut Commands,
+    ids: &mut ResMut<Ids>,
+    mut items: &mut ResMut<Items>,
+    templates: &Res<Templates>,
+) -> (Entity, Id, PlayerId, Position) {
+    let npc_template = ObjTemplate::get_template(template, templates);
 
-    if let Some(npc_template) = npc_template {
-        let npc_id = ids.new_obj_id();
+    let image: String = npc_template
+        .template
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
 
-        let image: String = npc_template
-            .template
-            .to_lowercase()
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
+    let npc = Obj {
+        id: Id(npc_id),
+        player_id: PlayerId(player_id),
+        position: pos,
+        name: Name(npc_template.name.clone()),
+        template: Template(npc_template.template.clone()),
+        class: Class(npc_template.class.clone()),
+        subclass: Subclass(npc_template.subclass.clone()),
+        state: State::None,
+        viewshed: Viewshed { range: 2 },
+        misc: Misc {
+            image: image,
+            hsl: Vec::new().into(),
+            groups: Vec::new().into(),
+        },
+        stats: Stats {
+            hp: npc_template.base_hp.unwrap(),
+            base_hp: npc_template.base_hp.unwrap(),
+            stamina: npc_template.base_stamina,
+            base_stamina: npc_template.base_stamina,
+            base_def: npc_template.base_def.unwrap(),
+            base_damage: npc_template.base_dmg,
+            damage_range: npc_template.dmg_range,
+            base_speed: npc_template.base_speed,
+            base_vision: npc_template.base_vision,
+        },
+        effects: Effects(HashMap::new()),
+    };
 
-        let npc = Obj {
-            id: Id(npc_id),
-            player_id: PlayerId(player_id),
-            position: pos,
-            name: Name(npc_template.name.clone()),
-            template: Template(npc_template.template.clone()),
-            class: Class(npc_template.class.clone()),
-            subclass: Subclass(npc_template.subclass.clone()),
-            state: State::None,
-            viewshed: Viewshed { range: 2 },
-            misc: Misc {
-                image: image,
-                hsl: Vec::new().into(),
-                groups: Vec::new().into(),
+    let entity = commands
+        .spawn((
+            npc,
+            SubclassNPC,
+            VisibleTarget::new(NO_TARGET),
+            Thinker::build()
+                .label("NPC Chase")
+                .picker(Highest)
+                .when(VisibleTargetScorer, ChaseAndAttack),
+        ))
+        .id();
+
+    Encounter::generate_loot(npc_id, ids, items, templates);
+
+    ids.new_entity_obj_mapping(npc_id, entity);
+
+    return (entity, Id(npc_id), PlayerId(player_id), pos);
+}
+
+fn spawn_necromancer(
+    player_id: i32,
+    pos: Position,
+    commands: &mut Commands,
+    ids: &mut ResMut<Ids>,
+    mut items: &mut ResMut<Items>,
+    templates: &Res<Templates>,
+) -> (Entity, Id, PlayerId, Position) {
+    let necro_obj = Obj::create_nospawn(
+        ids,
+        player_id,
+        "Necromancer".to_string(),
+        Position { x: 17, y: 34 },
+        State::None,
+        templates,
+    );
+
+    // Spawn Necromancer
+    let necro_entity = commands
+        .spawn((
+            necro_obj.clone(),
+            SubclassNPC,
+            Minions { ids: Vec::new() },
+            Home {
+                pos: Position { x: 16, y: 32 },
             },
-            stats: Stats {
-                hp: npc_template.base_hp.unwrap(),
-                base_hp: npc_template.base_hp.unwrap(),
-                stamina: npc_template.base_stamina,
-                base_stamina: npc_template.base_stamina,
-                base_def: npc_template.base_def.unwrap(),
-                base_damage: npc_template.base_dmg,
-                damage_range: npc_template.dmg_range,
-                base_speed: npc_template.base_speed,
-                base_vision: npc_template.base_vision,
-            },
-            effects: Effects(HashMap::new()),
-        };
+            VisibleTarget::new(NO_TARGET),
+            VisibleCorpse::new(NO_TARGET),
+            Thinker::build()
+                .label("NPC Chase")
+                .picker(Highest)
+                .when(VisibleTargetScorer, ChaseAndCast)
+                .when(VisibleCorpseScorer, RaiseDead)
+                .when(FleeScorer, FleeToHome),
+        ))
+        .id();
 
-        let entity = commands
-            .spawn((
-                npc,
-                SubclassNPC,
-                VisibleTarget::new(NO_TARGET),
-                Thinker::build()
-                    .label("NPC Chase")
-                    .picker(Highest)
-                    .when(VisibleTargetScorer, ChaseAttack),
-            ))
-            .id();
+    ids.new_entity_obj_mapping(necro_obj.id.0, necro_entity);
 
-        Encounter::generate_loot(npc_id, ids, items, templates);
+    Encounter::generate_loot(necro_obj.id.0, ids, items, templates);
 
-        debug!("New {:?} entity: {:?}", template, entity);
-        ids.new_entity_obj_mapping(npc_id, entity);
-
-        return Ok((entity, Id(npc_id), PlayerId(player_id), pos));
-    }
-
-    return Err("Invalid obj template");
+    return (necro_entity, necro_obj.id, PlayerId(player_id), pos);
 }
 
 fn get_random_adjacent_pos(
@@ -3361,7 +3733,7 @@ fn get_random_adjacent_pos(
     all_obj_pos: Vec<(PlayerId, Id, Position)>,
     map: &Map,
 ) -> Option<Position> {
-    let mut selected_pos = None;
+    let mut selected_pos;
 
     // Check for a valid stop within 2 tiles
     let mut neighbours = Map::range((center_x, center_y), 2);

@@ -55,7 +55,7 @@ pub struct ObjTemplate {
     pub dmg_range: Option<i32>,
     pub base_def: Option<i32>,
     pub base_speed: Option<i32>,
-    pub base_vision: Option<i32>,
+    pub base_vision: Option<u32>,
     pub int: Option<String>,
     pub aggression: Option<String>,
     pub kill_xp: Option<i32>,

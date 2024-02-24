@@ -5,7 +5,10 @@ use pathfinding::prelude::directions::E;
 
 use std::collections::HashMap;
 
-use crate::components::npc::{MerchantScorer, SailToPort};
+use crate::components::npc::{
+    ChaseAndCast, MerchantScorer, RaiseDead, SailToPort, VisibleCorpse, VisibleCorpseScorer,
+    VisibleTarget, VisibleTargetScorer,
+};
 use crate::components::villager::{
     Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
     FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
@@ -22,13 +25,14 @@ use crate::game::{
     is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
     GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Merchant, Misc,
     Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
-    SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent, CREATIVITY,
-    DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
+    SubclassHero, SubclassNPC, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent,
+    CREATIVITY, DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
 use crate::network::{self, send_to_client, ResponsePacket, StatsData, StructureList};
 use crate::obj::{self, Obj};
+use crate::plugins::ai::npc::NO_TARGET;
 use crate::recipe::{self, Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
@@ -414,6 +418,7 @@ fn new_player_system(
     game_tick: ResMut<GameTick>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
+    mut game_events: ResMut<GameEvents>,
     mut items: ResMut<Items>,
     mut skills: ResMut<Skills>,
     mut recipes: ResMut<Recipes>,
@@ -432,6 +437,7 @@ fn new_player_system(
                     &mut commands,
                     &mut ids,
                     &mut map_events,
+                    &mut game_events,
                     &mut items,
                     &mut skills,
                     &mut recipes,
@@ -3968,7 +3974,7 @@ fn use_item_system(
                     owner.pos.x,
                     owner.pos.y,
                     game_tick.0 + 1,
-                )
+                );
             }
             _ => {}
         }
@@ -4677,6 +4683,7 @@ fn new_player(
     commands: &mut Commands,
     ids: &mut ResMut<Ids>,
     map_events: &mut ResMut<MapEvents>,
+    game_events: &mut                       ResMut<GameEvents>,
     items: &mut ResMut<Items>,
     skills: &mut ResMut<Skills>,
     recipes: &mut ResMut<Recipes>,
@@ -5239,6 +5246,20 @@ fn new_player(
         .id();
 
     ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);
+
+    let event_type = GameEventType::NecroEvent {
+        pos: Position{x: 17, y: 34},
+    };
+    let event_id = ids.new_map_event_id();
+
+    let event = GameEvent {
+        event_id: event_id,
+        run_tick: game_tick.0 + 100, 
+        game_event_type: event_type,
+    };
+
+    game_events.insert(event.event_id, event); 
+
 }
 
 fn get_current_req_quantities(

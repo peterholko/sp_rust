@@ -6,7 +6,8 @@ use rand::{random, Rng};
 
 use crate::effect::Effects;
 use crate::game::{
-    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed, VisibleEvent
+    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position,
+    State, Stats, Subclass, Template, Viewshed, VisibleEvent,
 };
 use crate::item::{Item, Items};
 use crate::map::TileType;
@@ -15,8 +16,11 @@ use crate::templates::{ObjTemplate, ObjTemplates, SkillTemplate, SkillTemplates,
 
 pub const TEMPLATE: &str = "template";
 pub const POSITION: &str = "position";
+
 pub const CLASS_STRUCTURE: &str = "structure";
 pub const CLASS_UNIT: &str = "unit";
+pub const CLASS_CORPSE: &str = "corpse";
+
 pub const SUBCLASS_HERO: &str = "hero";
 pub const SUBCLASS_VILLAGER: &str = "villager";
 pub const SUBCLASS_SHELTER: &str = "shelter";
@@ -26,6 +30,7 @@ pub const SUBCLASS_MERCHANT: &str = "merchant";
 pub const STATE_NONE: &str = "none";
 pub const STATE_MOVING: &str = "moving";
 pub const STATE_ATTACKING: &str = "attacking";
+pub const STATE_CASTING: &str = "casting";
 pub const STATE_DEAD: &str = "dead";
 pub const STATE_FOUNDED: &str = "founded";
 pub const STATE_PROGRESSING: &str = "progressing";
@@ -64,7 +69,7 @@ impl Obj {
         template_name: String,
         pos: Position,
         state: State,
-        templates: &Res<Templates>
+        templates: &Res<Templates>,
     ) -> (i32, Entity) {
         let template = ObjTemplate::get_template_by_name(template_name, &templates);
         let obj_id = ids.new_obj_id();
@@ -78,7 +83,9 @@ impl Obj {
             class: Class(template.class),
             subclass: Subclass(template.subclass),
             state: state,
-            viewshed: Viewshed { range: 0 },
+            viewshed: Viewshed {
+                range: template.base_vision.unwrap_or(0) as u32,
+            },
             misc: Misc {
                 image: str::replace(template.template.as_str(), " ", "").to_lowercase(),
                 hsl: Vec::new(),
@@ -104,6 +111,51 @@ impl Obj {
         (obj_id, entity_id)
     }
 
+    pub fn create_nospawn(
+        ids: &mut ResMut<Ids>,
+        player_id: i32,
+        template_name: String,
+        pos: Position,
+        state: State,
+        templates: &Res<Templates>,
+    ) -> Obj {
+        let template = ObjTemplate::get_template_by_name(template_name, &templates);
+        let obj_id = ids.new_obj_id();
+
+        let obj = Obj {
+            id: Id(obj_id),
+            player_id: PlayerId(player_id),
+            position: pos,
+            name: Name(template.name),
+            template: Template(template.template.clone()),
+            class: Class(template.class),
+            subclass: Subclass(template.subclass),
+            state: state,
+            viewshed: Viewshed {
+                range: template.base_vision.unwrap_or(0) as u32,
+            },
+            misc: Misc {
+                image: str::replace(template.template.as_str(), " ", "").to_lowercase(),
+                hsl: Vec::new(),
+                groups: Vec::new(),
+            },
+            stats: Stats {
+                hp: 1,
+                base_hp: template.base_hp.unwrap_or(100),
+                stamina: template.base_stamina,
+                base_stamina: template.base_stamina,
+                base_def: template.base_def.unwrap_or(0),
+                base_damage: template.base_dmg,
+                damage_range: template.dmg_range,
+                base_speed: template.base_speed,
+                base_vision: template.base_vision,
+            },
+            effects: Effects(HashMap::new()),
+        };
+
+        return obj;
+    }
+
     pub fn state_to_enum(state: String) -> State {
         match state.as_str() {
             STATE_NONE => State::None,
@@ -121,6 +173,7 @@ impl Obj {
             STATE_DRINKING => State::Drinking,
             STATE_EATING => State::Eating,
             STATE_SLEEPING => State::Sleeping,
+            STATE_CASTING => State::Casting,
             _ => State::None,
         }
     }
@@ -142,6 +195,7 @@ impl Obj {
             State::Drinking => STATE_DRINKING,
             State::Eating => STATE_EATING,
             State::Sleeping => STATE_SLEEPING,
+            State::Casting => STATE_CASTING,
             _ => STATE_NONE,
         };
 
@@ -149,7 +203,7 @@ impl Obj {
     }
 
     pub fn is_dead(obj_state: &State) -> bool {
-        return *obj_state == State::Dead; 
+        return *obj_state == State::Dead;
     }
 
     pub fn get_capacity(template: &String, obj_templates: &ObjTemplates) -> i32 {
@@ -186,13 +240,6 @@ impl Obj {
             intensity: 2,
         };
 
-        map_events.new(
-            entity,
-            &obj_id,
-            &player_id,
-            &pos,
-            game_tick,
-            damage_event,
-        );
+        map_events.new(entity, &obj_id, &player_id, &pos, game_tick, damage_event);
     }
 }

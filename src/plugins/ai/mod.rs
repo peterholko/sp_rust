@@ -15,6 +15,7 @@ impl Plugin for AIPlugin {
 
         app.add_plugins(BigBrainPlugin::new(PreUpdate))
             .add_systems(Update, npc::nearby_target_system)
+            .add_systems(Update, npc::nearby_corpses_system)
             .add_systems(
                 PreUpdate,
                 (
@@ -33,8 +34,10 @@ impl Plugin for AIPlugin {
                     villager::sleep_action_system.in_set(BigBrainSet::Actions),
                     villager::process_order_system.in_set(BigBrainSet::Actions),
                     npc::attack_target_system.in_set(BigBrainSet::Actions),
-                    
+                    npc::cast_target_system.in_set(BigBrainSet::Actions),
+                    npc::raise_dead_system.in_set(BigBrainSet::Actions),
                     villager::flee_system.in_set(BigBrainSet::Actions),
+                    npc::flee_system.in_set(BigBrainSet::Actions),
                     npc::merchant_move_system.in_set(BigBrainSet::Actions)
                 )
             )
@@ -58,6 +61,8 @@ impl Plugin for AIPlugin {
                     villager::near_shelter_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::morale_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::target_scorer_system.in_set(BigBrainSet::Scorers),
+                    npc::corpses_scorer_system.in_set(BigBrainSet::Scorers),
+                    npc::flee_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::merchant_scorer_system.in_set(BigBrainSet::Scorers)
                 )
             );
