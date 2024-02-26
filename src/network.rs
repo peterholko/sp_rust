@@ -18,8 +18,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Error};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    account::{Account, Accounts},
-    templates::ResReq, game::{ObjQueryMutReadOnlyItem}, obj::Obj, item, resource::Property,
+    account::{Account, Accounts}, game::{MapObjQueryItem, ObjQueryMutReadOnlyItem}, item, obj::Obj, resource::Property, templates::ResReq
 };
 use crate::{
     game::{Client, Clients, HeroClassList},
@@ -714,6 +713,28 @@ pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clie
                 .expect("Could not send message");
         }
     }
+}
+
+pub fn create_network_obj(
+    obj: MapObjQueryItem<'_>
+) -> MapObj {
+    let network_obj = MapObj {
+        id: obj.id.0,
+        player: obj.player_id.0,
+        x: obj.pos.x,
+        y: obj.pos.y,
+        name: obj.name.0.clone(),
+        template: obj.template.0.clone(),
+        class: obj.class.0.clone(),
+        subclass: obj.subclass.0.clone(),
+        state: Obj::state_to_str(obj.state.clone()),
+        vision: obj.viewshed.range,
+        image: obj.misc.image.clone(),
+        hsl: obj.misc.hsl.clone(),
+        groups: obj.misc.groups.clone(),
+    };
+
+    network_obj
 }
 
 pub fn network_obj(

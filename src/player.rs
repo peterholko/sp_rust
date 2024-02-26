@@ -554,7 +554,7 @@ fn move_system(
                 // TODO move this into a function
                 for (map_event_id, map_event) in map_events.iter() {
                     if map_event.obj_id == hero_id {
-                        match map_event.map_event_type {
+                        match map_event.event_type {
                             VisibleEvent::MoveEvent { .. }
                             | VisibleEvent::BuildEvent { .. }
                             | VisibleEvent::GatherEvent { .. }
