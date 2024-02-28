@@ -163,10 +163,7 @@ pub fn attack_target_system(
                             *npc.state = State::Moving;
 
                             map_events.new(
-                                *actor,
-                                npc.id,
-                                npc.player_id,
-                                npc.pos,
+                                npc.id.0,
                                 game_tick.0 + 4,
                                 state_change_event,
                             );
@@ -178,10 +175,7 @@ pub fn attack_target_system(
                             };
 
                             let move_map_event = map_events.new(
-                                *actor,
-                                npc.id,
-                                npc.player_id,
-                                npc.pos,
+                                npc.id.0,
                                 game_tick.0 + move_duration, // in the future
                                 move_event,
                             );
@@ -241,10 +235,7 @@ pub fn attack_target_system(
                         let cooldown_event = VisibleEvent::CooldownEvent { duration: 30 };
 
                         let cooldown_map_event = map_events.new(
-                            *actor,
-                            npc.id,
-                            npc.player_id,
-                            npc.pos,
+                            npc.id.0,
                             game_tick.0 + 30, // in the future
                             cooldown_event,
                         );
@@ -278,10 +269,7 @@ pub fn attack_target_system(
                                 *npc.state = State::Moving;
 
                                 map_events.new(
-                                    *actor,
-                                    npc.id,
-                                    npc.player_id,
-                                    npc.pos,
+                                    npc.id.0,
                                     game_tick.0 + 4,
                                     state_change_event,
                                 );
@@ -293,10 +281,7 @@ pub fn attack_target_system(
                                 };
 
                                 let move_map_event = map_events.new(
-                                    *actor,
-                                    npc.id,
-                                    npc.player_id,
-                                    npc.pos,
+                                    npc.id.0,
                                     game_tick.0 + move_duration,
                                     move_event,
                                 );
@@ -527,10 +512,7 @@ pub fn cast_target_system(
                         *npc.state = State::Casting;
 
                         map_events.new(
-                            *actor,
-                            npc.id,
-                            npc.player_id,
-                            npc.pos,
+                            npc.id.0,
                             game_tick.0 + 4,
                             VisibleEvent::StateChangeEvent {
                                 new_state: "casting".to_string(),
@@ -543,10 +525,7 @@ pub fn cast_target_system(
                         };
 
                         let map_event = map_events.new(
-                            *actor,
-                            npc.id,
-                            npc.player_id,
-                            npc.pos,
+                            npc.id.0,
                             game_tick.0 + 30,
                             spell_damage_event,
                         );
@@ -580,10 +559,7 @@ pub fn cast_target_system(
                                 *npc.state = State::Moving;
 
                                 map_events.new(
-                                    *actor,
-                                    npc.id,
-                                    npc.player_id,
-                                    npc.pos,
+                                    npc.id.0,
                                     game_tick.0 + 4,
                                     state_change_event,
                                 );
@@ -595,10 +571,7 @@ pub fn cast_target_system(
                                 };
 
                                 let move_map_event = map_events.new(
-                                    *actor,
-                                    npc.id,
-                                    npc.player_id,
-                                    npc.pos,
+                                    npc.id.0,
                                     game_tick.0 + move_duration,
                                     move_event,
                                 );
@@ -682,28 +655,21 @@ pub fn raise_dead_system(
                     *npc_state = State::Casting;
 
                     map_events.new(
-                        *actor,
-                        npc_id,
-                        npc_player_id,
-                        npc_pos,
+                        npc_id.0,
                         game_tick.0 + 4,
                         VisibleEvent::StateChangeEvent {
                             new_state: "casting".to_string(),
                         },
                     );
 
-                    let map_event_id = map_events.add(
-                        VisibleEvent::SpellRaiseDeadEvent { corpse_id: corpse_id },
-                        *actor,
+                    let map_event_id = map_events.new(
                         npc_id.0,
-                        npc_player_id.0,
-                        npc_pos.x,
-                        npc_pos.y,
                         game_tick.0 + 30,
+                        VisibleEvent::SpellRaiseDeadEvent { corpse_id: corpse_id },
                     );
 
                     commands.entity(*actor).insert(EventInProgress {
-                        event_id: map_event_id,
+                        event_id: map_event_id.event_id,
                     });
                 } else {
                     if *npc_state == State::None {
@@ -731,10 +697,7 @@ pub fn raise_dead_system(
                             *npc_state = State::Moving;
 
                             map_events.new(
-                                *actor,
-                                npc_id,
-                                npc_player_id,
-                                npc_pos,
+                                npc_id.0,
                                 game_tick.0 + 4,
                                 state_change_event,
                             );
@@ -746,10 +709,7 @@ pub fn raise_dead_system(
                             };
 
                             let move_map_event = map_events.new(
-                                *actor,
-                                npc_id,
-                                npc_player_id,
-                                npc_pos,
+                                npc_id.0,
                                 game_tick.0 + 10,
                                 move_event,
                             );
@@ -826,10 +786,7 @@ pub fn flee_system(
                         *obj.state = State::Moving;
 
                         map_events.new(
-                            *actor,
-                            obj.id,
-                            obj.player_id,
-                            obj.pos,
+                            obj.id.0,
                             game_tick.0 + 4,
                             state_change_event,
                         );
@@ -841,10 +798,7 @@ pub fn flee_system(
                         };
 
                         let move_map_event = map_events.new(
-                            *actor,
-                            obj.id,
-                            obj.player_id,
-                            obj.pos,
+                            obj.id.0,
                             game_tick.0 + 36, // in the future
                             move_event,
                         );
@@ -971,10 +925,7 @@ pub fn merchant_move_system(
                         *obj.state = State::Moving;
 
                         map_events.new(
-                            *actor,
-                            obj.id,
-                            obj.player_id,
-                            obj.pos,
+                            obj.id.0,
                             game_tick.0 + 4,
                             state_change_event,
                         );
@@ -986,10 +937,7 @@ pub fn merchant_move_system(
                         };
 
                         let move_map_event = map_events.new(
-                            *actor,
-                            obj.id,
-                            obj.player_id,
-                            obj.pos,
+                            obj.id.0,
                             game_tick.0 + 36, // in the future
                             move_event,
                         );

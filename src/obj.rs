@@ -229,17 +229,14 @@ impl Obj {
     pub fn add_sound_obj_event(
         game_tick: i32,
         sound: String,
-        entity: Entity,
         obj_id: &Id,
-        player_id: &PlayerId,
-        pos: &Position,
         map_events: &mut ResMut<MapEvents>,
     ) {
-        let damage_event = VisibleEvent::SoundObjEvent {
+        let sound_event = VisibleEvent::SoundObjEvent {
             sound: sound,
             intensity: 2,
         };
 
-        map_events.new(entity, &obj_id, &player_id, &pos, game_tick, damage_event);
+        map_events.new(obj_id.0, game_tick, sound_event);
     }
 }

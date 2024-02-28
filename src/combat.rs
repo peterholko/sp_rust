@@ -564,10 +564,7 @@ impl Combat {
                         };
 
                         map_events.new(
-                            target.entity,
-                            target.id,
-                            target.player_id,
-                            target.pos,
+                            target.id.0,
                             game_tick.0 + effect_template.duration * TICKS_PER_SEC,
                             hamstrung_event,
                         );
@@ -578,10 +575,7 @@ impl Combat {
                         };
 
                         map_events.new(
-                            target.entity,
-                            target.id,
-                            target.player_id,
-                            target.pos,
+                            target.id.0,
                             game_tick.0 + effect_template.duration * TICKS_PER_SEC,
                             stun_event,
                         );
@@ -669,10 +663,7 @@ impl Combat {
         };
 
         map_events.new(
-            attacker.entity,
-            attacker.id,
-            attacker.player_id,
-            attacker.pos,
+            attacker.id.0,
             game_tick,
             damage_event,
         );

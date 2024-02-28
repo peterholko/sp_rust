@@ -557,10 +557,7 @@ pub fn process_order_system(
                                             Villager::order_to_speech(&Order::Follow {
                                                 target: *target,
                                             }),
-                                            *actor,
                                             villager.id,
-                                            villager.player_id,
-                                            villager.pos,
                                             &mut map_events,
                                         );
 
@@ -657,10 +654,7 @@ pub fn process_order_system(
                                             *villager.state = State::Moving;
 
                                             map_events.new(
-                                                *actor,
-                                                villager.id,
-                                                villager.player_id,
-                                                villager.pos,
+                                                villager.id.0,
                                                 game_tick.0 + 4,
                                                 state_change_event,
                                             );
@@ -672,10 +666,7 @@ pub fn process_order_system(
                                             };
 
                                             let move_map_event = map_events.new(
-                                                *actor,
-                                                villager.id,
-                                                villager.player_id,
-                                                villager.pos,
+                                                villager.id.0,
                                                 game_tick.0 + 36, // in the future
                                                 move_event,
                                             );
@@ -702,10 +693,7 @@ pub fn process_order_system(
                                 };
 
                                 map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 8, // in the future
                                     gather_event,
                                 );
@@ -751,10 +739,7 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;
 
                                         map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 4,
                                             state_change_event,
                                         );
@@ -764,12 +749,9 @@ pub fn process_order_system(
                                             dst_x: next_pos.0,
                                             dst_y: next_pos.1,
                                         };
-
+  
                                         let move_map_event = map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 36, // in the future
                                             move_event,
                                         );
@@ -790,10 +772,7 @@ pub fn process_order_system(
                                             *villager.state = State::Refining;
 
                                             map_event = map_events.new(
-                                                *actor,
-                                                villager.id,
-                                                villager.player_id,
-                                                villager.pos,
+                                                villager.id.0,
                                                 game_tick.0 + 120, // in the future
                                                 refine_event,
                                             );
@@ -807,10 +786,7 @@ pub fn process_order_system(
                                             *villager.state = State::Operating;
 
                                             map_event = map_events.new(
-                                                *actor,
-                                                villager.id,
-                                                villager.player_id,
-                                                villager.pos,
+                                                villager.id.0,
                                                 game_tick.0 + 40, // in the future
                                                 operate_event,
                                             );
@@ -869,10 +845,7 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;                                    
 
                                         map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 4,
                                             state_change_event,
                                         );
@@ -886,10 +859,7 @@ pub fn process_order_system(
                                         let event_id = ids.new_map_event_id();
 
                                         let map_event = map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 36, // in the future
                                             move_event,
                                         );
@@ -913,10 +883,7 @@ pub fn process_order_system(
                                     *villager.state = State::Crafting; 
 
                                     map_events.new(
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
+                                        villager.id.0,
                                         game_tick.0 + 4,
                                         state_change_event,
                                     );
@@ -924,10 +891,7 @@ pub fn process_order_system(
                                     let event_id = ids.new_map_event_id();
 
                                     let map_event = map_events.new(
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
+                                        villager.id.0,
                                         game_tick.0 + 200, // in the future
                                         craft_event,
                                     );
@@ -980,10 +944,7 @@ pub fn process_order_system(
                                         *villager.state = State::Moving;
 
                                         map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 4,
                                             state_change_event,
                                         );
@@ -995,10 +956,7 @@ pub fn process_order_system(
                                         };
 
                                         let map_event = map_events.new(
-                                            *actor,
-                                            villager.id,
-                                            villager.player_id,
-                                            villager.pos,
+                                            villager.id.0,
                                             game_tick.0 + 36, // in the future
                                             move_event,
                                         );
@@ -1021,19 +979,13 @@ pub fn process_order_system(
                                     *villager.state = State::Experimenting;
 
                                     map_events.new(
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
+                                        villager.id.0,
                                         game_tick.0 + 4,
                                         state_change_event,
                                     );
 
                                     let map_event = map_events.new(
-                                        *actor,
-                                        villager.id,
-                                        villager.player_id,
-                                        villager.pos,
+                                        villager.id.0,
                                         game_tick.0 + 100, // in the future
                                         experiment_event,
                                     );
@@ -1069,10 +1021,7 @@ pub fn process_order_system(
                                 let explore_event = VisibleEvent::ExploreEvent;
 
                                 map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 8, // in the future
                                     explore_event,
                                 );
@@ -1145,10 +1094,7 @@ pub fn flee_system(
                         Obj::add_sound_obj_event(
                             game_tick.0,
                             "Run for your lives!!!".to_owned(),
-                            *actor,
                             villager.id,
-                            villager.player_id,
-                            villager.pos,
                             &mut map_events,
                         );
                     }             
@@ -1191,10 +1137,7 @@ pub fn flee_system(
                             };
 
                             map_events.new(
-                                *actor,
-                                villager.id,
-                                villager.player_id,
-                                villager.pos,
+                                villager.id.0,
                                 game_tick.0 + 1,
                                 state_change_event,
                             );
@@ -1208,10 +1151,7 @@ pub fn flee_system(
                             let event_id = ids.new_map_event_id();
 
                             let map_event = map_events.new(
-                                *actor,
-                                villager.id,
-                                villager.player_id,
-                                villager.pos,
+                                villager.id.0,
                                 game_tick.0 + 48, // in the future
                                 move_event,
                             );
@@ -1301,10 +1241,7 @@ pub fn find_drink_system(
                     Obj::add_sound_obj_event(
                         game_tick.0,
                         "Time to grab a cold ale".to_owned(),
-                        *actor,
                         villager.id,
-                        villager.player_id,
-                        villager.pos,
                         &mut map_events,
                     );
                 }
@@ -1390,10 +1327,7 @@ pub fn move_to_water_source_action_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 1,
                                     state_change_event,
                                 );
@@ -1405,10 +1339,7 @@ pub fn move_to_water_source_action_system(
                                 };
 
                                 let map_event = map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 48, // in the future
                                     move_event,
                                 );
@@ -1572,19 +1503,13 @@ pub fn drink_action_system(
                     *villager.state = State::Drinking;
 
                     map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 1,
                         state_change_event,
                     );
 
                     let map_event = map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 24, // in the future
                         drink_event,
                     );
@@ -1737,10 +1662,7 @@ pub fn find_food_system(
                     Obj::add_sound_obj_event(
                         game_tick.0,
                         "Time to fill my stomach".to_owned(),
-                        *actor,
                         villager.id,
-                        villager.player_id,
-                        villager.pos,
                         &mut map_events,
                     );
                 }
@@ -1822,10 +1744,7 @@ pub fn move_to_food_action_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 1,
                                     state_change_event,
                                 );
@@ -1839,10 +1758,7 @@ pub fn move_to_food_action_system(
                                 let event_id = ids.new_map_event_id();
 
                                 let map_event = map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 48, // in the future
                                     move_event,
                                 );
@@ -2007,19 +1923,13 @@ pub fn eat_action_system(
                     *villager.state = State::Eating;
 
                     map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 1,
                         state_change_event,
                     );
 
                     let map_event = map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 24, // in the future
                         eat_event,
                     );
@@ -2145,10 +2055,7 @@ pub fn find_shelter_system(
                         Obj::add_sound_obj_event(
                             game_tick.0,
                             "Time to sleep".to_owned(),
-                            *actor,
                             villager.id,
-                            villager.player_id,
-                            villager.pos,
                             &mut map_events,
                         );
                     }
@@ -2233,10 +2140,7 @@ pub fn move_to_shelter_system(
                                     Obj::add_sound_obj_event(
                                         game_tick.0,
                                         "Finally bedtime".to_owned(),
-                                        *actor,
                                         villager.id,
-                                        villager.player_id,
-                                        villager.pos,
                                         &mut map_events,
                                     );
                                 }
@@ -2249,10 +2153,7 @@ pub fn move_to_shelter_system(
                                 *villager.state = State::Moving;
 
                                 map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 1,
                                     state_change_event,
                                 );
@@ -2265,10 +2166,7 @@ pub fn move_to_shelter_system(
 
 
                                 let map_event = map_events.new(
-                                    *actor,
-                                    villager.id,
-                                    villager.player_id,
-                                    villager.pos,
+                                    villager.id.0,
                                     game_tick.0 + 48, // in the future
                                     move_event,
                                 );
@@ -2368,19 +2266,13 @@ pub fn sleep_action_system(
                     *villager.state = State::Sleeping;
 
                     map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 1,
                         state_change_event,
                     );
 
                     let map_event = map_events.new(
-                        *actor,
-                        villager.id,
-                        villager.player_id,
-                        villager.pos,
+                        villager.id.0,
                         game_tick.0 + 50, // in the future
                         sleep_event,
                     );

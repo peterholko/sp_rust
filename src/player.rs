@@ -588,10 +588,7 @@ fn move_system(
                 };
 
                 map_events.new(
-                    hero_entity,
-                    hero.id,
-                    hero.player_id,
-                    hero.pos,
+                    hero.id.0,
                     game_tick.0,
                     state_change_event,
                 );
@@ -603,10 +600,7 @@ fn move_system(
                 };
 
                 map_events.new(
-                    hero_entity,
-                    hero.id,
-                    hero.player_id,
-                    hero.pos,
+                    hero.id.0,
                     game_tick.0 + 12, // in the future
                     move_event,
                 );
@@ -968,10 +962,7 @@ fn gather_refine_system(
                 );*/
 
                 map_events.new(
-                    hero_entity,
-                    hero.id,
-                    hero.player_id,
-                    hero.pos,
+                    hero.id.0,
                     game_tick.0 + 8, // in the future
                     gather_event,
                 );
@@ -1073,10 +1064,7 @@ fn gather_refine_system(
                 );*/
 
                 map_events.new(
-                    hero_entity,
-                    hero.id,
-                    hero.player_id,
-                    hero.pos,
+                    hero.id.0,
                     game_tick.0 + 8, // in the future
                     refine_event,
                 );
@@ -1162,10 +1150,7 @@ fn gather_refine_system(
                 };
 
                 map_events.new(
-                    hero.entity,
-                    &hero.id,
-                    hero.player_id,
-                    &hero.pos,
+                    hero.id.0,
                     game_tick.0 + 1, // in the future
                     state_change_event,
                 );
@@ -1176,10 +1161,7 @@ fn gather_refine_system(
                 };
 
                 map_events.new(
-                    hero.entity,
-                    &hero.id,
-                    hero.player_id,
-                    &hero.pos,
+                    hero.id.0,
                     game_tick.0 + 100, // in the future
                     craft_event,
                 );
@@ -1647,10 +1629,7 @@ fn info_advance_system(
                     };
 
                     map_events.new(
-                        entity,
-                        &obj.id,
-                        &obj.player_id,
-                        obj.pos,
+                        obj.id.0,
                         game_tick.0,
                         obj_update_event,
                     );
@@ -2712,10 +2691,7 @@ fn order_gather_system(
                     Villager::order_to_speech(&Order::Gather {
                         res_type: res_type.to_string(),
                     }),
-                    villager.entity,
                     villager.id,
-                    villager.player_id,
-                    villager.pos,
                     &mut map_events,
                 );
             }
@@ -2873,14 +2849,10 @@ fn create_foundation_system(
                 ids.new_entity_obj_mapping(structure_id, structure_entity_id);
 
                 // Insert new obj event
-                map_events.add(
-                    VisibleEvent::NewObjEvent { new_player: false },
-                    structure_entity_id,
+                map_events.new(
                     structure_id,
-                    *player_id,
-                    hero.pos.x,
-                    hero.pos.y,
                     game_tick.0 + 1,
+                    VisibleEvent::NewObjEvent { new_player: false },
                 );
 
                 let packet = ResponsePacket::CreateFoundation {
@@ -3012,10 +2984,7 @@ fn build_system(
                 };
 
                 map_events.new(
-                    builder.entity,
-                    &builder.id,
-                    &builder.player_id,
-                    &builder.pos,
+                    builder.id.0,
                     game_tick.0 + 1, // in the future
                     state_change_event,
                 );
@@ -3026,10 +2995,7 @@ fn build_system(
                 };
 
                 map_events.new(
-                    structure.entity,
-                    &structure.id,
-                    &structure.player_id,
-                    &structure.pos,
+                    structure.id.0,
                     game_tick.0 + 1, // in the future
                     structure_state_change,
                 );
@@ -3041,10 +3007,7 @@ fn build_system(
                 };
 
                 map_events.new(
-                    builder.entity,
-                    &builder.id,
-                    &structure.player_id,
-                    &structure.pos,
+                    builder.id.0,
                     structure.attrs.end_time, // in the future
                     build_event,
                 );
@@ -3137,10 +3100,7 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    builder_entity,
-                    &builder.id,
-                    &builder.player_id,
-                    &builder.pos,
+                    builder.id.0,
                     game_tick.0 + 1, // in the future
                     builder_state_change,
                 );
@@ -3151,10 +3111,7 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    structure.entity,
-                    &structure.id,
-                    &structure.player_id,
-                    &structure.pos,
+                    structure.id.0,
                     game_tick.0 + 1, // in the future
                     structure_state_change,
                 );
@@ -3167,10 +3124,7 @@ fn upgrade_system(
                 };
 
                 map_events.new(
-                    structure_entity,
-                    &structure.id,
-                    &structure.player_id,
-                    structure.pos,
+                    structure.id.0,
                     game_tick.0 + 100, // in the future
                     upgrade_event,
                 );
@@ -3243,10 +3197,7 @@ fn explore_system(
                 };
 
                 map_events.new(
-                    hero.entity,
-                    &hero.id,
-                    hero.player_id,
-                    &hero.pos,
+                    hero.id.0,
                     game_tick.0 + 1, // in the future
                     state_change_event,
                 );
@@ -3255,10 +3206,7 @@ fn explore_system(
                 let explore_event = VisibleEvent::ExploreEvent;
 
                 map_events.new(
-                    hero.entity,
-                    &hero.id,
-                    hero.player_id,
-                    &hero.pos,
+                    hero.id.0,
                     game_tick.0 + 20, // in the future
                     explore_event,
                 );
@@ -3634,10 +3582,7 @@ fn order_refine_system(
                     Obj::add_sound_obj_event(
                         game_tick.0,
                         Villager::order_to_speech(&Order::Refine),
-                        villager.entity,
                         villager.id,
-                        villager.player_id,
-                        villager.pos,
                         &mut map_events,
                     );
 
@@ -3724,10 +3669,7 @@ fn order_craft_system(
                                 Villager::order_to_speech(&Order::Craft {
                                     recipe_name: recipe_name.to_string(),
                                 }),
-                                villager.entity,
                                 villager.id,
-                                villager.player_id,
-                                villager.pos,
                                 &mut map_events,
                             );
                         }
@@ -3802,10 +3744,7 @@ fn order_explore_system(
                         Obj::add_sound_obj_event(
                             game_tick.0,
                             Villager::order_to_speech(&Order::Explore),
-                            villager.entity,
                             villager.id,
-                            villager.player_id,
-                            villager.pos,
                             &mut map_events,
                         );
 
@@ -3894,10 +3833,7 @@ fn order_experiment_system(
                     Obj::add_sound_obj_event(
                         game_tick.0,
                         Villager::order_to_speech(&Order::Experiment),
-                        villager.entity,
                         villager.id,
-                        villager.player_id,
-                        villager.pos,
                         &mut map_events,
                     );
                 }
@@ -3966,14 +3902,10 @@ fn use_item_system(
                     item_owner_id: owner.id.0,
                 };
 
-                map_events.add(
-                    use_item_event,
-                    owner_entity,
+                map_events.new(
                     owner.id.0,
-                    *player_id,
-                    owner.pos.x,
-                    owner.pos.y,
                     game_tick.0 + 1,
+                    use_item_event,
                 );
             }
             _ => {}
@@ -4026,14 +3958,10 @@ fn remove_system(
 
                 let remove_event = VisibleEvent::RemoveObjEvent;
 
-                map_events.add(
-                    remove_event,
-                    entity,
+                map_events.new(
                     obj.id.0,
-                    *player_id,
-                    obj.pos.x,
-                    obj.pos.y,
                     game_tick.0 + 1,
+                    remove_event,
                 );
             }
             _ => {}
@@ -4321,10 +4249,7 @@ fn hire_system(
                 let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
 
                 map_events.new(
-                    target_entity,
-                    &Id(*target_id),
-                    &PlayerId(*player_id),
-                    &target_pos,
+                    *target_id,
                     game_tick.0 + 1, // in the future
                     new_obj_event,
                 );
@@ -4822,14 +4747,10 @@ fn new_player(
 
     map_events.insert(map_event_id, map_state_event);*/
 
-    map_events.add(
-        new_obj_event,
-        hero_entity_id,
+    map_events.new(
         hero_id,
-        player_id,
-        start_x,
-        start_y,
         game_tick.0 + 1,
+        new_obj_event,
     );
 
     // Villager obj
@@ -5043,14 +4964,10 @@ fn new_player(
         &templates,
     );
 
-    map_events.add(
-        VisibleEvent::NewObjEvent { new_player: false },
-        entity,
+    map_events.new(
         obj_id,
-        player_id,
-        16,
-        36,
         game_tick.0 + 1,
+        VisibleEvent::NewObjEvent { new_player: false },
     );
 
     let structure_name = "Burrow".to_string();
@@ -5103,14 +5020,10 @@ fn new_player(
     // Insert new obj event
     let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
 
-    map_events.add(
-        new_obj_event,
-        structure_entity_id,
+    map_events.new(
         structure_id,
-        player_id,
-        16,
-        37,
         game_tick.0 + 1,
+        new_obj_event,
     );
 
     let mut item_attrs = HashMap::new();

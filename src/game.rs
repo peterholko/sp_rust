@@ -75,12 +75,7 @@ pub struct NetworkReceiver(CBReceiver<PlayerEvent>);
 pub struct MapEvents(pub HashMap<Uuid, MapEvent>);
 
 impl MapEvents {
-    pub fn new(
-        &mut self,
-        obj_id: i32,
-        game_tick: i32,
-        map_event_type: VisibleEvent,
-    ) -> MapEvent {
+    pub fn new(&mut self, obj_id: i32, game_tick: i32, map_event_type: VisibleEvent) -> MapEvent {
         let map_event_id = Uuid::new_v4();
 
         let map_state_event = MapEvent {
@@ -807,9 +802,7 @@ fn move_event_system(
                     let mut all_map_objs: Vec<network::MapObj> = Vec::new();
 
                     debug!("MoveEvent - Removing EventInProgress...");
-                    commands
-                        .entity(entity)
-                        .remove::<EventInProgress>();
+                    commands.entity(entity).remove::<EventInProgress>();
 
                     //TODO Move this logic to another function
                     for obj in query.iter() {
@@ -1334,9 +1327,7 @@ fn operate_refine_event_system(
                     *villager.state = State::None;
 
                     // Remove Event In Progress
-                    commands
-                        .entity(entity)
-                        .remove::<EventInProgress>();
+                    commands.entity(entity).remove::<EventInProgress>();
 
                     let Some(structure_entity) = ids.get_entity(*structure_id) else {
                         error!("Cannot find entity from structure_id: {:?}", structure_id);
@@ -1344,7 +1335,7 @@ fn operate_refine_event_system(
                     };
 
                     // Set state back to none
-                    let Ok(structure) = query.get(structure_entity) else {
+                    let Ok(structure) = query.get_mut(structure_entity) else {
                         error!("Query failed to find entity {:?}", entity);
                         continue;
                     };
@@ -1464,9 +1455,7 @@ fn operate_refine_event_system(
                     info!("Processing OperateEvent");
 
                     // Remove Event In Progress
-                    commands
-                        .entity(entity)
-                        .remove::<EventInProgress>();
+                    commands.entity(entity).remove::<EventInProgress>();
 
                     // Set state back to none
                     let Ok(mut villager) = query.get_mut(entity) else {
@@ -1546,7 +1535,7 @@ fn craft_event_system(
     templates: Res<Templates>,
     recipes: Res<Recipes>,
     //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
-    mut state_query: Query<&mut State>,
+    mut query: Query<ObjQuery>, 
     mut map_events: ResMut<MapEvents>,
     active_infos: Res<ActiveInfos>,
 ) {
@@ -1569,7 +1558,7 @@ fn craft_event_system(
                 } => {
                     info!("Processing CraftEvent");
 
-                    let Ok(mut crafter_state) = state_query.get_mut(entity) else {
+                    let Ok(mut crafter) = query.get_mut(entity) else {
                         error!("Query failed to find entity {:?}", entity);
                         continue;
                     };
@@ -1582,12 +1571,10 @@ fn craft_event_system(
                                 Structure::consume_reqs(*structure_id, recipe.req, &mut items);
 
                             // Reset villager state to None
-                            *crafter_state = State::None;
+                            *crafter.state = State::None;
 
                             // Remove Event In Progress
-                            commands
-                                .entity(entity)
-                                .remove::<EventInProgress>();
+                            commands.entity(entity).remove::<EventInProgress>();
 
                             let mut item_attrs = HashMap::new();
 
@@ -1623,10 +1610,10 @@ fn craft_event_system(
                                 item_name: new_item.name.clone(),
                             };
 
-                            send_to_client(map_event.player_id, notification_packet, &clients);
+                            send_to_client(crafter.player_id.0, notification_packet, &clients);
 
                             let active_info_key =
-                                (map_event.player_id, *structure_id, "inventory".to_string());
+                                (crafter.player_id.0, *structure_id, "inventory".to_string());
 
                             if let Some(_active_info) = active_infos.get(&active_info_key) {
                                 let item_update_packet: ResponsePacket =
@@ -1636,7 +1623,7 @@ fn craft_event_system(
                                         items_removed: Vec::new(),
                                     };
 
-                                send_to_client(map_event.player_id, item_update_packet, &clients);
+                                send_to_client(crafter.player_id.0, item_update_packet, &clients);
                             }
                         }
                     }
@@ -1704,7 +1691,7 @@ fn experiment_event_system(
 
                     // Remove Event In Progress
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(villager_entity)
                         .remove::<EventInProgress>();
 
                     if let Some(experiment) = experiments.get_mut(structure_id) {
@@ -1732,7 +1719,7 @@ fn experiment_event_system(
                         if Experiment::check_reqs(*structure_id, experiment, &items) {
                             // Check discovery and create new recipe
                             let exp_state = Experiment::check_discovery(
-                                map_event.player_id,
+                                structure.player_id.0,
                                 *structure_id,
                                 experiment,
                                 &mut items,
@@ -1746,7 +1733,7 @@ fn experiment_event_system(
                             }
 
                             player::active_info_experiment(
-                                map_event.player_id,
+                                structure.player_id.0,
                                 *structure_id,
                                 experiment.clone(),
                                 &items,
@@ -1776,7 +1763,7 @@ fn explore_event_system(
     mut ids: ResMut<Ids>,
     mut resources: ResMut<Resources>,
     templates: Res<Templates>,
-    mut state_query: Query<&mut State>,
+    mut query: Query<(&PlayerId, &Position, &mut State)>,
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
 ) {
@@ -1790,14 +1777,20 @@ fn explore_event_system(
                     debug!("Processing ExploreEvent");
                     events_to_remove.push(*map_event_id);
 
-                    let Ok(mut explorer_state) = state_query.get_mut(map_event.entity_id) else {
-                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    let Ok((player_id, position, mut explorer_state)) = query.get_mut(entity)
+                    else {
+                        error!("Query failed to find entity {:?}", entity);
                         continue;
                     };
 
                     let pos = Position {
-                        x: map_event.pos_x,
-                        y: map_event.pos_y,
+                        x:  position.x,
+                        y: position.y,
                     };
 
                     let revealed_resources = Resource::explore(
@@ -1819,11 +1812,7 @@ fn explore_event_system(
                         // Builder visible state change
                         let explorer_visible_state_change = MapEvent {
                             event_id: Uuid::new_v4(),
-                            entity_id: map_event.entity_id,
                             obj_id: map_event.obj_id,
-                            player_id: map_event.player_id,
-                            pos_x: map_event.pos_x,
-                            pos_y: map_event.pos_y,
                             run_tick: game_tick.0 + 1,
                             event_type: state_change_event.clone(),
                         };
@@ -1836,7 +1825,7 @@ fn explore_event_system(
                             item_name: revealed_resources[0].name.clone(),
                         };
 
-                        send_to_client(map_event.player_id, notification_packet, &clients);
+                        send_to_client(player_id.0, notification_packet, &clients);
                     }
                 }
                 _ => {}
@@ -1902,11 +1891,7 @@ fn spell_raise_dead_event_system(
                     // Caster visible state change
                     let visible_state_change = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: state_change_event.clone(),
                     };
@@ -1939,11 +1924,7 @@ fn spell_raise_dead_event_system(
 
                     let remove_obj_event = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: corpse_entity,
                         obj_id: *corpse_id,
-                        player_id: -1,
-                        pos_x: corpse_pos.x,
-                        pos_y: corpse_pos.y,
                         run_tick: game_tick.0 + 1,
                         event_type: VisibleEvent::RemoveObjEvent,
                     };
@@ -1952,7 +1933,7 @@ fn spell_raise_dead_event_system(
 
                     // Add event in progress to caster
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(caster_entity)
                         .remove::<EventInProgress>();
                 }
                 _ => {}
@@ -2021,11 +2002,7 @@ fn spell_damage_event_system(
 
                     let damage_map_event = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: damage_event.clone(),
                     };
@@ -2042,11 +2019,7 @@ fn spell_damage_event_system(
                     // Caster visible state change
                     let visible_state_change = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: state_change_event.clone(),
                     };
@@ -2055,7 +2028,7 @@ fn spell_damage_event_system(
 
                     // Add event in progress to caster
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(caster.entity)
                         .remove::<EventInProgress>();
                 }
                 _ => {}
@@ -2101,6 +2074,7 @@ fn broadcast_event_system(
 
 fn effect_expired_event_system(
     game_tick: Res<GameTick>,
+    ids: Res<Ids>,
     mut map_events: ResMut<MapEvents>,
     mut effect_query: Query<&mut Effects>,
 ) {
@@ -2114,7 +2088,12 @@ fn effect_expired_event_system(
                     debug!("Processing EffectExpiredEvent {:?}", effect);
                     events_to_remove.push(*map_event_id);
 
-                    if let Ok(mut effects) = effect_query.get_mut(map_event.entity_id) {
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    if let Ok(mut effects) = effect_query.get_mut(entity) {
                         debug!("Effects on {:?}", map_event.obj_id);
                         effects.0.remove(effect);
                     }
@@ -2132,7 +2111,7 @@ fn effect_expired_event_system(
 fn cooldown_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
-    mut state_query: Query<&mut State>,
+    ids: Res<Ids>,
     mut map_events: ResMut<MapEvents>,
 ) {
     let mut events_to_remove = Vec::new();
@@ -2144,14 +2123,21 @@ fn cooldown_event_system(
                 VisibleEvent::CooldownEvent { duration } => {
                     debug!("Processing CooldownEvent {:?}", duration);
                     events_to_remove.push(*map_event_id);
-                    // Set state back to none
-                    let Ok(mut obj_state) = state_query.get_mut(map_event.entity_id) else {
-                        error!("Query failed to find entity {:?}", map_event.entity_id);
+
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find corpse from {:?}", map_event.obj_id);
                         continue;
                     };
 
+                    //TODO why isn't the state reset to none?
+                    // Set state back to none
+                    /*let Ok(mut obj_state) = query.get_mut(map_event.entity_id) else {
+                        error!("Query failed to find entity {:?}", map_event.entity_id);
+                        continue;
+                    };*/
+
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(entity)
                         .remove::<EventInProgress>();
                 }
                 _ => {}
@@ -2242,7 +2228,7 @@ fn use_item_system(
                             }
                         }
                         (item::DEED, _) => {
-                            plans.add(map_event.player_id, item.subclass, 0, 0);
+                            plans.add(item.owner, item.subclass, 0, 0);
 
                             items.remove_item(item.id);
 
@@ -2259,13 +2245,13 @@ fn use_item_system(
                                     items: inventory_items,
                                 };
 
-                            send_to_client(map_event.player_id, info_inventory_packet, &clients);
+                            send_to_client(item.owner, info_inventory_packet, &clients);
 
                             let packet = ResponsePacket::Error {
                                 errmsg: format!("You have learnt how to build a {:?}", item.name),
                             };
 
-                            send_to_client(map_event.player_id, packet, &clients);
+                            send_to_client(item.owner, packet, &clients);
                         }
                         _ => {}
                     }
@@ -2320,7 +2306,7 @@ fn drink_eat_system(
                     *obj.state = State::None;
 
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(entity)
                         .remove::<EventInProgress>();
 
                     // None visible state change
@@ -2330,11 +2316,7 @@ fn drink_eat_system(
 
                     let drinking_visible_event = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: state_change_event.clone(),
                     };
@@ -2352,7 +2334,7 @@ fn drink_eat_system(
                             .entity(entity)
                             .insert(DrinkEventCompleted { item: item });
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
-                        if let Ok(mut thirst) = thirsts.get_mut(map_event.entity_id) {
+                        if let Ok(mut thirst) = thirsts.get_mut(obj.entity) {
                             if let Some(thirst_attrval) = item.attrs.get(&item::AttrKey::Thirst) {
                                 let thirst_value = match thirst_attrval {
                                     item::AttrVal::Num(val) => *val,
@@ -2392,7 +2374,7 @@ fn drink_eat_system(
                     *obj.state = State::None;
 
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(entity)
                         .remove::<EventInProgress>();
 
                     // None visible state change
@@ -2402,11 +2384,7 @@ fn drink_eat_system(
 
                     let eating_visible_event = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: state_change_event.clone(),
                     };
@@ -2424,7 +2402,7 @@ fn drink_eat_system(
                             .entity(entity)
                             .insert(EatEventCompleted { item: item });
                     } else if obj.subclass.0 == obj::SUBCLASS_HERO {
-                        if let Ok(mut hunger) = hungers.get_mut(map_event.entity_id) {
+                        if let Ok(mut hunger) = hungers.get_mut(obj.entity) {
                             if let Some(feed_attrval) = item.attrs.get(&item::AttrKey::Feed) {
                                 let feed_value = match feed_attrval {
                                     item::AttrVal::Num(val) => *val,
@@ -2455,7 +2433,7 @@ fn drink_eat_system(
                     *obj.state = State::None;
 
                     commands
-                        .entity(map_event.entity_id)
+                        .entity(obj.entity)
                         .remove::<EventInProgress>();
 
                     // None visible state change
@@ -2465,11 +2443,7 @@ fn drink_eat_system(
 
                     let sleep_visible_event = MapEvent {
                         event_id: Uuid::new_v4(),
-                        entity_id: map_event.entity_id,
                         obj_id: map_event.obj_id,
-                        player_id: map_event.player_id,
-                        pos_x: map_event.pos_x,
-                        pos_y: map_event.pos_y,
                         run_tick: game_tick.0 + 1,
                         event_type: state_change_event.clone(),
                     };
@@ -2514,33 +2488,33 @@ fn visible_event_system(
         };
 
         let Ok(event_obj) = map_obj_query.get(entity) else {
-            // Might need remove visible event here!? 
+            // Might need remove visible event here!?
 
             /*debug!("VisibleEventSystem error: {:?}", error);
-            for (id, player_id, pos, state, viewshed) in set.p1().iter() {
-                match &map_event.event_type {
-                    VisibleEvent::RemoveObjEvent => {
-                        let distance =
-                            Map::distance((map_event.pos_x, map_event.pos_y), (pos.x, pos.y));
+                for (id, player_id, pos, state, viewshed) in set.p1().iter() {
+                    match &map_event.event_type {
+                        VisibleEvent::RemoveObjEvent => {
+                            let distance =
+                                Map::distance((map_event.pos_x, map_event.pos_y), (pos.x, pos.y));
 
-                        if viewshed.range >= distance {
-                            debug!("Send obj delete to client");
+                            if viewshed.range >= distance {
+                                debug!("Send obj delete to client");
 
-                            let change_event = network::ChangeEvents::ObjDelete {
-                                event: "obj_delete".to_string(),
-                                obj_id: map_event.obj_id,
-                            };
+                                let change_event = network::ChangeEvents::ObjDelete {
+                                    event: "obj_delete".to_string(),
+                                    obj_id: map_event.obj_id,
+                                };
 
-                            all_change_events
-                                .entry(player_id.0)
-                                .or_default()
-                                .insert(change_event);
+                                all_change_events
+                                    .entry(player_id.0)
+                                    .or_default()
+                                    .insert(change_event);
+                            }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-        }*/
+            }*/
 
             error!("Query failed to find entity {:?}", entity);
             continue;
@@ -2556,7 +2530,6 @@ fn visible_event_system(
 
                     if obj.viewshed.range >= distance {
                         debug!("Send obj create to client");
-
 
                         let change_event = network::ChangeEvents::ObjCreate {
                             event: "obj_create".to_string(),
@@ -2693,7 +2666,7 @@ fn visible_event_system(
                 }
                 VisibleEvent::UpdateObjEvent { attr, value } => {
                     let distance =
-                        Map::distance((event_obj.pos.x, event_obj  .pos.y), (obj.pos.x, obj.pos.y));
+                        Map::distance((event_obj.pos.x, event_obj.pos.y), (obj.pos.x, obj.pos.y));
 
                     if obj.viewshed.range >= distance {
                         debug!("Send obj update to client");
@@ -2710,7 +2683,7 @@ fn visible_event_system(
                             .or_default()
                             .insert(change_event);
                     }
-                }                                       
+                }
                 _ => {}
             }
         }
@@ -3016,15 +2989,11 @@ fn game_event_system(
 
                     let (entity, npc_id, player_id, pos) = result;
 
-                    map_events.add(
-                        VisibleEvent::NewObjEvent { new_player: false },
-                        entity,
+                    map_events.new(
                         npc_id.0,
-                        player_id.0,
-                        pos.x,
-                        pos.y,
                         game_tick.0 + 1,
-                    );
+                        VisibleEvent::NewObjEvent { new_player: false }
+                    );  
                 }
                 GameEventType::NecroEvent { pos } => {
                     debug!("Processing NecroEvent");
@@ -3039,16 +3008,12 @@ fn game_event_system(
                         &templates,
                     );
 
-                    map_events.add(
-                        VisibleEvent::NewObjEvent { new_player: false },
-                        entity,
+                    map_events.new(
                         npc_id.0,
-                        player_id.0,
-                        pos.x,
-                        pos.y,
                         game_tick.0 + 1,
+                        VisibleEvent::NewObjEvent { new_player: false }
                     );
-
+ 
                     // Create human corpse
                     let (corpse_id, entity) = Obj::create(
                         &mut commands,
@@ -3060,14 +3025,10 @@ fn game_event_system(
                         &templates,
                     );
 
-                    map_events.add(
-                        VisibleEvent::NewObjEvent { new_player: false },
-                        entity,
+                    map_events.new(
                         corpse_id,
-                        player_id.0,
-                        16,
-                        34,
                         game_tick.0 + 1,
+                        VisibleEvent::NewObjEvent { new_player: false }
                     );
                 }
                 GameEventType::CancelEvents { event_ids } => {
@@ -3138,13 +3099,10 @@ fn game_event_system(
                                     new_state: obj::STATE_STALLED.to_string(),
                                 };
 
+                                //TODO add a visible events new trait
                                 let event = MapEvent {
                                     event_id: Uuid::new_v4(),
-                                    entity_id: structure_entity,
                                     obj_id: structure.id.0,
-                                    player_id: structure.player_id.0,
-                                    pos_x: structure.pos.x,
-                                    pos_y: structure.pos.y,
                                     run_tick: game_tick.0 + 1, // Add one game tick
                                     event_type: new_obj_event,
                                 };
@@ -3170,10 +3128,10 @@ fn game_event_system(
 
                                 debug!(
                                     "Cancel event - removing EventInProgress for entity: {:?}",
-                                    map_event.entity_id
+                                    obj.entity
                                 );
                                 commands
-                                    .entity(map_event.entity_id)
+                                    .entity(obj.entity)
                                     .remove::<EventInProgress>();
 
                                 /*debug!("Cancel event - removing drink, eat, sleep completed events {:?}", map_event.entity_id);
@@ -3190,11 +3148,7 @@ fn game_event_system(
 
                                 let visible_event = MapEvent {
                                     event_id: Uuid::new_v4(),
-                                    entity_id: map_event.entity_id,
                                     obj_id: map_event.obj_id,
-                                    player_id: map_event.player_id,
-                                    pos_x: map_event.pos_x,
-                                    pos_y: map_event.pos_y,
                                     run_tick: game_tick.0 + 1,
                                     event_type: state_change_event.clone(),
                                 };
@@ -3251,14 +3205,10 @@ fn resurrect_system(
                 &templates,
             );
 
-            map_events.add(
-                VisibleEvent::NewObjEvent { new_player: false },
-                entity,
+            map_events.new(
                 corpse_id,
-                hero.player_id.0,
-                hero.pos.x,
-                hero.pos.y,
                 game_tick.0 + 1,
+                VisibleEvent::NewObjEvent { new_player: false },
             );
 
             // Transfer all items to corpse
@@ -3294,11 +3244,7 @@ fn resurrect_system(
             // State change
             let state_change = MapEvent {
                 event_id: Uuid::new_v4(),
-                entity_id: hero.entity,
                 obj_id: hero.id.0,
-                player_id: hero.player_id.0,
-                pos_x: hero.pos.x,
-                pos_y: hero.pos.y,
                 run_tick: game_tick.0 + 5,
                 event_type: state_change_event.clone(),
             };
@@ -3314,11 +3260,7 @@ fn resurrect_system(
             // Move change
             let move_map_event = MapEvent {
                 event_id: Uuid::new_v4(),
-                entity_id: hero.entity,
                 obj_id: hero.id.0,
-                player_id: hero.player_id.0,
-                pos_x: hero.pos.x,
-                pos_y: hero.pos.y,
                 run_tick: game_tick.0 + 2,
                 event_type: move_event.clone(),
             };
@@ -3338,26 +3280,18 @@ fn remove_dead_system(
     if (game_tick.0 % 10) == 0 {
         for (entity, id, player_id, pos, dead_state) in dead_state_query.iter() {
             if (game_tick.0 - dead_state.dead_at) > 500 {
-                map_events.add(
-                    VisibleEvent::RemoveObjEvent,
-                    entity,
+                map_events.new(
                     id.0,
-                    player_id.0,
-                    pos.x,
-                    pos.y,
                     game_tick.0 + 1,
+                    VisibleEvent::RemoveObjEvent,
                 );
             } else if (game_tick.0 - dead_state.dead_at) > 100 {
                 // Remove dead object faster if it contains no items
                 if items.get_by_owner(id.0).is_empty() {
-                    map_events.add(
-                        VisibleEvent::RemoveObjEvent,
-                        entity,
+                    map_events.new(
                         id.0,
-                        player_id.0,
-                        pos.x,
-                        pos.y,
                         game_tick.0 + 1,
+                        VisibleEvent::RemoveObjEvent,
                     );
                 }
             }
@@ -3517,7 +3451,6 @@ impl Ids {
         self.obj
     }
 
-
     pub fn get_hero(&self, player_id: i32) -> Option<i32> {
         if let Some(hero_id) = self.player_hero_map.get(&player_id) {
             return Some(*hero_id);
@@ -3547,7 +3480,7 @@ impl Ids {
         self.obj_entity_map.insert(obj_id, entity);
     }
 
-    pub fn new_hero(&mut self, hero_id: i32, player_id: i32, entity:Entity) {
+    pub fn new_hero(&mut self, hero_id: i32, player_id: i32, entity: Entity) {
         self.player_hero_map.insert(player_id, hero_id);
         self.obj_entity_map.insert(hero_id, entity);
     }
