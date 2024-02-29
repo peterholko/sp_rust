@@ -415,7 +415,7 @@ fn message_broker_system(
 fn new_player_system(
     mut events: ResMut<PlayerEvents>,
     mut commands: Commands,
-    game_tick: ResMut<GameTick>,
+    game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
     mut game_events: ResMut<GameEvents>,
@@ -2846,7 +2846,7 @@ fn create_foundation_system(
                     .spawn((structure, structure_attrs, ClassStructure))
                     .id();
 
-                ids.new_entity_obj_mapping(structure_id, structure_entity_id);
+                ids.new_obj(structure_id, *player_id, structure_entity_id);
 
                 // Insert new obj event
                 map_events.new(
@@ -4608,22 +4608,24 @@ fn new_player(
     commands: &mut Commands,
     ids: &mut ResMut<Ids>,
     map_events: &mut ResMut<MapEvents>,
-    game_events: &mut                       ResMut<GameEvents>,
+    game_events: &mut ResMut<GameEvents>,
     items: &mut ResMut<Items>,
     skills: &mut ResMut<Skills>,
     recipes: &mut ResMut<Recipes>,
     plans: &mut ResMut<Plans>,
     templates: &Res<Templates>,
-    game_tick: &ResMut<GameTick>,
+    game_tick: &Res<GameTick>,
 ) {
     let start_x = 16;
     let start_y = 36;
     let range = 4;
 
+
+    // Creating hero
+    debug!("Creating hero for player: {:?}", player_id);
     let hero_template_name = "Novice Warrior".to_string();
     let hero_template = ObjTemplate::get_template(hero_template_name.clone(), templates);
 
-    // Create Hero Obj
     let hero_id = ids.new_obj_id();
 
     let hero = Obj {
@@ -4726,32 +4728,17 @@ fn new_player(
         ))
         .id();
 
-    ids.new_player_hero_mapping(player_id, hero_id);
-    ids.new_entity_obj_mapping(hero_id, hero_entity_id);
-
-    // Insert new obj event
-    let new_obj_event = VisibleEvent::NewObjEvent { new_player: true };
-
-    /*let map_event_id = ids.new_map_event_id();
-
-    let map_state_event = MapEvent {
-        event_id: map_event_id,
-        entity_id: hero_entity_id,
-        obj_id: hero_id,
-        player_id: player_id,
-        pos_x: start_x,
-        pos_y: start_y,
-        run_tick: game_tick.0 + 1, // Add one game tick
-        map_event_type: new_obj_event,
-    };
-
-    map_events.insert(map_event_id, map_state_event);*/
-
+    // New Obj mappings
+    ids.new_hero(hero_id, player_id, hero_entity_id);
+    
+    // Create NewObjEvent
     map_events.new(
         hero_id,
         game_tick.0 + 1,
-        new_obj_event,
+        VisibleEvent::NewObjEvent { new_player: true },
     );
+
+    debug!("map_events: {:?}", map_events);
 
     // Villager obj
     let villager_id = ids.new_obj_id();
@@ -4954,21 +4941,23 @@ fn new_player(
     let structure_id = ids.new_obj_id();
 
     // Create monolith
-    let (obj_id, entity) = Obj::create(
-        commands,
-        ids,
+    Obj::create(
         player_id,
         "Monolith".to_string(),
         Position { x: 16, y: 36 },
         State::None,
+        commands,
+        ids,
+        map_events,
+        &game_tick,
         &templates,
     );
 
-    map_events.new(
+    /*map_events.new(
         obj_id,
         game_tick.0 + 1,
         VisibleEvent::NewObjEvent { new_player: false },
-    );
+    );*/
 
     let structure_name = "Burrow".to_string();
     let structure_template = ObjTemplate::get_template(structure_name.clone(), templates);
@@ -5015,15 +5004,13 @@ fn new_player(
         .spawn((structure, structure_attrs, ClassStructure))
         .id();
 
-    ids.new_entity_obj_mapping(structure_id, structure_entity_id);
-
-    // Insert new obj event
-    let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
+    // New Obj mappings
+    ids.new_obj(structure_id, player_id, structure_entity_id);
 
     map_events.new(
         structure_id,
         game_tick.0 + 1,
-        new_obj_event,
+        VisibleEvent::NewObjEvent { new_player: false },
     );
 
     let mut item_attrs = HashMap::new();
@@ -5113,7 +5100,7 @@ fn new_player(
 
     map_events.insert(map_event_id, map_state_event); */
 
-    let villager2 = Obj {
+    /*let villager2 = Obj {
         id: Id(villager_id2),
         player_id: PlayerId(merchant_player_id),
         position: Position { x: -50, y: -50 },
@@ -5171,7 +5158,7 @@ fn new_player(
         game_event_type: event_type,
     };
 
-    game_events.insert(event.event_id, event); 
+    game_events.insert(event.event_id, event); */
 
 }
 

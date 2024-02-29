@@ -699,12 +699,15 @@ fn new_obj_event_system(
     let mut events_to_remove = Vec::new();
 
     for (map_event_id, map_event) in map_events.iter_mut() {
+        debug!("tick: {:?} - new_obj_event_system map_event: {:?}", game_tick.0, map_event);
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.event_type {
                 VisibleEvent::NewObjEvent { new_player } => {
                     debug!("Processing NewObjEvent");
                     events_to_remove.push(*map_event_id);
+
+                    debug!("NewObjEvent ids: {:?}", ids); 
 
                     let Some(player_id) = ids.get_player(map_event.obj_id) else {
                         error!("Cannot find player from id: {:?}", map_event.obj_id);
@@ -786,13 +789,15 @@ fn move_event_system(
                 VisibleEvent::MoveEvent { dst_x, dst_y } => {
                     debug!("Processing MoveEvent: {:?}", map_event);
 
+                    debug!("MoveEvent ids: {:?}", ids); 
+
                     let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        error!("Cannot find entity from id: {:?} ids: {:?}", map_event.obj_id, ids);       
                         continue;
                     };
 
                     let Some(player_id) = ids.get_player(map_event.obj_id) else {
-                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        error!("Cannot find player from id: {:?}", map_event.obj_id);
                         continue;
                     };
 
@@ -1305,40 +1310,34 @@ fn operate_refine_event_system(
 
     for (map_event_id, map_event) in map_events.iter_mut() {
         if map_event.run_tick < game_tick.0 {
-            events_to_remove.push(*map_event_id);
-
-            let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                error!("Cannot find entity from id: {:?}", map_event.obj_id);
-                continue;
-            };
-
             // Execute event
             match &map_event.event_type {
                 VisibleEvent::RefineEvent { structure_id } => {
                     info!("Processing RefineEvent");
+                    events_to_remove.push(*map_event_id);
 
-                    // Set state back to none
-                    let Ok(mut villager) = query.get_mut(entity) else {
-                        error!("Query failed to find entity {:?}", entity);
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
                         continue;
                     };
-
-                    // Reset villager state to None
-                    *villager.state = State::None;
-
-                    // Remove Event In Progress
-                    commands.entity(entity).remove::<EventInProgress>();
 
                     let Some(structure_entity) = ids.get_entity(*structure_id) else {
                         error!("Cannot find entity from structure_id: {:?}", structure_id);
                         continue;
                     };
 
-                    // Set state back to none
-                    let Ok(structure) = query.get_mut(structure_entity) else {
-                        error!("Query failed to find entity {:?}", entity);
+                    let entities = [entity, structure_entity];
+
+                    let Ok([mut villager, structure]) = query.get_many_mut(entities) else {
+                        error!("Cannot find villager or structure from entities {:?}", entities);
                         continue;
                     };
+
+                    // Remove Event In Progress
+                    commands.entity(entity).remove::<EventInProgress>();
+
+                    // Reset villager state to None
+                    *villager.state = State::None;
 
                     let Some(structure_template) = Structure::get_template(
                         structure.template.0.clone(),
@@ -1453,6 +1452,12 @@ fn operate_refine_event_system(
                 }
                 VisibleEvent::OperateEvent { structure_id } => {
                     info!("Processing OperateEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        continue;
+                    };
 
                     // Remove Event In Progress
                     commands.entity(entity).remove::<EventInProgress>();
@@ -1543,12 +1548,6 @@ fn craft_event_system(
 
     for (map_event_id, map_event) in map_events.iter_mut() {
         if map_event.run_tick < game_tick.0 {
-            events_to_remove.push(*map_event_id);
-
-            let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                error!("Cannot find entity from id: {:?}", map_event.obj_id);
-                continue;
-            };
 
             // Execute event
             match &map_event.event_type {
@@ -1557,6 +1556,12 @@ fn craft_event_system(
                     recipe_name,
                 } => {
                     info!("Processing CraftEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        continue;
+                    };                    
 
                     let Ok(mut crafter) = query.get_mut(entity) else {
                         error!("Query failed to find entity {:?}", entity);
@@ -1685,6 +1690,14 @@ fn experiment_event_system(
                         error!("Query failed to find entity {:?}", villager_entity);
                         continue;
                     };
+
+                    let entities = [villager_entity, structure_entity];
+
+                    let Ok([mut villager, structure]) = query.get_many_mut(entities) else {
+                        error!("Cannot find villager or structure from entities {:?}", entities);
+                        continue;
+                    };
+
 
                     // Reset villager state
                     *villager.state = State::None;
@@ -2520,7 +2533,7 @@ fn visible_event_system(
             continue;
         };
 
-        let network_obj = network::create_network_obj(event_obj);
+        let network_obj = network::create_network_obj(&event_obj);
 
         for obj in map_obj_query.iter() {
             match &map_event.event_type {
@@ -3016,19 +3029,15 @@ fn game_event_system(
  
                     // Create human corpse
                     let (corpse_id, entity) = Obj::create(
-                        &mut commands,
-                        &mut ids,
                         player_id.0,
                         "Human Corpse".to_string(),
                         Position { x: 16, y: 34 },
                         State::Dead,
+                        &mut commands,
+                        &mut ids,
+                        &mut map_events,
+                        &game_tick,
                         &templates,
-                    );
-
-                    map_events.new(
-                        corpse_id,
-                        game_tick.0 + 1,
-                        VisibleEvent::NewObjEvent { new_player: false }
                     );
                 }
                 GameEventType::CancelEvents { event_ids } => {
@@ -3180,7 +3189,7 @@ fn resurrect_system(
     templates: Res<Templates>,
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
-    game_tick: ResMut<GameTick>,
+    game_tick: Res<GameTick>,
     mut items: ResMut<Items>,
     mut hero_query: Query<ObjWithStatsQuery, (With<StateDead>, With<SubclassHero>)>,
     dead_state_query: Query<&StateDead>,
@@ -3196,12 +3205,14 @@ fn resurrect_system(
 
             // Create human corpse
             let (corpse_id, entity) = Obj::create(
-                &mut commands,
-                &mut ids,
                 hero.player_id.0,
                 "Human Corpse".to_string(),
                 *hero.pos,
                 State::Dead,
+                &mut commands,
+                &mut ids,
+                &mut map_events,
+                &game_tick,
                 &templates,
             );
 
@@ -3482,21 +3493,9 @@ impl Ids {
 
     pub fn new_hero(&mut self, hero_id: i32, player_id: i32, entity: Entity) {
         self.player_hero_map.insert(player_id, hero_id);
-        self.obj_entity_map.insert(hero_id, entity);
+        self.new_obj(hero_id, player_id, entity);
     }
 
-    pub fn new_player_hero_mapping(&mut self, player_id: i32, hero_id: i32) {
-        self.player_hero_map.insert(player_id, hero_id);
-    }
-
-    pub fn new_entity_obj_mapping(&mut self, obj_id: i32, entity: Entity) {
-        self.obj_entity_map.insert(obj_id, entity);
-    }
-
-    pub fn new_item_id(&mut self) -> i32 {
-        self.item = self.item + 1;
-        self.item
-    }
 }
 
 /*impl GameEvents {
@@ -3589,7 +3588,7 @@ fn spawn_npc_with_id(
 
     Encounter::generate_loot(npc_id, ids, items, templates);
 
-    ids.new_entity_obj_mapping(npc_id, entity);
+    ids.new_obj(npc_id, player_id, entity);
 
     return (entity, Id(npc_id), PlayerId(player_id), pos);
 }
@@ -3631,7 +3630,7 @@ fn spawn_necromancer(
         ))
         .id();
 
-    ids.new_entity_obj_mapping(necro_obj.id.0, necro_entity);
+    ids.new_obj(necro_obj.id.0, player_id, necro_entity);
 
     Encounter::generate_loot(necro_obj.id.0, ids, items, templates);
 

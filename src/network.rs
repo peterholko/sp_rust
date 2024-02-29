@@ -716,7 +716,7 @@ pub fn send_to_client(player_id: i32, packet: ResponsePacket, clients: &Res<Clie
 }
 
 pub fn create_network_obj(
-    obj: MapObjQueryItem<'_>
+    obj: &MapObjQueryItem<'_>
 ) -> MapObj {
     let network_obj = MapObj {
         id: obj.id.0,

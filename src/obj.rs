@@ -6,8 +6,7 @@ use rand::{random, Rng};
 
 use crate::effect::Effects;
 use crate::game::{
-    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position,
-    State, Stats, Subclass, Template, Viewshed, VisibleEvent,
+    self, BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed, VisibleEvent
 };
 use crate::item::{Item, Items};
 use crate::map::TileType;
@@ -63,12 +62,14 @@ pub struct Obj {
 
 impl Obj {
     pub fn create(
-        commands: &mut Commands,
-        ids: &mut ResMut<Ids>,
         player_id: i32,
         template_name: String,
         pos: Position,
         state: State,
+        commands: &mut Commands,
+        ids: &mut ResMut<Ids>,
+        map_events: &mut ResMut<MapEvents>,
+        game_tick: &Res<GameTick>,
         templates: &Res<Templates>,
     ) -> (i32, Entity) {
         let template = ObjTemplate::get_template_by_name(template_name, &templates);
@@ -92,7 +93,7 @@ impl Obj {
                 groups: Vec::new(),
             },
             stats: Stats {
-                hp: 1,
+                hp: template.base_hp.unwrap_or(100),
                 base_hp: template.base_hp.unwrap_or(100),
                 stamina: template.base_stamina,
                 base_stamina: template.base_stamina,
@@ -105,8 +106,18 @@ impl Obj {
             effects: Effects(HashMap::new()),
         };
 
+        // Spawn entity
         let entity_id = commands.spawn(obj).id();
-        ids.new_entity_obj_mapping(obj_id, entity_id);
+
+        // Create mappings
+        ids.new_obj(obj_id, player_id, entity_id);
+
+        // Create new object event
+        map_events.new(
+            obj_id,
+            game_tick.0 + 1,
+            VisibleEvent::NewObjEvent { new_player: false }
+        );
 
         (obj_id, entity_id)
     }
@@ -140,7 +151,7 @@ impl Obj {
                 groups: Vec::new(),
             },
             stats: Stats {
-                hp: 1,
+                hp: template.base_hp.unwrap_or(100),
                 base_hp: template.base_hp.unwrap_or(100),
                 stamina: template.base_stamina,
                 base_stamina: template.base_stamina,
