@@ -3,11 +3,12 @@ use bevy::prelude::*;
 use big_brain::thinker::{Actor, ThinkerBuilder};
 
 use rand::Rng;
-use std::collections::HashMap;
 
+use crate::ids::Ids;
+use crate::event::{GameEvent, GameEvents, GameEventType, MapEvent, MapEvents, VisibleEvent};
 use crate::effect::{self, Effect, Effects};
 use crate::game::{
-    BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, PlayerId, Position, State, StateDead, Stats, Subclass, Template, VisibleEvent, VisibleEvents
+    BaseAttrs, Class, GameTick, Id, Misc, PlayerId, Position, State, StateDead, Stats, Subclass, Template, 
 };
 use crate::item::{self, AttrKey, Item, Items, DAMAGE};
 use crate::map::Map;

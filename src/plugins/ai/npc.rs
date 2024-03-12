@@ -1,5 +1,3 @@
-use std::f32::consts::E;
-
 use bevy::prelude::*;
 use big_brain::prelude::*;
 use rand::Rng;
@@ -13,13 +11,18 @@ use crate::components::npc::FleeToHome;
 use crate::components::npc::MerchantScorer;
 use crate::components::npc::RaiseDead;
 use crate::components::npc::SailToPort;
+use crate::components::npc::TransportTaxCollector;
+use crate::components::npc::TaxCollectorShipScorer;
 use crate::components::npc::VisibleCorpse;
 use crate::components::npc::VisibleCorpseScorer;
 use crate::components::npc::{ChaseAndAttack, VisibleTarget, VisibleTargetScorer};
 use crate::components::villager::MoveToInProgress;
 use crate::effect::Effect;
+use crate::event::Spell;
+use crate::event::{GameEvents, MapEvents, VisibleEvent};
 use crate::game::State;
 use crate::game::*;
+use crate::ids::Ids;
 use crate::item::*;
 use crate::map::Map;
 use crate::obj;
@@ -32,13 +35,14 @@ pub const BASE_SPEED: f32 = 1.0;
 
 pub const NECROMANCER: &str = "Necromancer";
 
+
+
 pub fn target_scorer_system(
     target_query: Query<&VisibleTarget>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorer>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(target) = target_query.get(*actor) {
-            println!("Scorer target_id: {:?}", target);
             if target.target != NO_TARGET {
                 score.set(0.9);
             } else {
@@ -53,7 +57,7 @@ pub fn nearby_target_system(
     mut npc_query: Query<(&Position, &Viewshed, &mut VisibleTarget), With<SubclassNPC>>,
     target_query: Query<ObjQuery, Or<(With<SubclassHero>, With<SubclassVillager>)>>,
 ) {
-    if game_tick.0 % 10 == 0 {
+    if game_tick.0 % 30 == 0 {
         for (npc_pos, npc_viewshed, mut npc_visible_target) in npc_query.iter_mut() {
             let mut min_distance = u32::MAX;
             let mut target_id = NO_TARGET;
@@ -162,11 +166,7 @@ pub fn attack_target_system(
 
                             *npc.state = State::Moving;
 
-                            map_events.new(
-                                npc.id.0,
-                                game_tick.0 + 4,
-                                state_change_event,
-                            );
+                            map_events.new(npc.id.0, game_tick.0 + 4, state_change_event);
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
@@ -268,11 +268,7 @@ pub fn attack_target_system(
 
                                 *npc.state = State::Moving;
 
-                                map_events.new(
-                                    npc.id.0,
-                                    game_tick.0 + 4,
-                                    state_change_event,
-                                );
+                                map_events.new(npc.id.0, game_tick.0 + 4, state_change_event);
 
                                 // Add Move Event
                                 let move_event = VisibleEvent::MoveEvent {
@@ -306,15 +302,13 @@ pub fn attack_target_system(
     }
 }
 
-//Necromancer systems
-
+// Necromancer systems
 pub fn corpses_scorer_system(
     corpse_query: Query<&VisibleCorpse>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleCorpseScorer>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(corpse) = corpse_query.get(*actor) {
-            println!("Scorer corpse_id: {:?}", corpse);
             if corpse.corpse != NO_TARGET {
                 score.set(1.0);
             } else {
@@ -347,7 +341,6 @@ pub fn nearby_corpses_system(
                 }
             }
 
-            debug!("Distance system corpse_id: {:?}", corpse_id);
             visible_corpse.corpse = corpse_id;
         }
     }
@@ -364,7 +357,6 @@ pub fn flee_scorer_system(
             let mut minions_alive = true;
 
             for minion_id in minions.ids.iter() {
-                println!("Minion_id: {:?}", minion_id);
 
                 let Some(minion_entity) = ids.get_entity(*minion_id) else {
                     continue;
@@ -506,7 +498,9 @@ pub fn cast_target_system(
                         continue;
                     };
 
-                    if Map::dist(*npc.pos, *target.pos) <= 2 {
+                    let target_dist = Map::dist(*npc.pos, *target.pos);
+
+                    if target_dist == 2 {
                         debug!("Target is in range, time to cast spell");
 
                         *npc.state = State::Casting;
@@ -524,16 +518,13 @@ pub fn cast_target_system(
                             target_id: target.id.0,
                         };
 
-                        let map_event = map_events.new(
-                            npc.id.0,
-                            game_tick.0 + 30,
-                            spell_damage_event,
-                        );
+                        let map_event =
+                            map_events.new(npc.id.0, game_tick.0 + 30, spell_damage_event);
 
                         commands.entity(*actor).insert(EventInProgress {
                             event_id: map_event.event_id,
                         });
-                    } else {
+                    } else if target_dist > 2 {
                         if *npc.state == State::None {
                             if let Some(path_result) = Map::find_path(
                                 *npc.pos,
@@ -558,11 +549,7 @@ pub fn cast_target_system(
 
                                 *npc.state = State::Moving;
 
-                                map_events.new(
-                                    npc.id.0,
-                                    game_tick.0 + 4,
-                                    state_change_event,
-                                );
+                                map_events.new(npc.id.0, game_tick.0 + 4, state_change_event);
 
                                 // Add Move Event
                                 let move_event = VisibleEvent::MoveEvent {
@@ -580,6 +567,87 @@ pub fn cast_target_system(
                                     event_id: move_map_event.event_id,
                                 });
                             }
+                        }
+                    } else if target_dist == 1 {
+                        let neighbour_tiles = Map::get_neighbour_tiles(
+                            npc.pos.x,
+                            npc.pos.y,
+                            &map,
+                            &Vec::new(),
+                            true,
+                            false,
+                            false,
+                        );
+
+                        println!("neighbour tiles: {:?}", neighbour_tiles);
+
+                        let mut selected_pos_list = Vec::new();
+
+                        for (map_pos, movement_cost) in neighbour_tiles.iter() {
+                            let dist = Map::dist(
+                                Position {
+                                    x: map_pos.0,
+                                    y: map_pos.1,
+                                },
+                                *target.pos,
+                            );
+
+                            if dist == 2 {
+                                selected_pos_list.push(map_pos.clone());
+                            }
+                        }
+
+                        println!("selected_pos_list: {:?}", selected_pos_list);
+
+                        if selected_pos_list.len() > 0 {
+                            // Randomly select a pos from list
+                            let mut rng = rand::thread_rng();
+                            let next_pos = selected_pos_list[rng.gen_range(0..selected_pos_list.len())].clone();
+
+                            // Add State Change Event to Moving
+                            let state_change_event = VisibleEvent::StateChangeEvent {
+                                new_state: "moving".to_string(),
+                            };
+
+                            *npc.state = State::Moving;
+
+                            map_events.new(npc.id.0, game_tick.0 + 4, state_change_event);
+
+                            // Add Move Event
+                            let move_event = VisibleEvent::MoveEvent {
+                                dst_x: next_pos.0,
+                                dst_y: next_pos.1,
+                            };
+
+                            let move_map_event =
+                                map_events.new(npc.id.0, game_tick.0 + move_duration, move_event);
+
+                            commands.entity(*actor).insert(EventInProgress {
+                                event_id: move_map_event.event_id,
+                            });
+                        } else {
+                            //No choice but has to fight
+                            *npc.state = State::Casting;
+
+                            map_events.new(
+                                npc.id.0,
+                                game_tick.0 + 4,
+                                VisibleEvent::StateChangeEvent {
+                                    new_state: "casting".to_string(),
+                                },
+                            );
+
+                            let spell_damage_event = VisibleEvent::SpellDamageEvent {
+                                spell: Spell::ShadowBolt,
+                                target_id: target.id.0,
+                            };
+
+                            let map_event =
+                                map_events.new(npc.id.0, game_tick.0 + 30, spell_damage_event);
+
+                            commands.entity(*actor).insert(EventInProgress {
+                                event_id: map_event.event_id,
+                            });
                         }
                     }
 
@@ -632,19 +700,19 @@ pub fn raise_dead_system(
                 };
 
                 let Ok((_id, corpse_player, corpse_pos)) = obj_query.get(corpse_entity) else {
-                    error!("Query failed to find entity {:?}", corpse_entity);
+                    error!("Query failed to find corpse entity {:?}", corpse_entity);
                     *state = ActionState::Failure;
                     continue;
                 };
 
                 let Ok((npc_id, npc_player_id, npc_pos)) = obj_query.get(*actor) else {
-                    error!("Query failed to find entity {:?}", *actor);
+                    error!("Query failed to find caster entity {:?}", *actor);
                     *state = ActionState::Failure;
                     continue;
                 };
 
                 let Ok(mut npc_state) = state_query.get_mut(*actor) else {
-                    error!("Query failed to find entity {:?}", *actor);
+                    error!("Query failed to find caster state entity {:?}", *actor);
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -665,7 +733,9 @@ pub fn raise_dead_system(
                     let map_event_id = map_events.new(
                         npc_id.0,
                         game_tick.0 + 30,
-                        VisibleEvent::SpellRaiseDeadEvent { corpse_id: corpse_id },
+                        VisibleEvent::SpellRaiseDeadEvent {
+                            corpse_id: corpse_id,
+                        },
                     );
 
                     commands.entity(*actor).insert(EventInProgress {
@@ -696,11 +766,7 @@ pub fn raise_dead_system(
 
                             *npc_state = State::Moving;
 
-                            map_events.new(
-                                npc_id.0,
-                                game_tick.0 + 4,
-                                state_change_event,
-                            );
+                            map_events.new(npc_id.0, game_tick.0 + 4, state_change_event);
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
@@ -708,11 +774,8 @@ pub fn raise_dead_system(
                                 dst_y: next_pos.1,
                             };
 
-                            let move_map_event = map_events.new(
-                                npc_id.0,
-                                game_tick.0 + 10,
-                                move_event,
-                            );
+                            let move_map_event =
+                                map_events.new(npc_id.0, game_tick.0 + 10, move_event);
 
                             commands.entity(*actor).insert(EventInProgress {
                                 event_id: move_map_event.event_id,
@@ -758,7 +821,7 @@ pub fn flee_system(
                 };
 
                 let Ok(home) = home_query.get(*actor) else {
-                    //debug!("Merchant querny failed to find actor: {:?}", actor);
+                    //debug!("Merchant query failed to find actor: {:?}", actor);
                     continue;
                 };
 
@@ -785,11 +848,7 @@ pub fn flee_system(
 
                         *obj.state = State::Moving;
 
-                        map_events.new(
-                            obj.id.0,
-                            game_tick.0 + 4,
-                            state_change_event,
-                        );
+                        map_events.new(obj.id.0, game_tick.0 + 4, state_change_event);
 
                         // Add Move Event
                         let move_event = VisibleEvent::MoveEvent {
@@ -924,11 +983,7 @@ pub fn merchant_move_system(
 
                         *obj.state = State::Moving;
 
-                        map_events.new(
-                            obj.id.0,
-                            game_tick.0 + 4,
-                            state_change_event,
-                        );
+                        map_events.new(obj.id.0, game_tick.0 + 4, state_change_event);
 
                         // Add Move Event
                         let move_event = VisibleEvent::MoveEvent {
@@ -962,3 +1017,177 @@ pub fn merchant_move_system(
         }
     }
 }
+
+pub fn tax_collector_ship_scorer_system(
+    game_tick: Res<GameTick>,
+    move_in_progress: Query<&MoveToInProgress>,
+    mut pos_query: Query<(&Position, &mut TaxCollectorShip)>,
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<TaxCollectorShipScorer>>,
+) {
+    for (Actor(actor), mut score, span) in &mut query {
+        if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
+            score.set(1.0);
+        } else {
+            if let Ok((position, mut tax_collector_ship)) = pos_query.get_mut(*actor) {
+                if *position == tax_collector_ship.home_port {
+                    if (tax_collector_ship.in_port_at + 500) <= game_tick.0 {
+                        // destination to target port
+                        tax_collector_ship.dest = tax_collector_ship.target_port;
+
+                        score.set(1.0);
+                    } else {
+                        score.set(0.0);
+                    }
+                } else if *position == tax_collector_ship.target_port {
+                    if (tax_collector_ship.in_port_at + 1000) <= game_tick.0 {
+                        // destination to home port
+                        tax_collector_ship.dest = tax_collector_ship.home_port;
+
+                        score.set(1.0);
+                    } else {
+                        score.set(0.0);
+                    }
+                } else {
+                    score.set(0.0);
+                }
+
+                debug!("tax collector ship score: {:?}", score);
+            }
+        }
+    }
+}
+
+pub fn tax_collector_ship_move_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    map: Res<Map>,
+    mut map_events: ResMut<MapEvents>,
+    mut obj_query: Query<ObjQuery, (With<TaxCollectorShip>, Without<EventInProgress>)>,
+    mut ship_query: Query<&mut TaxCollectorShip>,
+    mut query: Query<(&Actor, &mut ActionState, &TransportTaxCollector)>,
+) {
+    for (Actor(actor), mut state, _transport) in &mut query {
+        debug!("actor: {:?}", actor);
+        match *state {
+            ActionState::Requested => {
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                debug!("Sail to port executing...");
+
+                debug!("Getting obj...");
+                let Ok(mut obj) = obj_query.get_mut(*actor) else {
+                    //debug!("Obj query failed to find actor: {:?}", actor);
+                    continue;
+                };
+
+                let Ok(mut ship) = ship_query.get_mut(*actor) else {
+                    //debug!("Merchant querny failed to find actor: {:?}", actor);
+                    continue;
+                };
+
+                if *obj.pos == ship.dest {
+                    ship.in_port_at = game_tick.0;
+                    commands.entity(*actor).remove::<MoveToInProgress>();
+                    *state = ActionState::Success;
+                } else {
+                    debug!("Finding path from {:?} to {:?}", obj.pos, ship.dest);
+
+                    if let Some(path_result) = Map::find_path(
+                        *obj.pos,
+                        ship.dest,
+                        &map,
+                        &Vec::new(),
+                        false,
+                        true,
+                        false,
+                    ) {
+                        debug!("Follower path: {:?}", path_result);
+
+                        let (path, c) = path_result;
+                        let next_pos = &path[1];
+
+                        debug!("Next pos: {:?}", next_pos);
+
+                        // Add State Change Event to Moving
+                        let state_change_event = VisibleEvent::StateChangeEvent {
+                            new_state: "moving".to_string(),
+                        };
+
+                        *obj.state = State::Moving;
+
+                        map_events.new(obj.id.0, game_tick.0 + 4, state_change_event);
+
+                        // Add Move Event
+                        let move_event = VisibleEvent::MoveEvent {
+                            dst_x: next_pos.0,
+                            dst_y: next_pos.1,
+                        };
+
+                        let move_map_event = map_events.new(
+                            obj.id.0,
+                            game_tick.0 + 36, // in the future
+                            move_event,
+                        );
+
+                        commands.entity(*actor).insert(EventInProgress {
+                            event_id: move_map_event.event_id,
+                        });
+
+                        commands.entity(*actor).insert(MoveToInProgress);
+                    } else {
+                        debug!("Cannot find path");
+                        *state = ActionState::Failure;
+                    }
+                }
+            }
+            // All Actions should make sure to handle cancellations!
+            ActionState::Cancelled => {
+                debug!("Action was cancelled. Considering this a failure.");
+                *state = ActionState::Failure;
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn is_ship_adjacent_scorer(
+    game_tick: Res<GameTick>,
+    move_in_progress: Query<&MoveToInProgress>,
+    mut pos_query: Query<(&Position, &mut Merchant)>,
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<MerchantScorer>>,
+) {
+    for (Actor(actor), mut score, span) in &mut query {
+        if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
+            score.set(1.0);
+        } else {
+            if let Ok((position, mut merchant)) = pos_query.get_mut(*actor) {
+                if *position == merchant.home_port {
+                    if (merchant.in_port_at + 50) <= game_tick.0 {
+                        // destination to target port
+                        merchant.dest = merchant.target_port;
+
+                        score.set(1.0);
+                    } else {
+                        score.set(0.0);
+                    }
+                } else if *position == merchant.target_port {
+                    if (merchant.in_port_at + 500) <= game_tick.0 {
+                        // destination to home port
+                        merchant.dest = merchant.home_port;
+
+                        score.set(1.0);
+                    } else {
+                        score.set(0.0);
+                    }
+                } else {
+                    score.set(0.0);
+                }
+
+                debug!("merchant score: {:?}", score);
+            }
+        }
+    }
+}
+

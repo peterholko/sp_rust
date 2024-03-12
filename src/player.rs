@@ -1,14 +1,11 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 use big_brain::prelude::*;
-use pathfinding::prelude::directions::E;
 
 use std::collections::HashMap;
 
-use crate::components::npc::{
-    ChaseAndCast, MerchantScorer, RaiseDead, SailToPort, VisibleCorpse, VisibleCorpseScorer,
-    VisibleTarget, VisibleTargetScorer,
-};
+use crate::ids::Ids;
+use crate::event::{GameEvent, GameEvents, GameEventType, MapEvents, VisibleEvent};
 use crate::components::villager::{
     Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
     FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
@@ -22,17 +19,15 @@ use crate::combat::{Combat, CombatQuery, ComboTracker};
 use crate::effect::Effects;
 use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
-    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameEvent, GameEventType,
-    GameEvents, GameTick, HeroClassList, Id, Ids, MapEvent, MapEvents, MapObjQuery, Merchant, Misc,
+    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap,
+    GameTick, Id, MapObjQuery, Merchant, Misc,
     Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
-    SubclassHero, SubclassNPC, SubclassVillager, Template, Viewshed, VillagerAttrs, VisibleEvent,
-    CREATIVITY, DEXTERITY, ENDURANCE, FOCUS, INTELLECT, SPIRIT, STRENGTH, TOUGHNESS,
+    SubclassHero, SubclassNPC, SubclassVillager, Template, Viewshed, VillagerAttrs
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
 use crate::network::{self, send_to_client, ResponsePacket, StatsData, StructureList};
 use crate::obj::{self, Obj};
-use crate::plugins::ai::npc::NO_TARGET;
 use crate::recipe::{self, Recipe, Recipes};
 use crate::resource::{Resource, Resources};
 use crate::skill::{Skill, Skills};
@@ -1276,14 +1271,14 @@ fn info_obj_system(
                         ));
 
                         if let Ok(attrs) = attrs_query.get(obj.entity) {
-                            attributes.insert(CREATIVITY.to_string(), attrs.creativity);
-                            attributes.insert(DEXTERITY.to_string(), attrs.dexterity);
-                            attributes.insert(ENDURANCE.to_string(), attrs.endurance);
-                            attributes.insert(FOCUS.to_string(), attrs.focus);
-                            attributes.insert(INTELLECT.to_string(), attrs.intellect);
-                            attributes.insert(SPIRIT.to_string(), attrs.spirit);
-                            attributes.insert(STRENGTH.to_string(), attrs.strength);
-                            attributes.insert(TOUGHNESS.to_string(), attrs.toughness);
+                            attributes.insert(obj::CREATIVITY.to_string(), attrs.creativity);
+                            attributes.insert(obj::DEXTERITY.to_string(), attrs.dexterity);
+                            attributes.insert(obj::ENDURANCE.to_string(), attrs.endurance);
+                            attributes.insert(obj::FOCUS.to_string(), attrs.focus);
+                            attributes.insert(obj::INTELLECT.to_string(), attrs.intellect);
+                            attributes.insert(obj::SPIRIT.to_string(), attrs.spirit);
+                            attributes.insert(obj::STRENGTH.to_string(), attrs.strength);
+                            attributes.insert(obj::TOUGHNESS.to_string(), attrs.toughness);
                         }
 
                         if let Ok(stats) = stats_query.get(obj.entity) {
@@ -1533,13 +1528,13 @@ fn info_attrs_system(
                     if let Ok(attrs) = attr_query.get(entity) {
                         let mut attrs_packet = HashMap::new();
 
-                        attrs_packet.insert(CREATIVITY.to_string(), attrs.creativity);
-                        attrs_packet.insert(DEXTERITY.to_string(), attrs.dexterity);
-                        attrs_packet.insert(ENDURANCE.to_string(), attrs.endurance);
-                        attrs_packet.insert(FOCUS.to_string(), attrs.focus);
-                        attrs_packet.insert(INTELLECT.to_string(), attrs.intellect);
-                        attrs_packet.insert(SPIRIT.to_string(), attrs.spirit);
-                        attrs_packet.insert(TOUGHNESS.to_string(), attrs.toughness);
+                        attrs_packet.insert(obj::CREATIVITY.to_string(), attrs.creativity);
+                        attrs_packet.insert(obj::DEXTERITY.to_string(), attrs.dexterity);
+                        attrs_packet.insert(obj::ENDURANCE.to_string(), attrs.endurance);
+                        attrs_packet.insert(obj::FOCUS.to_string(), attrs.focus);
+                        attrs_packet.insert(obj::INTELLECT.to_string(), attrs.intellect);
+                        attrs_packet.insert(obj::SPIRIT.to_string(), attrs.spirit);
+                        attrs_packet.insert(obj::TOUGHNESS.to_string(), attrs.toughness);
 
                         let info_attrs_packet = ResponsePacket::InfoAttrs {
                             id: *id,
@@ -3956,12 +3951,10 @@ fn remove_system(
 
                 debug!("Removing obj: {:?}", obj.id.0);
 
-                let remove_event = VisibleEvent::RemoveObjEvent;
-
                 map_events.new(
                     obj.id.0,
                     game_tick.0 + 1,
-                    remove_event,
+                    VisibleEvent::RemoveObjEvent{pos: obj.pos.to_owned()},
                 );
             }
             _ => {}
@@ -4717,7 +4710,7 @@ fn new_player(
 
     items.new_with_attrs(hero_id, "Health Potion".to_string(), 1, item_attrs2);
 
-    let hero_attrs = generate_hero_attrs();
+    let hero_attrs = Obj::generate_hero_attrs();
 
     // Spawn hero
     let hero_entity_id = commands
@@ -4953,12 +4946,6 @@ fn new_player(
         &templates,
     );
 
-    /*map_events.new(
-        obj_id,
-        game_tick.0 + 1,
-        VisibleEvent::NewObjEvent { new_player: false },
-    );*/
-
     let structure_name = "Burrow".to_string();
     let structure_template = ObjTemplate::get_template(structure_name.clone(), templates);
 
@@ -5145,7 +5132,33 @@ fn new_player(
         .spawn((villager2, SubclassVillager, base_attrs2, villager_attrs2))
         .id();
 
-    ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);
+    ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);*/
+
+    // Create human corpse 1
+    Obj::create(
+        999,
+        "Human Corpse".to_string(),
+        Position { x: 16, y: 34 },
+        State::Dead,
+        commands,
+        ids,
+        map_events,
+        &game_tick,
+        &templates,
+    );
+
+    // Create human corpse
+     Obj::create(
+        999,
+        "Human Corpse".to_string(),
+        Position { x: 15, y: 34 },
+        State::Dead,
+        commands,
+        ids,
+        map_events,
+        &game_tick,
+        &templates,
+    );
 
     let event_type = GameEventType::NecroEvent {
         pos: Position{x: 17, y: 34},
@@ -5158,7 +5171,7 @@ fn new_player(
         game_event_type: event_type,
     };
 
-    game_events.insert(event.event_id, event); */
+    game_events.insert(event.event_id, event); 
 
 }
 
@@ -5261,18 +5274,3 @@ fn process_item_transfer_structure(
     return Vec::new();
 }
 
-//TODO move to another module
-fn generate_hero_attrs() -> BaseAttrs {
-    let attrs = BaseAttrs {
-        creativity: 10,
-        dexterity: 10,
-        endurance: 10,
-        focus: 10,
-        intellect: 10,
-        spirit: 10,
-        strength: 10,
-        toughness: 10,
-    };
-
-    return attrs;
-}

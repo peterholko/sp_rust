@@ -8,7 +8,7 @@ use argon2::{
     Argon2,
 };
 
-use crate::game::HeroClassList;
+use crate::obj::HeroClassList;
 use thiserror::Error;
 
 pub type Accounts = Arc<Mutex<HashMap<i32, Account>>>;

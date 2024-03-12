@@ -15,17 +15,20 @@ use bevy::{
 };
 
 use bevy_save::SavePlugins;
-use game::{GamePlugin, Position, Merchant, MapEvents, GameEvents};
+use event::{MapEvents, GameEvents};
+use game::{GamePlugin, Position, Merchant};
 use item::Items;
 
 mod account;
 mod combat;
 mod components;
 mod effect;
+mod event;
 mod encounter;
 mod experiment;
 mod game;
 mod item;
+mod ids;
 mod map;
 mod network;
 mod obj;

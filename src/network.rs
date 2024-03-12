@@ -21,7 +21,8 @@ use crate::{
     account::{Account, Accounts}, game::{MapObjQueryItem, ObjQueryMutReadOnlyItem}, item, obj::Obj, resource::Property, templates::ResReq
 };
 use crate::{
-    game::{Client, Clients, HeroClassList},
+    game::{Client, Clients},
+    obj::HeroClassList,
     player::PlayerEvent,
 };
 use crate::{map::MapTile, recipe, templates::RecipeTemplate};

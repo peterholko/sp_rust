@@ -597,6 +597,13 @@ impl Map {
     pub fn is_valid_pos((q, r): (i32, i32)) -> bool {
         q >= 0 && r >= 0 && q < (WIDTH as i32) && r < (HEIGHT as i32)
     }
+
+    pub fn in_empire(pos: Position) -> bool {
+        match pos {
+            Position { x: 0, y: 15 } => true,
+            _ => false,        
+        }
+    }
 }
 
 #[cfg(test)]

@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use big_brain::evaluators::Evaluator;
 use big_brain::evaluators::PowerEvaluator;
 use big_brain::prelude::*;
-use pathfinding::prelude::directions::E;
 
+use crate::ids::Ids;
+use crate::event::{GameEvent, GameEvents, GameEventType, MapEvents, VisibleEvent};
 use crate::components::villager::Dehydrated;
 use crate::components::villager::DrinkDistanceScorer;
 use crate::components::villager::DrowsyScorer;

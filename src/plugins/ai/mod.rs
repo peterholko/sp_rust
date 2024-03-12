@@ -6,6 +6,7 @@ use big_brain::{
 
 pub mod npc;
 pub mod villager;
+pub mod tax_collector;
 
 pub struct AIPlugin;
 

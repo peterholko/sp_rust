@@ -8,7 +8,8 @@ use rand::distributions::Distribution;
 use rand::distributions::WeightedIndex;
 use rand::Rng;
 
-use crate::game::{Ids, Position};
+use crate::ids::Ids;
+use crate::game::{Position};
 use crate::item::{Item, Items, self, AttrKey};
 use crate::map::Map;
 use crate::network;

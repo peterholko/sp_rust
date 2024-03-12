@@ -4,9 +4,11 @@ use std::collections::HashMap;
 
 use rand::{random, Rng};
 
+use crate::ids::Ids;
 use crate::effect::Effects;
+use crate::event::{MapEvent, MapEvents, VisibleEvent};
 use crate::game::{
-    self, BaseAttrs, Class, GameTick, Id, Ids, MapEvent, MapEvents, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed, VisibleEvent
+    self, BaseAttrs, Class, GameTick, Id, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed
 };
 use crate::item::{Item, Items};
 use crate::map::TileType;
@@ -43,6 +45,24 @@ pub const STATE_EXPLORING: &str = "exploring";
 pub const STATE_DRINKING: &str = "drinking";
 pub const STATE_EATING: &str = "eating";
 pub const STATE_SLEEPING: &str = "sleeping";
+
+// Attributes
+pub const CREATIVITY: &str = "Creativity";
+pub const DEXTERITY: &str = "Dexterity";
+pub const ENDURANCE: &str = "Endurance";
+pub const FOCUS: &str = "Focus";
+pub const INTELLECT: &str = "Intellect";
+pub const SPIRIT: &str = "Spirit";
+pub const STRENGTH: &str = "Strength";
+pub const TOUGHNESS: &str = "Toughness";
+
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum HeroClassList {
+    Warrior,
+    Ranger,
+    Mage,
+    None,
+}
 
 #[derive(Bundle, Clone)]
 pub struct Obj {
@@ -249,5 +269,20 @@ impl Obj {
         };
 
         map_events.new(obj_id.0, game_tick, sound_event);
+    }
+
+    pub fn generate_hero_attrs() -> BaseAttrs {
+        let attrs = BaseAttrs {
+            creativity: 10,
+            dexterity: 10,
+            endurance: 10,
+            focus: 10,
+            intellect: 10,
+            spirit: 10,
+            strength: 10,
+            toughness: 10,
+        };
+    
+        return attrs;
     }
 }
