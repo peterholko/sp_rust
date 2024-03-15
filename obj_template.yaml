@@ -246,7 +246,7 @@
   
 - name: Tax Ship
   class: unit
-  subclass: npc
+  subclass: transport
   template: Tax Ship
   base_hp: 2000
   base_stamina: 10000
@@ -263,7 +263,8 @@
 - name: Tax Collector
   class: unit
   subclass: npc
-  template: Tax Ship
+  template: Tax Collector
+  groups: [Tax Collector]
   base_hp: 2000
   base_stamina: 10000
   base_dmg: 2

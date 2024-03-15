@@ -5,18 +5,17 @@ use big_brain::{
 };
 
 pub mod npc;
-pub mod villager;
 pub mod tax_collector;
+pub mod villager;
 
 pub struct AIPlugin;
 
 impl Plugin for AIPlugin {
     fn build(&self, app: &mut App) {
-
-
         app.add_plugins(BigBrainPlugin::new(PreUpdate))
             .add_systems(Update, npc::nearby_target_system)
             .add_systems(Update, npc::nearby_corpses_system)
+            .add_systems(Update, tax_collector::update_tax_collection_system)
             .add_systems(
                 PreUpdate,
                 (
@@ -39,8 +38,18 @@ impl Plugin for AIPlugin {
                     npc::raise_dead_system.in_set(BigBrainSet::Actions),
                     villager::flee_system.in_set(BigBrainSet::Actions),
                     npc::flee_system.in_set(BigBrainSet::Actions),
-                    npc::merchant_move_system.in_set(BigBrainSet::Actions)
-                )
+                    npc::merchant_move_system.in_set(BigBrainSet::Actions),
+                ),
+            )
+            .add_systems(
+                PreUpdate,
+                (
+                    tax_collector::idle_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::move_to_target_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::move_to_pos_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::move_to_empire_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::forfeiture_action_system.in_set(BigBrainSet::Actions),
+                ),
             )
             .add_systems(
                 PreUpdate,
@@ -64,8 +73,23 @@ impl Plugin for AIPlugin {
                     npc::target_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::corpses_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::flee_scorer_system.in_set(BigBrainSet::Scorers),
-                    npc::merchant_scorer_system.in_set(BigBrainSet::Scorers)
-                )
+                    npc::merchant_scorer_system.in_set(BigBrainSet::Scorers),
+                ),
+            )
+            .add_systems(
+                PreUpdate,
+                (
+                    tax_collector::is_aboard_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::at_landing_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::is_target_adjacent_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::is_tax_collected_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::at_destination_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::is_passenger_aboard_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::is_waiting_for_passenger_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::no_taxes_to_collect_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::taxes_to_collect_scorer_system.in_set(BigBrainSet::Scorers),
+                    tax_collector::overdue_tax_scorer_system.in_set(BigBrainSet::Scorers),
+                ),
             );
 
         let linear = LinearEvaluator::new_inversed();

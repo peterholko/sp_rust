@@ -9,6 +9,7 @@ use crate::network;
 use crate::resource::{self};
 use crate::templates::{ItemTemplate, RecipeTemplates, ResReq};
 
+
 #[derive(Debug, Reflect, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttrKey {
     Damage,
@@ -99,6 +100,8 @@ pub enum AttrVal {
     Bool(bool),
     Str(String),
 }
+
+pub const FILTER_ALL: &str = "all";
 
 pub const DAMAGE: &str = "Damage";
 pub const DEFENSE: &str = "Defense";
@@ -611,6 +614,10 @@ impl Items {
         filter: Vec<String>,
     ) -> Vec<network::Item> {
         let mut owner_items: Vec<network::Item> = Vec::new();
+
+        if filter.contains(&FILTER_ALL.to_string()) {
+            return vec![];
+        }
 
         for item in self.items.iter() {
             if item.owner == owner {

@@ -1,17 +1,20 @@
+use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 
 use std::collections::HashMap;
 
 use rand::{random, Rng};
 
-use crate::ids::Ids;
 use crate::effect::Effects;
 use crate::event::{MapEvent, MapEvents, VisibleEvent};
 use crate::game::{
-    self, BaseAttrs, Class, GameTick, Id, Misc, Name, PlayerId, Position, State, Stats, Subclass, Template, Viewshed
+    self, BaseAttrs, Class, GameTick, Id, Misc, Name, ObjQueryMut, PlayerId, Position, State,
+    Stats, Subclass, Template, Viewshed,
 };
+use crate::ids::Ids;
 use crate::item::{Item, Items};
-use crate::map::TileType;
+use crate::map::{MapPos, TileType};
+use crate::network;
 use crate::skill::{Skill, Skills};
 use crate::templates::{ObjTemplate, ObjTemplates, SkillTemplate, SkillTemplates, Templates};
 
@@ -26,6 +29,8 @@ pub const SUBCLASS_HERO: &str = "hero";
 pub const SUBCLASS_VILLAGER: &str = "villager";
 pub const SUBCLASS_SHELTER: &str = "shelter";
 pub const SUBCLASS_MERCHANT: &str = "merchant";
+
+pub const GROUP_TAX_COLLECTOR: &str = "Tax Collector";
 
 // States
 pub const STATE_NONE: &str = "none";
@@ -62,6 +67,22 @@ pub enum HeroClassList {
     Ranger,
     Mage,
     None,
+}
+
+#[derive(WorldQuery)]
+#[world_query(mutable, derive(Debug))]
+pub struct ObjStatQuery {
+    pub entity: Entity,
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub class: &'static Class,
+    pub subclass: &'static Subclass,
+    pub template: &'static Template,
+    pub state: &'static mut State,
+    pub misc: &'static mut Misc,
+    pub stats: &'static mut Stats,
+    pub effects: &'static mut Effects,
 }
 
 #[derive(Bundle, Clone)]
@@ -136,7 +157,7 @@ impl Obj {
         map_events.new(
             obj_id,
             game_tick.0 + 1,
-            VisibleEvent::NewObjEvent { new_player: false }
+            VisibleEvent::NewObjEvent { new_player: false },
         );
 
         (obj_id, entity_id)
@@ -153,6 +174,12 @@ impl Obj {
         let template = ObjTemplate::get_template_by_name(template_name, &templates);
         let obj_id = ids.new_obj_id();
 
+        let mut groups = Vec::new();
+
+        if let Some(template_groups) = &template.groups {
+            groups = template_groups.clone();
+        }
+
         let obj = Obj {
             id: Id(obj_id),
             player_id: PlayerId(player_id),
@@ -168,7 +195,7 @@ impl Obj {
             misc: Misc {
                 image: str::replace(template.template.as_str(), " ", "").to_lowercase(),
                 hsl: Vec::new(),
-                groups: Vec::new(),
+                groups: groups,
             },
             stats: Stats {
                 hp: template.base_hp.unwrap_or(100),
@@ -257,6 +284,48 @@ impl Obj {
         return 0;
     }
 
+    pub fn get_colliding_and_all_objs(
+        player_id: i32,
+        dst: Position,
+        query: &Query<ObjQueryMut>,
+    ) -> (bool, Vec<(PlayerId, Id, Position)>, Vec<network::MapObj>) {
+        // Check if destination is open
+        let mut is_dst_open = true;
+        let mut colliding_objs: Vec<(PlayerId, Id, Position)> = Vec::new();
+        let mut all_map_objs: Vec<network::MapObj> = Vec::new();
+
+        //TODO Move this logic to another function
+        for obj in query.iter() {
+            debug!(
+                "entity: {:?} id: {:?} player_id: {:?} pos: {:?}",
+                obj.entity, obj.id, obj.player_id, obj.pos
+            );
+            if (player_id != obj.player_id.0)
+                && (obj.pos.x == dst.x && obj.pos.y == dst.y)
+                && Obj::is_blocking_state(obj.state.clone())
+            {
+                is_dst_open = false;
+            }
+
+            colliding_objs.push((obj.player_id.clone(), obj.id.clone(), obj.pos.clone()));
+            all_map_objs.push(network::map_obj(obj));
+        }
+
+        return (is_dst_open, colliding_objs, all_map_objs);
+    }
+
+    pub fn get_collision_list(player_id: i32, query: &Query<ObjStatQuery>) -> Vec<MapPos> {
+        let mut collision_list: Vec<MapPos> = Vec::new();
+
+        for obj in query.iter() {
+            if player_id != obj.player_id.0 && Obj::is_blocking_state(obj.state.clone()) {
+                collision_list.push(MapPos(obj.pos.x, obj.pos.y)); //TODO change to Position one day
+            }
+        }
+
+        return collision_list;
+    }
+
     pub fn add_sound_obj_event(
         game_tick: i32,
         sound: String,
@@ -282,7 +351,30 @@ impl Obj {
             strength: 10,
             toughness: 10,
         };
-    
+
         return attrs;
+    }
+
+    pub fn is_blocking_state(state: State) -> bool {
+        match state {
+            State::Dead => false,
+            State::Founded => false,
+            State::Progressing => false,
+            _ => true,
+        }
+    }
+
+    pub fn is_subclass(subclass_name: &str, subclass: &String) -> bool {
+        subclass_name == subclass
+    }
+
+    pub fn has_group(group_name: &str, groups: Vec<String>) -> bool {
+        for group in groups {
+            if group == group_name.to_string() {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

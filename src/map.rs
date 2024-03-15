@@ -109,9 +109,28 @@ impl MapPos {
         Map::distance((self.0, self.1), (other.0, other.1))
     }
 
-    fn successors(&self, map: &Map, blocking_list: &Vec<MapPos>, landwalk: bool, waterwalk: bool, mountainwalk:bool ) -> Vec<(MapPos, u32)> {
+    fn successors(
+        &self,
+        map: &Map,
+        blocking_list: &Vec<MapPos>,
+        landwalk: bool,
+        waterwalk: bool,
+        mountainwalk: bool,
+        ignore_goal_terrain_type: bool,
+        goal: MapPos,
+    ) -> Vec<(MapPos, u32)> {
         let &MapPos(x, y) = self;
-        let s = Map::get_neighbour_tiles(x, y, map, blocking_list, landwalk, waterwalk, mountainwalk);
+        let s = Map::get_neighbour_tiles(
+            x,
+            y,
+            map,
+            blocking_list,
+            landwalk,
+            waterwalk,
+            mountainwalk,
+            ignore_goal_terrain_type,
+            goal,
+        );
         s
     }
 }
@@ -186,18 +205,36 @@ impl Map {
         src_pos: Position,
         dst_pos: Position,
         map: &Map,
-        blocking_list: &Vec<MapPos>,
+        mut blocking_list: Vec<MapPos>,
         landwalk: bool,
         waterwalk: bool,
         mountainwalk: bool,
+        ignore_goal_terrain_type: bool,
     ) -> Option<(Vec<MapPos>, u32)> {
         let goal: MapPos = MapPos(dst_pos.x, dst_pos.y);
+
+        if let Some(pos) = blocking_list.iter().position(|x| *x == goal) {
+            blocking_list.swap_remove(pos);
+        }
+
         let result = astar(
             &MapPos(src_pos.x, src_pos.y),
-            |p| p.successors(&map, &blocking_list, landwalk, waterwalk, mountainwalk),
+            |p| {
+                p.successors(
+                    &map,
+                    &blocking_list,
+                    landwalk,
+                    waterwalk,
+                    mountainwalk,
+                    ignore_goal_terrain_type,
+                    goal.clone(),
+                )
+            },
             |p| p.distance(&goal),
             |p| *p == goal,
         );
+
+        debug!("result: {:?}", result);
 
         return result;
     }
@@ -258,7 +295,6 @@ impl Map {
     ) -> bool {
         let tile_index = y * WIDTH + x;
         let tile_index_usize = tile_index as usize;
-        //let layers = map.base[tile_index_usize].layers.clone();
         let tile_type = map.base[tile_index_usize].tile_type.clone();
 
         let passable = match (tile_type, landwalk, waterwalk, mountainwalk) {
@@ -490,6 +526,8 @@ impl Map {
         landwalk: bool,
         waterwalk: bool,
         mountainwalk: bool,
+        ignore_goal_terrain_type: bool,
+        goal: MapPos,
     ) -> Vec<(MapPos, u32)> {
         let neighbours_table: Vec<(i32, i32, i32)> = vec![
             (1, -1, 0),
@@ -521,19 +559,27 @@ impl Map {
             let tile_index_usize = tile_index as usize;
             let tile_type = map.base[tile_index_usize].tile_type.clone();
 
-            let movement_cost = Map::movement_cost(tile_type) as u32;
+            let is_valid_pos = Map::is_valid_pos(neighbour);
+            let is_passable_by_obj = Map::is_passable_by_obj(
+                neighbour_x,
+                neighbour_y,
+                landwalk,
+                waterwalk,
+                mountainwalk,
+                map,
+            );            
+            let is_not_blocked = Map::is_not_blocked(neighbour, blocking_list);
 
-            if Map::is_valid_pos(neighbour)
-                && Map::is_passable_by_obj(
-                    neighbour_x,
-                    neighbour_y,
-                    landwalk,
-                    waterwalk,
-                    mountainwalk,
-                    map,
-                )
-                && Map::is_not_blocked(neighbour, blocking_list)
-            {
+            let mut allow_move_to_goal = false;
+
+            if ignore_goal_terrain_type {
+                if goal.0 == neighbour_x && goal.1 == neighbour_y {
+                    allow_move_to_goal = true;
+                }
+            }
+
+            if (is_valid_pos && is_passable_by_obj && is_not_blocked) || allow_move_to_goal {
+                let movement_cost = Map::movement_cost(tile_type) as u32;
                 result.push((MapPos(neighbour_x, neighbour_y), movement_cost));
             }
         }
@@ -601,7 +647,7 @@ impl Map {
     pub fn in_empire(pos: Position) -> bool {
         match pos {
             Position { x: 0, y: 15 } => true,
-            _ => false,        
+            _ => false,
         }
     }
 }

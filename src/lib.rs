@@ -53,7 +53,7 @@ pub fn setup() {
             TIMESTEP_10_PER_SECOND,
         )))
         .add_plugins(LogPlugin {
-            level: bevy::log::Level::DEBUG,
+            level: bevy::log::Level::INFO,
             filter: "big_brain=info,siege_perilous::ai=info,siege_perilous::plugins::ai=info,siege_perilious::game=debug".into(),
         })
         .add_plugins(GamePlugin)

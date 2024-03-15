@@ -21,6 +21,9 @@ pub enum VisibleEvent {
         attr: String,
         value: String,
     },
+    UpdateObjPosEvent {
+        pos: Position,
+    },
     StateChangeEvent {
         new_state: String,
     },
@@ -184,6 +187,10 @@ pub enum GameEventType {
         npc_type: String,
         pos: Position,
         npc_id: Option<i32>,
+    },
+    UpdatePos {
+        obj_id: i32,
+        pos: Position,
     },
     NecroEvent {
         pos: Position,

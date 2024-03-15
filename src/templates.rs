@@ -49,6 +49,7 @@ pub struct ObjTemplate {
     pub subclass: String,
     pub template: String,
     pub family: Option<String>,
+    pub groups: Option<Vec<String>>,
     pub base_hp: Option<i32>,
     pub base_stamina: Option<i32>,
     pub base_dmg: Option<i32>,

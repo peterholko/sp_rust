@@ -4,8 +4,6 @@ use big_brain::prelude::*;
 
 use std::collections::HashMap;
 
-use crate::ids::Ids;
-use crate::event::{GameEvent, GameEvents, GameEventType, MapEvents, VisibleEvent};
 use crate::components::villager::{
     Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
     FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
@@ -14,15 +12,18 @@ use crate::components::villager::{
     ProcessOrder, ShelterAvailable, ShelterDistanceScorer, Sleep, Thirst, ThirstyScorer, Tired,
     TransferDrink, TransferDrinkScorer, TransferFood, TransferFoodScorer,
 };
+use crate::encounter::Encounter;
+use crate::event::{GameEvent, GameEventType, GameEvents, MapEvents, VisibleEvent};
+use crate::ids::Ids;
 
 use crate::combat::{Combat, CombatQuery, ComboTracker};
 use crate::effect::Effects;
 use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
-    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap,
-    GameTick, Id, MapObjQuery, Merchant, Misc,
-    Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
-    SubclassHero, SubclassNPC, SubclassVillager, Template, Viewshed, VillagerAttrs
+    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, ExploredMap, GameTick, Id,
+    MapObjQuery, Merchant, Misc, Name, NetworkReceiver, Order, PlayerId, Position, State, Stats,
+    StructureAttrs, Subclass, SubclassHero, SubclassNPC, SubclassVillager, Template, Viewshed,
+    VillagerAttrs,
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
@@ -295,6 +296,7 @@ struct ItemTransferQuery {
     subclass: &'static Subclass,
     template: &'static Template,
     state: &'static State,
+    misc: &'static Misc,
     structure_attrs: Option<&'static StructureAttrs>,
 }
 
@@ -582,11 +584,7 @@ fn move_system(
                     new_state: obj::STATE_MOVING.to_string(),
                 };
 
-                map_events.new(
-                    hero.id.0,
-                    game_tick.0,
-                    state_change_event,
-                );
+                map_events.new(hero.id.0, game_tick.0, state_change_event);
 
                 // Add Move Event
                 let move_event = VisibleEvent::MoveEvent {
@@ -1623,11 +1621,7 @@ fn info_advance_system(
                         value: next_template.clone(),
                     };
 
-                    map_events.new(
-                        obj.id.0,
-                        game_tick.0,
-                        obj_update_event,
-                    );
+                    map_events.new(obj.id.0, game_tick.0, obj_update_event);
 
                     let (new_next_template, new_required_xp) =
                         Skill::hero_advance(next_template.clone());
@@ -2048,6 +2042,15 @@ fn item_transfer_system(
                         continue;
                     }
 
+                    // Cannot take items from tax collector, only transfer to
+                    if Obj::has_group(obj::GROUP_TAX_COLLECTOR, owner.misc.groups.clone()) {
+                        let packet = ResponsePacket::Error {
+                            errmsg: "Cannot transfer items from tax collector".to_string(),
+                        };
+                        send_to_client(*player_id, packet, &clients);
+                        continue;
+                    }
+
                     // Structure is not completed
                     if target.class.0 == "structure"
                         && (*target.state == State::Progressing || *target.state == State::Stalled)
@@ -2298,10 +2301,11 @@ fn item_transfer_system(
                 if target.player_id.0 != *player_id
                     && *target.state != State::Dead
                     && *target.subclass.0 != obj::SUBCLASS_MERCHANT.to_string()
+                    && !Obj::has_group(obj::GROUP_TAX_COLLECTOR, (*target.misc.groups).to_vec())
                 {
-                    error!("Cannot transfer items from alive entity {:?}", target.id.0);
+                    error!("Cannot transfer items with this target {:?}", target.id.0);
                     let packet = ResponsePacket::Error {
-                        errmsg: "Cannot transfer items from alive entity".to_string(),
+                        errmsg: "Cannot transfer items with this unit".to_string(),
                     };
                     send_to_client(*player_id, packet, &clients);
                     continue;
@@ -2322,8 +2326,13 @@ fn item_transfer_system(
 
                 let mut target_filter = Vec::new();
 
-                if *target.subclass.0 == obj::SUBCLASS_MERCHANT.to_string() {
+                if *target.subclass.0 == obj::SUBCLASS_MERCHANT.to_string()
+                {
                     target_filter.push(item::GOLD.to_string());
+                }
+
+                if Obj::has_group(obj::GROUP_TAX_COLLECTOR, (*target.misc.groups).to_vec()) {
+                    target_filter.push(item::FILTER_ALL.to_string());
                 }
 
                 let source_items = items.get_by_owner_packet(*source_id);
@@ -3897,11 +3906,7 @@ fn use_item_system(
                     item_owner_id: owner.id.0,
                 };
 
-                map_events.new(
-                    owner.id.0,
-                    game_tick.0 + 1,
-                    use_item_event,
-                );
+                map_events.new(owner.id.0, game_tick.0 + 1, use_item_event);
             }
             _ => {}
         }
@@ -3954,7 +3959,9 @@ fn remove_system(
                 map_events.new(
                     obj.id.0,
                     game_tick.0 + 1,
-                    VisibleEvent::RemoveObjEvent{pos: obj.pos.to_owned()},
+                    VisibleEvent::RemoveObjEvent {
+                        pos: obj.pos.to_owned(),
+                    },
                 );
             }
             _ => {}
@@ -4613,7 +4620,6 @@ fn new_player(
     let start_y = 36;
     let range = 4;
 
-
     // Creating hero
     debug!("Creating hero for player: {:?}", player_id);
     let hero_template_name = "Novice Warrior".to_string();
@@ -4660,7 +4666,7 @@ fn new_player(
     items.new(hero_id, "Windstride Raw Hide".to_string(), 25);
     items.new(hero_id, "Valleyrun Copper Ingot".to_string(), 5);
     items.new(hero_id, "Cragroot Maple Timber".to_string(), 5);
-    items.new(hero_id, "Gold Coins".to_string(), 50);
+    items.new(hero_id, "Gold Coins".to_string(), 100);
     items.new(hero_id, "Copper Helm".to_string(), 1);
     /*items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
@@ -4723,7 +4729,7 @@ fn new_player(
 
     // New Obj mappings
     ids.new_hero(hero_id, player_id, hero_entity_id);
-    
+
     // Create NewObjEvent
     map_events.new(
         hero_id,
@@ -5148,7 +5154,7 @@ fn new_player(
     );
 
     // Create human corpse
-     Obj::create(
+    Obj::create(
         999,
         "Human Corpse".to_string(),
         Position { x: 15, y: 34 },
@@ -5160,19 +5166,30 @@ fn new_player(
         &templates,
     );
 
-    let event_type = GameEventType::NecroEvent {
+    /*let event_type = GameEventType::NecroEvent {
         pos: Position{x: 17, y: 34},
     };
     let event_id = ids.new_map_event_id();
 
     let event = GameEvent {
         event_id: event_id,
-        run_tick: game_tick.0 + 100, 
+        run_tick: game_tick.0 + 100,
         game_event_type: event_type,
     };
 
-    game_events.insert(event.event_id, event); 
+    game_events.insert(event.event_id, event); */
 
+    Encounter::spawn_tax_collector(
+        1000,
+        Position { x: 1, y: 37 },
+        player_id,
+        commands,
+        ids,
+        items,
+        &templates,
+        &game_tick,
+        map_events,
+    );
 }
 
 fn get_current_req_quantities(
@@ -5273,4 +5290,3 @@ fn process_item_transfer_structure(
 
     return Vec::new();
 }
-

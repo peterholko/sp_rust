@@ -634,10 +634,11 @@ pub fn process_order_system(
                                             *villager.pos,                                        
                                             *target_pos,                                            
                                             &map,
-                                            &Vec::new(),
+                                            Vec::new(),
                                             true,
                                             false,
-                                            false
+                                            false,
+                                            false,
                                         ) {
                                             debug!("Follower path: {:?}", path_result);
 
@@ -720,8 +721,9 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new(),
+                                        Vec::new(),
                                         true,
+                                        false,
                                         false,
                                         false
                                     ) {
@@ -826,8 +828,9 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new(),
+                                        Vec::new(),
                                         true,
+                                        false,
                                         false,
                                         false
                                     ) {
@@ -925,8 +928,9 @@ pub fn process_order_system(
                                         *villager.pos,                                        
                                         *structure_pos,                                        
                                         &map,
-                                        &Vec::new(),
+                                        Vec::new(),
                                         true,
+                                        false,
                                         false,
                                         false
                                     ) {
@@ -1120,10 +1124,11 @@ pub fn flee_system(
                             *villager.pos,
                             *hero.pos,
                             &map,
-                            &blocking_list,
+                            blocking_list,
                             true,
                             false,
-                            false
+                            false,
+                            false,                            
                         ) {
                             debug!("Path to structure: {:?}", path_result);
 
@@ -1308,10 +1313,11 @@ pub fn move_to_water_source_action_system(
                                 *villager.pos,                                
                                 move_to_drink.dest,
                                 &map,
-                                &Vec::new(),
+                                Vec::new(),
                                 true,
                                 false,
-                                false
+                                false,
+                                false,
                             ) {
                                 debug!("Path to structure: {:?}", path_result);
 
@@ -1729,10 +1735,11 @@ pub fn move_to_food_action_system(
                                 *villager.pos,
                                 move_to_food.dest,
                                 &map,
-                                &Vec::new(),
+                                Vec::new(),
                                 true,
                                 false,
-                                false
+                                false,
+                                false,
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -2128,10 +2135,11 @@ pub fn move_to_shelter_system(
                                 *villager.pos,
                                 move_to_shelter.dest,
                                 &map,
-                                &Vec::new(),
+                                Vec::new(),
                                 true,
                                 false,
-                                false
+                                false,
+                                false,
                             ) {
                                 let (path, c) = path_result;
                                 let next_pos = &path[1];
@@ -2382,10 +2390,11 @@ fn find_item_location_by_class(
                 *villager.pos,
                 *structure.pos,
                 &map,
-                &Vec::new(),
+                Vec::new(),
                 true,
                 false,
-                false
+                false,
+                false,
             ) else {
                 debug!("Not path found to structure...");
                 continue;
@@ -2441,10 +2450,11 @@ fn find_shelter(
             *villager.pos,
             *structure.pos,
             &map,
-            &Vec::new(),
+            Vec::new(),
                                                         true,
                                             false,
-                                            false
+                                            false,
+                                            false,
         ) else {
             debug!("No path found to structure...");
             continue;

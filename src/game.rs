@@ -30,6 +30,7 @@ use async_compat::Compat;
 
 use crate::account::Accounts;
 use crate::combat::{Combat, CombatSpellQuery};
+use crate::components::npc::{TaxCollector, TaxCollectorTransport, Transport};
 use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
 use crate::effect::Effects;
 use crate::encounter::Encounter;
@@ -181,22 +182,6 @@ pub struct Home {
     pub pos: Position,
 }
 
-#[derive(Debug, Reflect, Component, Default)]
-#[reflect(Component)]
-pub struct Transport {
-    pub ids: Vec<i32>
-}
-
-#[derive(Debug, Reflect, Component, Default)]
-#[reflect(Component)]
-pub struct TaxCollectorShip {
-    pub home_port: Position,
-    pub target_port: Position,
-    pub dest: Position,
-    pub in_port_at: i32,
-    pub hauling: Vec<i32>,
-}
-
 #[derive(Debug, Component, Clone)]
 pub struct BaseAttrs {
     pub creativity: i32,
@@ -226,7 +211,7 @@ pub struct Stats {
 pub struct Misc {
     pub image: String,
     pub hsl: Vec<i32>,
-    pub groups: Vec<i32>,
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -591,6 +576,8 @@ fn move_event_system(
     mut game_events: ResMut<GameEvents>,
     mut visible_events: ResMut<VisibleEvents>,
     mut query: Query<ObjQueryMut>,
+    mut transport_query: Query<&mut Transport>,
+    aboard_query: Query<&StateAboard>,
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -614,139 +601,217 @@ fn move_event_system(
                         continue;
                     };
 
-                    // Check if destination is open
-                    let mut is_dst_open = true;
-                    let mut colliding_objs: Vec<(PlayerId, Id, Position)> = Vec::new();
-                    let mut all_map_objs: Vec<network::MapObj> = Vec::new();
-
                     debug!("MoveEvent - Removing EventInProgress...");
                     commands.entity(entity).remove::<EventInProgress>();
 
+                    let mut is_dst_open = true;
+                    let mut objs_on_tile = Vec::new();
+                    let mut all_map_objs: Vec<network::MapObj> = Vec::new();
+
                     //TODO Move this logic to another function
                     for obj in query.iter() {
-                        debug!(
-                            "entity: {:?} id: {:?} player_id: {:?} pos: {:?}",
-                            obj.entity, obj.id, obj.player_id, obj.pos
-                        );
                         if (player_id != obj.player_id.0)
                             && (obj.pos.x == *dst_x && obj.pos.y == *dst_y)
-                            && is_blocking_state(obj.state.clone())
+                            && Obj::is_blocking_state(obj.state.clone())
                         {
                             is_dst_open = false;
                         }
 
-                        colliding_objs.push((
-                            obj.player_id.clone(),
-                            obj.id.clone(),
-                            obj.pos.clone(),
-                        ));
+                        if obj.pos.x == *dst_x && obj.pos.y == *dst_y {
+                            objs_on_tile.push((
+                                obj.player_id.clone(),
+                                obj.id.clone(),
+                                obj.subclass.clone(),
+                            ));
+                        }
+
                         all_map_objs.push(network::map_obj(obj));
                     }
 
                     // Get entity and update state
-                    if let Ok(mut obj) = query.get_mut(entity) {
-                        // Reset state
-                        *obj.state = State::None;
+                    let Ok(mut mover) = query.get_mut(entity) else {
+                        error!("Query failed to find entity {:?}", entity);
+                        continue;
+                    };
 
-                        if is_dst_open {
-                            obj.pos.x = *dst_x;
-                            obj.pos.y = *dst_y;
+                    // Check if tile is open
+                    if !is_dst_open {
+                        error!("Tile is not opened.");
 
-                            // Adding processed map event
-                            visible_events.push(map_event.clone());
+                        if *mover.state != State::Aboard {
+                            *mover.state = State::None;
+                        }
 
-                            // 
+                        continue;
+                    }
 
-                            // If player is moving, TODO improve this
-                            if obj.player_id.0 < 1000 {
+                    // Check if moving object is leaving a transport
+                    if let Ok(aboard) = aboard_query.get(entity) {
+                        debug!("Mover is leaving a transport: {:?}", mover.id.0);
+
+                        // Get transport entity
+                        let transport_entity = ids.get_entity(aboard.transport_id).unwrap();
+
+                        // Get transport
+                        let Ok(mut transport) = transport_query.get_mut(transport_entity) else {
+                            error!("Query failed to find transport {:?}", transport_entity);
+                            continue;
+                        };
+
+                        // Remove object from transport
+                        transport.hauling.retain(|&x| x != mover.id.0);
+
+                        // Remove StateAboard component from mover
+                        commands.entity(entity).remove::<StateAboard>();
+                    }
+
+                    // Reset state and move object
+                    *mover.state = State::None;
+                    mover.pos.x = *dst_x;
+                    mover.pos.y = *dst_y;
+
+                    // Check if moving object is entering a transport
+                    for (player_id, obj_id, subclass) in objs_on_tile.iter() {
+                        if mover.player_id.0 != player_id.0 {
+                            continue;
+                        }
+
+                        if subclass.0 == "transport".to_string() {
+                            debug!("Transport is entering: {:?}", mover.id.0);
+
+                            // Set state to aboard
+                            *mover.state = State::Aboard;
+
+                            // Get transport entity
+                            let transport_entity = ids.get_entity(obj_id.0).unwrap();
+
+                            // Get transport
+                            let Ok(mut transport) = transport_query.get_mut(transport_entity)
+                            else {
+                                error!("Query failed to find transport {:?}", transport_entity);
+                                continue;
+                            };
+
+                            // Add object to transport
+                            transport.hauling.push(mover.id.0);
+
+                            // Add StateAboard component to mover
+                            commands.entity(entity).insert(StateAboard {
+                                transport_id: obj_id.0,
+                            });
+                        }
+                    }
+
+                    // Adding processed map event
+                    visible_events.push(map_event.clone());
+
+                    // Check if moving object is a transport
+                    if let Ok(mut transport) = transport_query.get_mut(entity) {
+                        debug!("Transport is moving: {:?}", transport.hauling);
+                        // Loop through transport hauling and update their positions
+                        for obj_id in transport.hauling.iter() {
+                            debug!("Adding game event to update pos for obj_id: {:?}", obj_id);
+                            let event_type = GameEventType::UpdatePos {
+                                obj_id: *obj_id,
+                                pos: mover.pos.clone(),
+                            };
+
+                            let event_id = ids.new_map_event_id();
+
+                            let event = GameEvent {
+                                event_id: event_id,
+                                run_tick: game_tick.0 + 1, // Add one game tick
+                                game_event_type: event_type,
+                            };
+
+                            game_events.insert(event.event_id, event);
+                        }
+                    }
+
+                    // If player is moving, TODO improve this
+                    if mover.player_id.0 < 1000 {
+                        let mut rng = rand::thread_rng();
+
+                        let spawn_chance = 0.001;
+                        let random_num = rng.gen::<f32>();
+                        debug!("random_num: {:?}", random_num);
+
+                        // TODO move to encounter module
+                        if random_num < spawn_chance {
+                            let adjacent_pos = get_random_adjacent_pos(
+                                mover.player_id.0,
+                                *dst_x,
+                                *dst_y,
+                                Vec::new(),
+                                &map,
+                            );
+
+                            if let Some(adjacent_pos) = adjacent_pos {
+                                let tile_type =
+                                    Map::tile_type(adjacent_pos.x, adjacent_pos.y, &map);
+                                let npc_list = Encounter::npc_list(tile_type);
                                 let mut rng = rand::thread_rng();
+                                let index = rng.gen_range(0..npc_list.len());
+                                let npc_type = npc_list[index].to_string();
 
-                                let spawn_chance = 0.75;
-                                let random_num = rng.gen::<f32>();
-                                debug!("random_num: {:?}", random_num);
+                                debug!("Spawning a NPC of type: {:?}", npc_type);
 
-                                // TODO move to encounter module
-                                if random_num < spawn_chance {
-                                    let adjacent_pos = get_random_adjacent_pos(
-                                        obj.player_id.0,
-                                        *dst_x,
-                                        *dst_y,
-                                        colliding_objs.clone(),
-                                        &map,
-                                    );
+                                let event_type = GameEventType::SpawnNPC {
+                                    npc_type: npc_type,
+                                    pos: adjacent_pos,
+                                    npc_id: None,
+                                };
+                                let event_id = ids.new_map_event_id();
 
-                                    if let Some(adjacent_pos) = adjacent_pos {
-                                        let tile_type =
-                                            Map::tile_type(adjacent_pos.x, adjacent_pos.y, &map);
-                                        let npc_list = Encounter::npc_list(tile_type);
-                                        let mut rng = rand::thread_rng();
-                                        let index = rng.gen_range(0..npc_list.len());
-                                        let npc_type = npc_list[index].to_string();
+                                let event = GameEvent {
+                                    event_id: event_id,
+                                    run_tick: game_tick.0 + 4, // Add one game tick
+                                    game_event_type: event_type,
+                                };
 
-                                        debug!("Spawning a NPC of type: {:?}", npc_type);
+                                game_events.insert(event.event_id, event);
+                            }
+                        }
 
-                                        let event_type = GameEventType::SpawnNPC {
-                                            npc_type: npc_type,
-                                            pos: adjacent_pos,
-                                            npc_id: None,
-                                        };
-                                        let event_id = ids.new_map_event_id();
+                        // Getting new map tiles
+                        let viewshed_tiles_pos =
+                            Map::range((mover.pos.x, mover.pos.y), mover.viewshed.range);
 
-                                        let event = GameEvent {
-                                            event_id: event_id,
-                                            run_tick: game_tick.0 + 4, // Add one game tick
-                                            game_event_type: event_type,
-                                        };
+                        // Adding new maps to explored map
+                        // Assume player has some explored map tiles
+                        let player_explord_map = explored_map.get_mut(&mover.player_id.0).unwrap();
 
-                                        game_events.insert(event.event_id, event);
-                                    }
-                                }
+                        let mut new_explored_tiles = Vec::new();
 
-                                // Getting new map tiles
-                                let viewshed_tiles_pos =
-                                    Map::range((obj.pos.x, obj.pos.y), obj.viewshed.range);
+                        for tile in viewshed_tiles_pos {
+                            if !player_explord_map.contains(&tile) {
+                                new_explored_tiles.push(tile);
+                            }
+                        }
 
-                                // Adding new maps to explored map
-                                // Assume player has some explored map tiles
-                                let player_explord_map =
-                                    explored_map.get_mut(&obj.player_id.0).unwrap();
+                        let mut new_objs = Vec::new();
 
-                                let mut new_explored_tiles = Vec::new();
-
-                                for tile in viewshed_tiles_pos {
-                                    if !player_explord_map.contains(&tile) {
-                                        new_explored_tiles.push(tile);
-                                    }
-                                }
-
-                                let mut new_objs = Vec::new();
-
-                                // Get new objs in viewshed
-                                for map_obj in all_map_objs.iter() {
-                                    if obj.id.0 != map_obj.id {
-                                        let distance = Map::distance(
-                                            (obj.pos.x, obj.pos.y),
-                                            (map_obj.x, map_obj.y),
-                                        );
-                                        if obj.viewshed.range >= distance {
-                                            new_objs.push(map_obj.clone());
-                                        }
-                                    }
-                                }
-
-                                // Only send new explored tiles
-                                if new_explored_tiles.len() > 0 {
-                                    let tiles_to_send =
-                                        Map::pos_to_tiles(&new_explored_tiles, &map);
-                                    let map_packet = ResponsePacket::ObjPerception {
-                                        new_objs: new_objs,
-                                        new_tiles: tiles_to_send,
-                                    };
-                                    send_to_client(obj.player_id.0, map_packet, &clients);
+                        // Get new objs in viewshed
+                        for map_obj in all_map_objs.iter() {
+                            if mover.id.0 != map_obj.id {
+                                let distance = Map::distance(
+                                    (mover.pos.x, mover.pos.y),
+                                    (map_obj.x, map_obj.y),
+                                );
+                                if mover.viewshed.range >= distance {
+                                    new_objs.push(map_obj.clone());
                                 }
                             }
-                        } else {
-                            debug!("Tile is not opened.");
+                        }
+
+                        // Only send new explored tiles
+                        if new_explored_tiles.len() > 0 {
+                            let tiles_to_send = Map::pos_to_tiles(&new_explored_tiles, &map);
+                            let map_packet = ResponsePacket::ObjPerception {
+                                new_objs: new_objs,
+                                new_tiles: tiles_to_send,
+                            };
+                            send_to_client(mover.player_id.0, map_packet, &clients);
                         }
                     }
 
@@ -840,124 +905,6 @@ fn update_obj_event_system(
                         _ => {}
                     }
 
-                    events_to_remove.push(*map_event_id);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    for event_id in events_to_remove.iter() {
-        map_events.remove(event_id);
-    }
-}
-
-fn embark_event_system(
-    game_tick: Res<GameTick>,
-    mut map_events: ResMut<MapEvents>,
-    mut visible_events: ResMut<VisibleEvents>,
-    ids: Res<Ids>,
-    mut query: Query<ObjQuery>,
-    mut transport_query: Query<&Transport>,
-) {
-    let mut events_to_remove = Vec::new();
-
-    for (map_event_id, map_event) in map_events.iter_mut() {
-        if map_event.run_tick < game_tick.0 {
-            // Execute event
-            match &map_event.event_type {
-                VisibleEvent::EmbarkEvent {transport_id} => {
-                    debug!("Processing EmbarkEvent: {:?}", transport_id);
-
-                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
-                        continue;
-                    };
-
-                    let Some(transport_entity) = ids.get_entity(*transport_id) else {
-                        error!("Cannot find entity from id: {:?}", transport_id);
-                        continue;
-                    };
-
-                    let entities = [entity, transport_entity];
-
-                    let Ok([mut obj, mut transport_obj]) = query.get_many_mut(entities) else {
-                        error!("Query failed to find entities {:?}", entities);
-                        continue;
-                    };
-
-                    let Ok(mut transport) = transport_query.get(transport_entity) else {
-                        error!("Query failed to find entity {:?}", transport_entity);
-                        continue;
-                    };
-
-                    // Update obj being transported
-                    *obj.state = State::Aboard;
-                    *obj.pos = transport_obj.pos.clone();
-
-                    // Add obj to transport
-                    transport.ids.push(obj.id.0);
-
-                    visible_events.push(map_event.clone());
-                    events_to_remove.push(*map_event_id);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    for event_id in events_to_remove.iter() {
-        map_events.remove(event_id);
-    }
-}
-
-fn disembark_event_system(
-    game_tick: Res<GameTick>,
-    mut map_events: ResMut<MapEvents>,
-    mut visible_events: ResMut<VisibleEvents>,
-    ids: Res<Ids>,
-    mut query: Query<ObjQuery>,
-    mut transport_query: Query<&Transport>,
-) {
-    let mut events_to_remove = Vec::new();
-
-    for (map_event_id, map_event) in map_events.iter_mut() {
-        if map_event.run_tick < game_tick.0 {
-            // Execute event
-            match &map_event.event_type {
-                VisibleEvent::Disembark {pos} => {
-                    debug!("Processing DisembarkEvent: {:?}", transport_id);
-
-                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
-                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
-                        continue;
-                    };
-
-                    let Some(transport_entity) = ids.get_entity(*transport_id) else {
-                        error!("Cannot find entity from id: {:?}", transport_id);
-                        continue;
-                    };
-
-                    let entities = [entity, transport_entity];
-
-                    let Ok([mut obj, mut transport_obj]) = query.get_many_mut(entities) else {
-                        error!("Query failed to find entities {:?}", entities);
-                        continue;
-                    };
-
-                    let Ok(mut transport) = transport_query.get(transport_entity) else {
-                        error!("Query failed to find entity {:?}", transport_entity);
-                        continue;
-                    };
-
-                    // Update obj being transported
-                    *obj.state = State::Aboard;
-                    *obj.pos = transport_obj.pos.clone();
-
-                    // Add obj to transport
-                    transport.ids.push(obj.id.0);
-
-                    visible_events.push(map_event.clone());
                     events_to_remove.push(*map_event_id);
                 }
                 _ => {}
@@ -2597,6 +2544,43 @@ fn visible_event_system(
                                 .insert(change_event);
                         }
                     }
+                    VisibleEvent::UpdateObjPosEvent { pos } => {
+                        let src_distance = Map::distance(
+                            (event_obj.pos.x, event_obj.pos.y),
+                            (obj.pos.x, obj.pos.y),
+                        );
+
+                        if obj.viewshed.range >= src_distance {
+                            let change_event = network::ChangeEvents::ObjMove {
+                                event: "obj_move".to_string(),
+                                obj: network_obj.to_owned(),
+                                src_x: pos.x,
+                                src_y: pos.y,
+                            };
+
+                            // Notify observer
+                            all_change_events
+                                .entry(obj.player_id.0)
+                                .or_default()
+                                .insert(change_event);
+                        }
+
+                        let dst_distance = Map::distance((pos.x, pos.y), (obj.pos.x, obj.pos.y));
+
+                        if obj.viewshed.range >= dst_distance {
+                            let change_event = network::ChangeEvents::ObjMove {
+                                event: "obj_move".to_string(),
+                                obj: network_obj.to_owned(),
+                                src_x: pos.x,
+                                src_y: pos.y,
+                            };
+
+                            all_change_events
+                                .entry(obj.player_id.0)
+                                .or_default()
+                                .insert(change_event);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -2881,7 +2865,7 @@ fn game_event_system(
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
     mut structure_attrs_query: Query<&mut StructureAttrs>,
-    mut query: Query<ObjQuery>,
+    mut query: Query<ObjQueryMut>,
     mut perception_updates: ResMut<PerceptionUpdates>,
 ) {
     let mut events_to_remove = Vec::new();
@@ -2933,6 +2917,29 @@ fn game_event_system(
                         npc_id.0,
                         game_tick.0 + 1,
                         VisibleEvent::NewObjEvent { new_player: false },
+                    );
+                }
+                GameEventType::UpdatePos { obj_id, pos } => {
+                    debug!("Processing UpdatePos");
+                    events_to_remove.push(*event_id);
+
+                    // Update object position
+                    let Some(entity) = ids.get_entity(*obj_id) else {
+                        error!("Cannot find entity from id: {:?}", obj_id);
+                        continue;
+                    };
+
+                    let Ok(mut obj) = query.get_mut(entity) else {
+                        error!("Query failed to find entity {:?}", entity);
+                        continue;
+                    };
+
+                    *obj.pos = pos.clone();
+
+                    visible_events.new(
+                        *obj_id,
+                        game_tick.0 + 1,
+                        VisibleEvent::UpdateObjPosEvent { pos: *pos },
                     );
                 }
                 GameEventType::NecroEvent { pos } => {
@@ -3332,6 +3339,8 @@ fn update_game_tick(
     }
 }
 
+
+
 fn dedup<T: Eq + Hash + Copy>(v: &mut Vec<T>) {
     // note the Copy constraint
     let mut uniques = HashSet::new();
@@ -3342,7 +3351,7 @@ pub fn is_pos_empty(player_id: i32, x: i32, y: i32, query: &Query<MapObjQuery>) 
     let mut objs = Vec::new();
 
     for q in query {
-        let is_blocking = is_blocking_state(q.state.to_owned());
+        let is_blocking = Obj::is_blocking_state(q.state.to_owned());
 
         if player_id != q.player_id.0 && x == q.pos.x && y == q.pos.y && is_blocking {
             objs.push(q.entity);
@@ -3350,15 +3359,6 @@ pub fn is_pos_empty(player_id: i32, x: i32, y: i32, query: &Query<MapObjQuery>) 
     }
 
     return objs.len() == 0;
-}
-
-pub fn is_blocking_state(state: State) -> bool {
-    match state {
-        State::Dead => false,
-        State::Founded => false,
-        State::Progressing => false,
-        _ => true,
-    }
 }
 
 /*impl GameEvents {

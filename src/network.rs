@@ -583,7 +583,7 @@ pub struct MapObj {
     pub state: String,
     pub vision: u32,
     pub hsl: Vec<i32>,
-    pub groups: Vec<i32>,
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -751,7 +751,7 @@ pub fn network_obj(
     vision: u32,
     image: String,
     hsl: Vec<i32>,
-    groups: Vec<i32>,
+    groups: Vec<String>,
 ) -> MapObj {
     let network_obj = MapObj {
         id: id,
