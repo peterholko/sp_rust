@@ -5183,6 +5183,23 @@ fn new_player(
 
     ids.new_obj(villager_id2, player_id, villager_entity_id2);
 
+
+    // Create shipwreck
+    Obj::create(
+        player_id,
+        "Shipwreck".to_string(),
+        Position {
+            x: start_location.shipwreck_pos[0],
+            y: start_location.shipwreck_pos[1],
+        },
+        State::None,
+        commands,
+        ids,
+        map_events,
+        &game_tick,
+        &templates,
+    );
+
     // Create human corpse 1
     Obj::create(
         999,
