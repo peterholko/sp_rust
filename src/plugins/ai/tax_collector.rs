@@ -4,10 +4,10 @@ use rand::Rng;
 
 use crate::combat::CombatQuery;
 use crate::components::npc::{
-    AtDestinationScorer, AtLanding, Forfeiture, Idle, InEmpire, IsAboard, IsPassengerAboard, IsTargetAdjacent, IsTaxCollected, IsWaitingForPassenger, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, ReadyToSailScorer, SetDestination, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport, VisibleTarget, WaitForPassenger
+    AtLanding, Destination, Forfeiture, Idle, IsAboard, IsTaxCollected, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, SetDestination, Talk, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport
 };
 use crate::effect::Effect;
-use crate::event::{GameEvents, MapEvents, VisibleEvent};
+use crate::event::{MapEvents, VisibleEvent};
 use crate::game::{self, State};
 use crate::ids::Ids;
 use crate::item::*;
@@ -18,10 +18,10 @@ use crate::plugins::ai::npc::{BASE_MOVE_TICKS, BASE_SPEED, NO_TARGET};
 use crate::templates::Templates;
 use crate::{game::*, item};
 
+// General system to start a tax collection event
 pub fn update_tax_collection_system(
     game_tick: ResMut<GameTick>,
-    ids: ResMut<Ids>,
-    mut collector_query: Query<&mut TaxCollector>
+    mut collector_query: Query<&mut TaxCollector>,
 ) {
     for mut collector in collector_query.iter_mut() {
         let next_tax_collection = collector.last_collection_time + 1000;
@@ -34,11 +34,10 @@ pub fn update_tax_collection_system(
 }
 
 pub fn is_aboard_scorer_system(
-    game_tick: Res<GameTick>,
     state_query: Query<&State, With<TaxCollector>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IsAboard>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(state) = state_query.get(*actor) {
             if *state == State::Aboard {
                 score.set(0.8);
@@ -50,12 +49,11 @@ pub fn is_aboard_scorer_system(
 }
 
 pub fn is_tax_collected_scorer_system(
-    game_tick: Res<GameTick>,
     items: ResMut<Items>,
     tax_collector_query: Query<(&Id, &TaxCollector)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IsTaxCollected>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok((id, tax_collector)) = tax_collector_query.get(*actor) {
             if let Some(gold) = items.get_by_class(id.0, item::GOLD.to_string()) {
                 if gold.quantity >= tax_collector.collection_amount {
@@ -70,151 +68,14 @@ pub fn is_tax_collected_scorer_system(
     }
 }
 
-pub fn in_empire_scorer_system(
-    game_tick: Res<GameTick>,
-    pos_query: Query<&Position, With<TaxCollector>>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<InEmpire>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok(pos) = pos_query.get(*actor) {
-            if Map::in_empire(*pos) {
-                score.set(1.0);
-            } else {
-                score.set(0.0);
-            }
-        }
-    }
-}
-
 pub fn at_landing_scorer_system(
-    game_tick: Res<GameTick>,
     collector_query: Query<(&Position, &TaxCollector)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<AtLanding>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok((pos, tax_collector)) = collector_query.get(*actor) {
             if Map::is_adjacent(*pos, tax_collector.landing_pos) {
-                info!("Tax Collector at landing!");
                 score.set(0.9);
-            } else {
-                score.set(0.0);
-            }
-        }
-    }
-}
-
-pub fn at_destination_scorer_system(
-    mut transport_query: Query<(&Position, &mut Transport)>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<AtDestinationScorer>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok((pos, mut transport)) = transport_query.get_mut(*actor) {
-            if pos == &transport.route[transport.next_stop as usize] {
-                info!("Reached destination, now waiting...");
-                score.set(0.7);
-            } else {
-                info!("Not at destination");
-                score.set(0.0);
-            }
-        }
-    }
-}
-
-/*pub fn ready_to_sail_scorer_system(
-    game_tick: Res<GameTick>,
-    mut transport_query: Query<(&Position, &mut Transport)>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<ReadyToSailScorer>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok((pos, mut transport)) = transport_query.get_mut(*actor) {
-            if pos == &transport.route[transport.next_stop as usize] {
-                if transport.ready_to_sail {
-                    info!("Ready to sail");
-                    score.set(0.8);
-                } else {
-                    score.set(0.0);
-                }
-            } else {
-                score.set(0.0);
-            }
-        }
-    }*/
-
-pub fn is_passenger_aboard_scorer_system(
-    game_tick: Res<GameTick>,
-    transport_query: Query<(&Position, &mut Transport, &WaitForPassenger)>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IsPassengerAboard>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok((pos, transport, wait_for_passenger)) = transport_query.get(*actor) {
-            info!("IsPassengerAboard: {:?}", transport.hauling);
-            if pos != &transport.route[transport.next_stop as usize] {
-                if transport.hauling.contains(&wait_for_passenger.id) {
-                    info!("Passenger is aboard");
-                    score.set(0.9);
-                } else {
-                    info!("Passenger is not aboard");
-                    score.set(0.0);
-                }
-            } else {
-                score.set(0.0);
-            }
-        }
-    }
-}
-
-pub fn is_waiting_for_passenger_scorer_system(
-    game_tick: Res<GameTick>,
-    transport_query: Query<(&mut Transport, &WaitForPassenger)>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IsWaitingForPassenger>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok((transport, wait_for_passenger)) = transport_query.get(*actor) {
-            if transport.hauling.contains(&wait_for_passenger.id) {
-                info!("Passenger is aboard");
-                score.set(0.9);
-            } else {
-                info!("Passenger is not aboard");
-                score.set(0.0);
-            }
-        }
-    }
-}
-
-pub fn is_target_adjacent_scorer_system(
-    game_tick: Res<GameTick>,
-    ids: Res<Ids>,
-    pos_query: Query<&Position>,
-    collector_query: Query<&TaxCollector>,
-    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IsTargetAdjacent>>,
-) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok(tax_collector) = collector_query.get(*actor) {
-            let Some(hero_id) = ids.get_hero(tax_collector.target_player) else {
-                error!(
-                    "Cannot find hero for player {:?}",
-                    tax_collector.target_player
-                );
-                continue;
-            };
-
-            let Some(hero_entity) = ids.get_entity(hero_id) else {
-                error!("Cannot find entity for {:?}", hero_id);
-                continue;
-            };
-
-            let Ok(hero_pos) = pos_query.get(hero_entity) else {
-                error!("No hero position found");
-                continue;
-            };
-
-            let Ok(tax_collector_pos) = pos_query.get(*actor) else {
-                error!("No tax_collector position found");
-                continue;
-            };
-
-            if Map::is_adjacent(*hero_pos, *tax_collector_pos) {
-                score.set(1.0);
             } else {
                 score.set(0.0);
             }
@@ -224,6 +85,7 @@ pub fn is_target_adjacent_scorer_system(
 
 pub fn no_taxes_to_collect_scorer_system(
     ids: ResMut<Ids>,
+    items: ResMut<Items>,
     transport_query: Query<(&Transport, &TaxCollectorTransport)>,
     collector_query: Query<&TaxCollector>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<NoTaxesToCollect>>,
@@ -240,8 +102,16 @@ pub fn no_taxes_to_collect_scorer_system(
         };
 
         if let Ok(collector) = collector_query.get(collector_entity) {
-            if collector.collection_amount == 0 && transport.hauling.contains(&tc_transport.tax_collector_id) {
-                score.set(1.0);
+            if let Some(gold) =
+                items.get_by_class(tc_transport.tax_collector_id, item::GOLD.to_string())
+            {
+                if gold.quantity >= collector.collection_amount
+                    && transport.hauling.contains(&tc_transport.tax_collector_id)
+                {
+                    score.set(1.0);
+                } else {
+                    score.set(0.0);
+                }
             } else {
                 score.set(0.0);
             }
@@ -251,12 +121,13 @@ pub fn no_taxes_to_collect_scorer_system(
 
 pub fn taxes_to_collect_scorer_system(
     ids: ResMut<Ids>,
-    transport_query: Query<(&Transport, &TaxCollectorTransport)>,
+    items: ResMut<Items>,
+    transport_query: Query<&TaxCollectorTransport>,
     collector_query: Query<&TaxCollector>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<TaxesToCollect>>,
 ) {
     for (Actor(actor), mut score, span) in &mut query {
-        let Ok((transport, tc_transport)) = transport_query.get(*actor) else {
+        let Ok(tc_transport) = transport_query.get(*actor) else {
             continue;
         };
 
@@ -267,13 +138,21 @@ pub fn taxes_to_collect_scorer_system(
         };
 
         if let Ok(collector) = collector_query.get(collector_entity) {
-            if collector.collection_amount > 0 {
-                score.set(1.0);
+            if let Some(gold) =
+                items.get_by_class(tc_transport.tax_collector_id, item::GOLD.to_string())
+            {
+                if gold.quantity < collector.collection_amount {
+                    score.set(1.0);
+                } else {
+                    score.set(0.0);
+                }
             } else {
                 score.set(0.0);
             }
+        } else {
+            score.set(0.0);
         }
-    }    
+    }
 }
 
 pub fn overdue_tax_scorer_system(
@@ -284,7 +163,7 @@ pub fn overdue_tax_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok((id, collector)) = collector_query.get(*actor) {
-            if collector.last_collection_time + 500 < game_tick.0 {
+            if collector.last_collection_time + 2000 < game_tick.0 {
                 if let Some(gold) = items.get_by_class(id.0, item::GOLD.to_string()) {
                     if gold.quantity < collector.collection_amount {
                         score.set(1.0);
@@ -297,14 +176,22 @@ pub fn overdue_tax_scorer_system(
     }
 }
 
-pub fn idle_action_system(mut query: Query<(&Actor, &mut ActionState, &Idle, &ActionSpan)>) {
-    for (Actor(actor), mut state, _idle, span) in &mut query {
+pub fn idle_action_system(
+    game_tick: Res<GameTick>,
+    mut query: Query<(&Actor, &mut ActionState, &mut Idle, &ActionSpan)>,
+) {
+    for (Actor(actor), mut state, mut idle, span) in &mut query {
         match *state {
             ActionState::Requested => {
+                info!("Idle action requested");
+                idle.start_time = game_tick.0;
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                *state = ActionState::Success;
+                if game_tick.0 - idle.start_time > idle.duration {
+                    info!("Idle action completed");
+                    *state = ActionState::Success;
+                }
             }
             ActionState::Cancelled => {
                 *state = ActionState::Failure;
@@ -313,38 +200,6 @@ pub fn idle_action_system(mut query: Query<(&Actor, &mut ActionState, &Idle, &Ac
         }
     }
 }
-
-/*pub fn set_destination_action_system(
-    mut transport_query: Query<(&mut Transport, &WaitForPassenger)>,
-    mut query: Query<(&Actor, &mut ActionState, &SetDestination, &ActionSpan)>,
-) {
-    for (Actor(actor), mut state, _idle, span) in &mut query {
-        match *state {
-            ActionState::Requested => {
-                *state = ActionState::Executing;
-            }
-            ActionState::Executing => {
-                // Increment the transport next stop
-                if let Ok((mut transport, wait_for_passenger)) = transport_query.get_mut(*actor) {
-                    transport.ready_to_sail = false;
-
-                    // Decrement if next stop is last in list
-                    if transport.next_stop == transport.route.len() as i32 - 1 {
-                        transport.next_stop = transport.next_stop - 1;
-                    } else {
-                        transport.next_stop = transport.next_stop + 1;
-                    }
-                }
-
-                *state = ActionState::Success;
-            }
-            ActionState::Cancelled => {
-                *state = ActionState::Failure;
-            }
-            _ => {}
-        }
-    }
-}*/
 
 pub fn move_to_target_action_system(
     mut commands: Commands,
@@ -358,17 +213,16 @@ pub fn move_to_target_action_system(
     mut query: Query<(&Actor, &mut ActionState, &MoveToTarget)>,
 ) {
     for (Actor(actor), mut state, move_to_target) in &mut query {
-        let Ok((tax_collector_player_id, mut tax_collector)) = tax_collector_query.get_mut(*actor)
-        else {
-            continue;
-        };
-
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                debug!("Executing MoveToTarget Action");
+                let Ok((tax_collector_player_id, mut tax_collector)) =
+                    tax_collector_query.get_mut(*actor)
+                else {
+                    continue;
+                };
 
                 let Some(target_entity) = ids.get_entity(move_to_target.target) else {
                     error!("Cannot find entity for {:?}", move_to_target.target);
@@ -420,18 +274,18 @@ pub fn move_to_target_action_system(
                             tax_collector.last_demand_time = game_tick.0;
 
                             let sound_event = VisibleEvent::SoundObjEvent {
-                                sound: "Tax Time! Pay now or asset forfeiture!".to_string(),
+                                sound: "Tax Time! Pay now or face asset forfeiture!".to_string(),
                                 intensity: 2,
                             };
 
                             map_events.new(npc.id.0, game_tick.0 + 4, sound_event);
                         }
                     }
+
+                    *state = ActionState::Success;
                 } else {
                     info!("Moving to target... {:?}", collision_list);
                     if *npc.state == State::None || *npc.state == State::Aboard {
-                        // Get colliding objects
-
                         if let Some(path_result) = Map::find_path(
                             *npc.pos,
                             *target.pos,
@@ -440,7 +294,7 @@ pub fn move_to_target_action_system(
                             true,
                             false,
                             false,
-                            true // Allow move onto position with transport
+                            true, // Allow move onto position with transport
                         ) {
                             info!("Follower path: {:?}", path_result);
 
@@ -460,8 +314,11 @@ pub fn move_to_target_action_system(
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
-                                dst_x: next_pos.0,
-                                dst_y: next_pos.1,
+                                src: *npc.pos,
+                                dst: Position {
+                                    x: next_pos.0,
+                                    y: next_pos.1,
+                                },
                             };
 
                             let move_map_event =
@@ -472,15 +329,51 @@ pub fn move_to_target_action_system(
                             });
                         } else {
                             info!("No path found");
+                            *state = ActionState::Failure;
                         }
                     }
                 }
-
-                *state = ActionState::Success;
             }
             // All Actions should make sure to handle cancellations!
             ActionState::Cancelled => {
                 debug!("Action was cancelled. Considering this a failure.");
+                *state = ActionState::Failure;
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn set_destination_action_system(
+    mut dest_query: Query<&mut Destination>,
+    mut transport: Query<&mut Transport>,
+    mut query: Query<(&Actor, &mut ActionState, &mut SetDestination, &ActionSpan)>,
+) {
+    for (Actor(actor), mut state, mut _set_destination, span) in &mut query {
+        match *state {
+            ActionState::Requested => {
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                info!("Executing SetDestination action");
+                if let Ok(mut dest) = dest_query.get_mut(*actor) {
+                    // Get transport entity
+                    if let Ok(mut transport) = transport.get_mut(*actor) {
+                        dest.pos = transport.route[transport.next_stop as usize];
+
+                        if transport.next_stop + 1 == transport.route.len() as i32 {
+                            transport.next_stop -= 1;
+                        } else {
+                            transport.next_stop += 1;
+                        }
+                    }
+
+                    *state = ActionState::Success;
+                } else {
+                    *state = ActionState::Failure;
+                }
+            }
+            ActionState::Cancelled => {
                 *state = ActionState::Failure;
             }
             _ => {}
@@ -494,26 +387,24 @@ pub fn move_to_pos_action_system(
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
     templates: Res<Templates>,
-    mut transport_query: Query<&mut Transport, Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery>,
+    dest_query: Query<&Destination>,
     mut query: Query<(&Actor, &mut ActionState, &MoveToPos)>,
 ) {
     for (Actor(actor), mut state, move_to_pos) in &mut query {
-        info!("Processing MoveToPos Action...");
-        let Ok(mut transport) = transport_query.get_mut(*actor) else {
-            info!("Cannot find transport without EventInProgress");
-            continue;
-        };
-
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                info!("Executing MoveToTarget Action");
-
                 let Ok(mut npc) = npc_query.get_mut(*actor) else {
                     error!("Query failed to find entity {:?}", *actor);
+                    *state = ActionState::Failure;
+                    continue;
+                };
+
+                let Ok(dest) = dest_query.get(*actor) else {
+                    error!("Query failed to find destination {:?}", *actor);
                     *state = ActionState::Failure;
                     continue;
                 };
@@ -536,18 +427,20 @@ pub fn move_to_pos_action_system(
                     * (BASE_SPEED / npc_speed as f32)
                     * (1.0 / effect_speed_mod)) as i32;
 
-                if *npc.pos == move_to_pos.pos {
+                if *npc.pos == dest.pos {
+                    // Arrived at position
+                    *state = ActionState::Success;
                 } else {
                     if *npc.state == State::None {
                         if let Some(path_result) = Map::find_path(
                             *npc.pos,
-                            move_to_pos.pos,
+                            dest.pos,
                             &map,
                             Vec::new(),
                             false,
-                            true,
+                            true, //TODO look up the terrain-walks for the npc
                             false,
-                            false
+                            false,
                         ) {
                             info!("Follower path: {:?}", path_result);
 
@@ -567,8 +460,11 @@ pub fn move_to_pos_action_system(
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
-                                dst_x: next_pos.0,
-                                dst_y: next_pos.1,
+                                src: *npc.pos,
+                                dst: Position {
+                                    x: next_pos.0,
+                                    y: next_pos.1,
+                                },
                             };
 
                             let move_map_event =
@@ -577,11 +473,11 @@ pub fn move_to_pos_action_system(
                             commands.entity(*actor).insert(EventInProgress {
                                 event_id: move_map_event.event_id,
                             });
+                        } else {
+                            *state = ActionState::Failure;
                         }
                     }
                 }
-
-                *state = ActionState::Success;
             }
             // All Actions should make sure to handle cancellations!
             ActionState::Cancelled => {
@@ -599,24 +495,15 @@ pub fn move_to_empire_action_system(
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
     templates: Res<Templates>,
-    mut transport_query: Query<&mut Transport, Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery>,
     mut query: Query<(&Actor, &mut ActionState, &MoveToEmpire)>,
 ) {
-    for (Actor(actor), mut state, move_to_pos) in &mut query {
-        info!("Processing MoveToEmpire Action...");
-        let Ok(mut transport) = transport_query.get_mut(*actor) else {
-            info!("Cannot find transport without EventInProgress");
-            continue;
-        };
-
+    for (Actor(actor), mut state, _move_to_empire) in &mut query {
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                info!("Executing MoveToTarget Action");
-
                 let Ok(mut npc) = npc_query.get_mut(*actor) else {
                     error!("Query failed to find entity {:?}", *actor);
                     *state = ActionState::Failure;
@@ -628,7 +515,8 @@ pub fn move_to_empire_action_system(
                     continue;
                 }
 
-                let empire_pos = Position { x: 16, y: 40 };
+                // TODO replace this
+                let empire_pos = Position { x: 1, y: 37 };
 
                 // Get NPC speed
                 let mut npc_speed = 1;
@@ -643,7 +531,8 @@ pub fn move_to_empire_action_system(
                     * (BASE_SPEED / npc_speed as f32)
                     * (1.0 / effect_speed_mod)) as i32;
 
-                if *npc.pos == empire_pos{
+                if *npc.pos == empire_pos {
+                    *state = ActionState::Success;
                 } else {
                     if *npc.state == State::None {
                         if let Some(path_result) = Map::find_path(
@@ -654,7 +543,7 @@ pub fn move_to_empire_action_system(
                             false,
                             true,
                             false,
-                            false
+                            false,
                         ) {
                             info!("Follower path: {:?}", path_result);
 
@@ -674,8 +563,11 @@ pub fn move_to_empire_action_system(
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
-                                dst_x: next_pos.0,
-                                dst_y: next_pos.1,
+                                src: *npc.pos,
+                                dst: Position {
+                                    x: next_pos.0,
+                                    y: next_pos.1,
+                                },
                             };
 
                             let move_map_event =
@@ -684,11 +576,12 @@ pub fn move_to_empire_action_system(
                             commands.entity(*actor).insert(EventInProgress {
                                 event_id: move_map_event.event_id,
                             });
+                        } else {
+                            // No path found
+                            *state = ActionState::Failure;
                         }
                     }
                 }
-
-                *state = ActionState::Success;
             }
             // All Actions should make sure to handle cancellations!
             ActionState::Cancelled => {
@@ -755,8 +648,8 @@ pub fn forfeiture_action_system(
 
                     let sound_event = VisibleEvent::SoundObjEvent {
                         sound: format!(
-                            "Typical broke serf, add {} to his debt for next season!",
-                            remainder_gold
+                            "No gold? Poor rabble, your debt is now {}!",
+                            collector.debt_amount
                         ),
                         intensity: 2,
                     };
@@ -765,6 +658,41 @@ pub fn forfeiture_action_system(
                 }
 
                 *state = ActionState::Success;
+            }
+            ActionState::Cancelled => {
+                *state = ActionState::Failure;
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn talk_action_system(
+    game_tick: Res<GameTick>,
+    id_query: Query<&Id>,
+    mut map_events: ResMut<MapEvents>,
+    mut query: Query<(&Actor, &mut ActionState, &mut Talk, &ActionSpan)>,
+) {
+    for (Actor(actor), mut state, mut talk, span) in &mut query {
+        match *state {
+            ActionState::Requested => {
+                *state = ActionState::Executing;
+            }
+            ActionState::Executing => {
+                let Ok(id) = id_query.get(*actor) else {
+                    error!("Query failed to find entity {:?}", *actor);
+                    *state = ActionState::Failure;
+                    continue;
+                };
+
+                let sound_event = VisibleEvent::SoundObjEvent {
+                    sound: talk.speech.clone(),
+                    intensity: 2,
+                };
+
+                map_events.new(id.0, game_tick.0 + 4, sound_event);
+
+                *state = ActionState::Success;                
             }
             ActionState::Cancelled => {
                 *state = ActionState::Failure;

@@ -143,7 +143,7 @@ impl Map {
             base: Vec::with_capacity(3000),
         };
 
-        let file = File::open(&Path::new("test3.tmx")).unwrap();
+        let file = File::open(&Path::new("map/test3-old.tmx")).unwrap();
         println!("Opened file");
         let reader = BufReader::new(file);
         let raw_map = parse(reader).unwrap();

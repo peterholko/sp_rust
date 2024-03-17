@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::i32::MAX;
 
 use bevy::prelude::*;
 use big_brain::actions::{Steps, StepsBuilder};
@@ -7,7 +8,7 @@ use big_brain::prelude::{Highest, Thinker};
 use rand::{random, Rng};
 
 use crate::components::npc::{
-    AtDestinationScorer, AtLanding, Forfeiture, Idle, IsAboard, IsPassengerAboard, IsTargetAdjacent, IsTaxCollected, IsWaitingForPassenger, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, ReadyToSailScorer, SetDestination, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport, VisibleTarget, WaitForPassenger
+    AtLanding, Destination, Forfeiture, Hide, Idle, IsAboard, IsTaxCollected, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, Talk, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport, VisibleTarget
 };
 use crate::components::npc::{
     ChaseAndAttack, ChaseAndCast, FleeScorer, FleeToHome, RaiseDead, VisibleCorpse,
@@ -124,6 +125,7 @@ impl Encounter {
     pub fn spawn_necromancer(
         player_id: i32,
         pos: Position,
+        home_pos: Position,
         commands: &mut Commands,
         ids: &mut ResMut<Ids>,
         mut items: &mut ResMut<Items>,
@@ -133,10 +135,17 @@ impl Encounter {
             ids,
             player_id,
             "Necromancer".to_string(),
-            Position { x: 17, y: 34 },
+            //Position { x: 16, y: 33 },
+            pos,
             State::None,
             templates,
         );
+
+        let flee_and_hide = Steps::build()
+        .label("Flee and Hide")
+        .step(FleeToHome)
+        .step(Hide)
+        .step(Idle { start_time: 0, duration: MAX });
 
         // Spawn Necromancer
         let necro_entity = commands
@@ -145,16 +154,16 @@ impl Encounter {
                 SubclassNPC,
                 Minions { ids: Vec::new() },
                 Home {
-                    pos: Position { x: 16, y: 32 },
+                    pos: home_pos
                 },
                 VisibleTarget::new(NO_TARGET),
                 VisibleCorpse::new(NO_TARGET),
                 Thinker::build()
                     .label("Necromancer")
                     .picker(Highest)
-                    .when(VisibleTargetScorer, ChaseAndCast)
-                    .when(VisibleCorpseScorer, RaiseDead)
-                    .when(FleeScorer, FleeToHome),
+                    .when(VisibleTargetScorer, ChaseAndCast { start_time: MAX })
+                    .when(VisibleCorpseScorer, RaiseDead { start_time: MAX })
+                    .when(FleeScorer, flee_and_hide),
             ))
             .id();
 
@@ -167,7 +176,8 @@ impl Encounter {
 
     pub fn spawn_tax_collector(
         player_id: i32,
-        pos: Position,
+        landing_pos: Position,
+        empire_pos: Position,
         target_player: i32,
         commands: &mut Commands,
         ids: &mut ResMut<Ids>,
@@ -180,7 +190,7 @@ impl Encounter {
             ids,
             player_id,
             "Tax Ship".to_string(),
-            Position { x: 16, y: 40 },
+            empire_pos,
             State::None,
             templates,
         );
@@ -189,13 +199,26 @@ impl Encounter {
             ids,
             player_id,
             "Tax Collector".to_string(),
-            Position { x: 16, y: 40 },
+            empire_pos,
             State::None,
             templates,
         );
 
+        let move_to_empire_and_idle = Steps::build()
+            .label("MoveToEmpire and Idle")
+            .step(MoveToEmpire)
+            .step(Idle {
+                start_time: 0,
+                duration: 100,
+            });
 
-        let landing_pos = Position { x: 15, y: 36 };
+        let move_to_landing_and_idle = Steps::build()
+            .label("MoveToPos and Idle")
+            .step(MoveToPos)
+            .step(Idle {
+                start_time: 0,
+                duration: 100,
+            });
 
         // Spawn Tax Collector Ship
         let tax_collector_ship_entity = commands
@@ -207,16 +230,15 @@ impl Encounter {
                     next_stop: 0,
                     hauling: vec![tax_collector_obj.id.0],
                 },
-                TaxCollectorTransport {                    
+                Destination { pos: landing_pos },
+                TaxCollectorTransport {
                     tax_collector_id: tax_collector_obj.id.0,
                 },
                 Thinker::build()
                     .label("Tax Collector Ship")
                     .picker(Highest)
-                    .when(NoTaxesToCollect, MoveToEmpire)
-                    .when(TaxesToCollect, MoveToPos {
-                        pos: landing_pos,
-                    }),
+                    .when(NoTaxesToCollect, move_to_empire_and_idle)
+                    .when(TaxesToCollect, move_to_landing_and_idle),
             ))
             .id();
 
@@ -236,6 +258,27 @@ impl Encounter {
             .get_hero(target_player)
             .expect("Cannot find hero for player");
 
+        let move_to_hero_and_idle = Steps::build()
+            .label("MoveToTarget and Idle")
+            .step(MoveToTarget {
+                target: target_hero_id,
+            })
+            .step(Idle {
+                start_time: 0,
+                duration: 100,
+            });
+
+        let move_to_ship_and_idle = Steps::build()
+            .label("MoveToTarget and Idle")
+            .step(Talk { speech: "The poor rabble actually paid, shocking!".to_string()})
+            .step(MoveToTarget {
+                target: tax_collector_ship_obj.id.0,
+            })
+            .step(Idle {
+                start_time: 0,
+                duration: 100,
+            });
+
         let forfeiture = Steps::build()
             .label("Forfeiture")
             .step(MoveToTarget {
@@ -253,7 +296,7 @@ impl Encounter {
                     collection_amount: 0,
                     debt_amount: 0,
                     last_collection_time: game_tick.0 - 1000,
-                    landing_pos: Position { x: 15, y: 35 },
+                    landing_pos: landing_pos,
                     transport_id: tax_collector_ship_obj.id.0,
                     last_demand_time: 0,
                 },
@@ -263,19 +306,15 @@ impl Encounter {
                 Thinker::build()
                     .label("Tax Collector")
                     .picker(Highest)
-                    .when(IsAboard, Idle)
                     .when(
-                        AtLanding,
-                        MoveToTarget {
-                            target: target_hero_id,
+                        IsAboard,
+                        Idle {
+                            start_time: 0,
+                            duration: 100,
                         },
                     )
-                    .when(
-                        IsTaxCollected,
-                        MoveToTarget {
-                            target: tax_collector_ship_obj.id.0,
-                        },
-                    )
+                    .when(AtLanding, move_to_hero_and_idle)
+                    .when(IsTaxCollected, move_to_ship_and_idle)
                     .when(OverdueTaxScorer, forfeiture),
             ))
             .id();

@@ -804,13 +804,10 @@ lazy_static! {
           match entry {
               Ok(path) => {
                 let path = Path::new(&path);
-                println!("path: {:?}", path);
                 let file_stem = path.file_stem();
                 let data = std::fs::read_to_string(&path).expect("Unable to read file");
                 let json: serde_json::Value = serde_json::from_str(&data).expect("JSON does not have correct format.");
-                //tileset.insert(file_stem.unwrap().to_str().unwrap().to_string(), serde_json::to_string(&json).unwrap());
                 let file_stem = file_stem.unwrap().to_str().unwrap().to_string();
-                println!("File stem: {:?}", file_stem);
                 tileset.insert(file_stem, json);
               },
               Err(e) => println!("{:?}", e),
@@ -1257,7 +1254,7 @@ fn handle_disconnect(client_id: i32, clients: Clients) {
 
 fn handle_selected_class(
     player_id: i32,
-    classname: String,
+    class_name: String,
     accounts: Accounts,
     client_to_game_sender: CBSender<PlayerEvent>,
 ) -> ResponsePacket {
@@ -1267,8 +1264,8 @@ fn handle_selected_class(
     let mut account = accounts.get_mut(&player_id).unwrap();
 
     if account.class == HeroClassList::None {
-        println!("classname: {:?}", classname.as_str());
-        let selected_class = match classname.as_str() {
+        println!("classname: {:?}", class_name.as_str());
+        let selected_class = match class_name.as_str() {
             "Warrior" => HeroClassList::Warrior,
             "Ranger" => HeroClassList::Ranger,
             "Mage" => HeroClassList::Mage,
@@ -1282,6 +1279,8 @@ fn handle_selected_class(
         client_to_game_sender
             .send(PlayerEvent::NewPlayer {
                 player_id: player_id,
+                account_name: account.username.clone(),
+                class_name: class_name.clone()
             })
             .expect("Could not send message");
 

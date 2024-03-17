@@ -5,8 +5,6 @@ use big_brain::evaluators::Evaluator;
 use big_brain::evaluators::PowerEvaluator;
 use big_brain::prelude::*;
 
-use crate::ids::Ids;
-use crate::event::{GameEvent, GameEvents, GameEventType, MapEvents, VisibleEvent};
 use crate::components::villager::Dehydrated;
 use crate::components::villager::DrinkDistanceScorer;
 use crate::components::villager::DrowsyScorer;
@@ -38,10 +36,12 @@ use crate::components::villager::TransferDrink;
 use crate::components::villager::TransferDrinkScorer;
 use crate::components::villager::TransferFood;
 use crate::components::villager::TransferFoodScorer;
+use crate::event::{GameEvent, GameEventType, GameEvents, MapEvents, VisibleEvent};
 use crate::experiment;
 use crate::experiment::*;
 use crate::game::State;
 use crate::game::*;
+use crate::ids::Ids;
 use crate::item;
 use crate::item::*;
 use crate::map::Map;
@@ -103,7 +103,7 @@ pub struct VillagerBaseQuery {
     pub class: &'static Class,
     pub subclass: &'static Subclass,
     pub state: &'static State,
-    pub attrs: &'static VillagerAttrs
+    pub attrs: &'static VillagerAttrs,
 }
 
 pub fn enemy_distance_scorer_system(
@@ -132,19 +132,17 @@ pub fn enemy_distance_scorer_system(
             let mut nearby_enemies = false;
 
             for obj in obj_query.iter() {
-
                 if *obj.state == State::Dead {
                     continue;
                 }
-                
+
                 if obj.player_id.0 != villager.player_id.0 {
-                    
                     let distance =
-                    Map::distance( (villager.pos.x, villager.pos.y), (obj.pos.x, obj.pos.y));
+                        Map::distance((villager.pos.x, villager.pos.y), (obj.pos.x, obj.pos.y));
 
                     if distance <= 2 {
                         nearby_enemies = true;
-                    } 
+                    }
                 }
             }
 
@@ -246,8 +244,7 @@ pub fn transfer_drink_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_drink) = items.get_by_class(villager.id.0, item::WATER.to_string())
-            {
+            if let Some(_drink) = items.get_by_class(villager.id.0, item::WATER.to_string()) {
                 score.set(0.0);
             } else {
                 // TODO add check if nearby structure has drinks
@@ -266,8 +263,7 @@ pub fn has_drink_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_item) = items.get_by_class(villager.id.0, item::WATER.to_string())
-            {
+            if let Some(_item) = items.get_by_class(villager.id.0, item::WATER.to_string()) {
                 score.set(1.0);
             } else {
                 score.set(0.0);
@@ -349,7 +345,7 @@ pub fn food_distance_scorer_system(
                     score.set(1.0);
                 }
             }
-            debug!("{:?} food distance score: {:?}", *actor, score);            
+            debug!("{:?} food distance score: {:?}", *actor, score);
         }
     }
 }
@@ -361,8 +357,7 @@ pub fn transfer_food_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-            if let Some(_drink) = items.get_by_class(villager.id.0, item::FOOD.to_string())
-            {
+            if let Some(_drink) = items.get_by_class(villager.id.0, item::FOOD.to_string()) {
                 score.set(0.0);
             } else {
                 // TODO add check if nearby structure has drinks
@@ -371,7 +366,7 @@ pub fn transfer_food_scorer_system(
 
             debug!("{:?} transfer_food score {:?}", actor, score);
         }
-    } 
+    }
 }
 
 pub fn has_food_scorer_system(
@@ -458,15 +453,15 @@ pub fn shelter_distance_scorer_system(
             if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
                 score.set(1.0);
             } else {
-
                 let Ok(move_to_shelter) = move_to_shelter.get(*actor) else {
                     debug!("No move_to_shelter found");
                     score.set(0.0);
                     continue;
-                }; 
-                
-                if villager.pos.x == move_to_shelter.dest.x && 
-                   villager.pos.y == move_to_shelter.dest.y {
+                };
+
+                if villager.pos.x == move_to_shelter.dest.x
+                    && villager.pos.y == move_to_shelter.dest.y
+                {
                     debug!("Villager is on shelter");
                     score.set(0.0);
                 } else {
@@ -487,12 +482,11 @@ pub fn near_shelter_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
-
             let Ok(move_to_shelter) = move_to_shelter.get(*actor) else {
                 debug!("No move_to_shelter found");
                 score.set(0.0);
                 continue;
-            }; 
+            };
 
             if move_to_shelter.dest == *villager.pos {
                 score.set(1.0);
@@ -631,8 +625,8 @@ pub fn process_order_system(
                                 {
                                     if *villager.state == State::None {
                                         if let Some(path_result) = Map::find_path(
-                                            *villager.pos,                                        
-                                            *target_pos,                                            
+                                            *villager.pos,
+                                            *target_pos,
                                             &map,
                                             Vec::new(),
                                             true,
@@ -663,8 +657,11 @@ pub fn process_order_system(
 
                                             // Add Move Event
                                             let move_event = VisibleEvent::MoveEvent {
-                                                dst_x: next_pos.0,
-                                                dst_y: next_pos.1,
+                                                src: *villager.pos,
+                                                dst: Position {
+                                                    x: next_pos.0,
+                                                    y: next_pos.1,
+                                                },
                                             };
 
                                             let move_map_event = map_events.new(
@@ -673,9 +670,9 @@ pub fn process_order_system(
                                                 move_event,
                                             );
 
-                                            commands
-                                                .entity(*actor)
-                                                .insert(EventInProgress { event_id: move_map_event.event_id });
+                                            commands.entity(*actor).insert(EventInProgress {
+                                                event_id: move_map_event.event_id,
+                                            });
                                         }
                                     } else {
                                         debug!("Follower is still moving");
@@ -703,8 +700,13 @@ pub fn process_order_system(
                         }
                         Order::Refine | Order::Operate => {
                             if *villager.state == State::None {
-                                let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
-                                    error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                                let Some(structure_entity) =
+                                    ids.get_entity(villager.attrs.structure)
+                                else {
+                                    error!(
+                                        "Cannot find structure entity for {:?}",
+                                        villager.attrs.structure
+                                    );
                                     continue;
                                 };
 
@@ -718,14 +720,14 @@ pub fn process_order_system(
                                     || villager.pos.y != structure_pos.y
                                 {
                                     if let Some(path_result) = Map::find_path(
-                                        *villager.pos,                                        
-                                        *structure_pos,                                        
+                                        *villager.pos,
+                                        *structure_pos,
                                         &map,
                                         Vec::new(),
                                         true,
                                         false,
                                         false,
-                                        false
+                                        false,
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -749,19 +751,22 @@ pub fn process_order_system(
 
                                         // Add Move Event
                                         let move_event = VisibleEvent::MoveEvent {
-                                            dst_x: next_pos.0,
-                                            dst_y: next_pos.1,
+                                            src: *villager.pos,
+                                            dst: Position {
+                                                x: next_pos.0,
+                                                y: next_pos.1,
+                                            },
                                         };
-  
+
                                         let move_map_event = map_events.new(
                                             villager.id.0,
                                             game_tick.0 + 36, // in the future
                                             move_event,
                                         );
 
-                                        commands
-                                            .entity(*actor)
-                                            .insert(EventInProgress { event_id: move_map_event.event_id });
+                                        commands.entity(*actor).insert(EventInProgress {
+                                            event_id: move_map_event.event_id,
+                                        });
                                     }
                                 } else {
                                     let mut map_event;
@@ -798,11 +803,10 @@ pub fn process_order_system(
                                             error!("Invalid order type: {:?}", villager.order);
                                             continue;
                                         }
-                                        
                                     }
-                                    commands
-                                    .entity(*actor)
-                                    .insert(EventInProgress { event_id: map_event.event_id });
+                                    commands.entity(*actor).insert(EventInProgress {
+                                        event_id: map_event.event_id,
+                                    });
 
                                     *state = ActionState::Success;
                                 }
@@ -810,8 +814,13 @@ pub fn process_order_system(
                         }
                         Order::Craft { recipe_name } => {
                             if *villager.state == State::None {
-                                let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
-                                    error!("Cannot find structure entity for {:?}", villager.attrs.structure);
+                                let Some(structure_entity) =
+                                    ids.get_entity(villager.attrs.structure)
+                                else {
+                                    error!(
+                                        "Cannot find structure entity for {:?}",
+                                        villager.attrs.structure
+                                    );
                                     continue;
                                 };
 
@@ -825,114 +834,14 @@ pub fn process_order_system(
                                     || villager.pos.y != structure_pos.y
                                 {
                                     if let Some(path_result) = Map::find_path(
-                                        *villager.pos,                                        
-                                        *structure_pos,                                        
+                                        *villager.pos,
+                                        *structure_pos,
                                         &map,
                                         Vec::new(),
                                         true,
                                         false,
                                         false,
-                                        false
-                                    ) {
-                                        debug!("Path to structure: {:?}", path_result);
-
-                                        let (path, c) = path_result;
-                                        let next_pos = &path[1];
-
-                                        debug!("Next pos: {:?}", next_pos);
-
-                                        // Add State Change Event to Moving
-                                        let state_change_event = VisibleEvent::StateChangeEvent {
-                                            new_state: "moving".to_string(),
-                                        };
-
-                                        *villager.state = State::Moving;                                    
-
-                                        map_events.new(
-                                            villager.id.0,
-                                            game_tick.0 + 4,
-                                            state_change_event,
-                                        );
-
-                                        // Add Move Event
-                                        let move_event = VisibleEvent::MoveEvent {
-                                            dst_x: next_pos.0,
-                                            dst_y: next_pos.1,
-                                        };
-
-                                        let event_id = ids.new_map_event_id();
-
-                                        let map_event = map_events.new(
-                                            villager.id.0,
-                                            game_tick.0 + 36, // in the future
-                                            move_event,
-                                        );
-
-                                        commands
-                                            .entity(*actor)
-                                            .insert(EventInProgress { event_id: map_event.event_id });
-                                    }
-                                } else {
-                                    // Create craft event
-                                    let craft_event = VisibleEvent::CraftEvent {
-                                        structure_id: villager.attrs.structure,
-                                        recipe_name: recipe_name.clone(),
-                                    };
-
-                                    // Add State Change Event to Moving
-                                    let state_change_event = VisibleEvent::StateChangeEvent {
-                                        new_state: "crafting".to_string(),
-                                    };
-
-                                    *villager.state = State::Crafting; 
-
-                                    map_events.new(
-                                        villager.id.0,
-                                        game_tick.0 + 4,
-                                        state_change_event,
-                                    );
-
-                                    let event_id = ids.new_map_event_id();
-
-                                    let map_event = map_events.new(
-                                        villager.id.0,
-                                        game_tick.0 + 200, // in the future
-                                        craft_event,
-                                    );
-
-                                    commands
-                                        .entity(*actor)
-                                        .insert(EventInProgress { event_id: map_event.event_id });
-
-                                    *state = ActionState::Success;
-                                }
-                            }
-                        }
-                        Order::Experiment => {
-                            if *villager.state == State::None {
-                                let Some(structure_entity) = ids.get_entity(villager.attrs.structure) else {
-                                    error!("Cannot find structure entity for {:?}", villager.attrs.structure);
-                                    continue;
-                                };
-
-                                let Ok(structure_pos) = all_pos.get(structure_entity) else {
-                                    error!("Query failed to find entity {:?}", structure_entity);
-                                    continue;
-                                };
-
-                                // Check if villager is on structure
-                                if villager.pos.x != structure_pos.x
-                                    || villager.pos.y != structure_pos.y
-                                {
-                                    if let Some(path_result) = Map::find_path(
-                                        *villager.pos,                                        
-                                        *structure_pos,                                        
-                                        &map,
-                                        Vec::new(),
-                                        true,
                                         false,
-                                        false,
-                                        false
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
@@ -956,8 +865,119 @@ pub fn process_order_system(
 
                                         // Add Move Event
                                         let move_event = VisibleEvent::MoveEvent {
-                                            dst_x: next_pos.0,
-                                            dst_y: next_pos.1,
+                                            src: *villager.pos,
+                                            dst: Position {
+                                                x: next_pos.0,
+                                                y: next_pos.1,
+                                            },
+                                        };
+
+                                        let event_id = ids.new_map_event_id();
+
+                                        let map_event = map_events.new(
+                                            villager.id.0,
+                                            game_tick.0 + 36, // in the future
+                                            move_event,
+                                        );
+
+                                        commands.entity(*actor).insert(EventInProgress {
+                                            event_id: map_event.event_id,
+                                        });
+                                    }
+                                } else {
+                                    // Create craft event
+                                    let craft_event = VisibleEvent::CraftEvent {
+                                        structure_id: villager.attrs.structure,
+                                        recipe_name: recipe_name.clone(),
+                                    };
+
+                                    // Add State Change Event to Moving
+                                    let state_change_event = VisibleEvent::StateChangeEvent {
+                                        new_state: "crafting".to_string(),
+                                    };
+
+                                    *villager.state = State::Crafting;
+
+                                    map_events.new(
+                                        villager.id.0,
+                                        game_tick.0 + 4,
+                                        state_change_event,
+                                    );
+
+                                    let event_id = ids.new_map_event_id();
+
+                                    let map_event = map_events.new(
+                                        villager.id.0,
+                                        game_tick.0 + 200, // in the future
+                                        craft_event,
+                                    );
+
+                                    commands.entity(*actor).insert(EventInProgress {
+                                        event_id: map_event.event_id,
+                                    });
+
+                                    *state = ActionState::Success;
+                                }
+                            }
+                        }
+                        Order::Experiment => {
+                            if *villager.state == State::None {
+                                let Some(structure_entity) =
+                                    ids.get_entity(villager.attrs.structure)
+                                else {
+                                    error!(
+                                        "Cannot find structure entity for {:?}",
+                                        villager.attrs.structure
+                                    );
+                                    continue;
+                                };
+
+                                let Ok(structure_pos) = all_pos.get(structure_entity) else {
+                                    error!("Query failed to find entity {:?}", structure_entity);
+                                    continue;
+                                };
+
+                                // Check if villager is on structure
+                                if villager.pos.x != structure_pos.x
+                                    || villager.pos.y != structure_pos.y
+                                {
+                                    if let Some(path_result) = Map::find_path(
+                                        *villager.pos,
+                                        *structure_pos,
+                                        &map,
+                                        Vec::new(),
+                                        true,
+                                        false,
+                                        false,
+                                        false,
+                                    ) {
+                                        debug!("Path to structure: {:?}", path_result);
+
+                                        let (path, c) = path_result;
+                                        let next_pos = &path[1];
+
+                                        debug!("Next pos: {:?}", next_pos);
+
+                                        // Add State Change Event to Moving
+                                        let state_change_event = VisibleEvent::StateChangeEvent {
+                                            new_state: "moving".to_string(),
+                                        };
+
+                                        *villager.state = State::Moving;
+
+                                        map_events.new(
+                                            villager.id.0,
+                                            game_tick.0 + 4,
+                                            state_change_event,
+                                        );
+
+                                        // Add Move Event
+                                        let move_event = VisibleEvent::MoveEvent {
+                                            src: *villager.pos,
+                                            dst: Position {
+                                                x: next_pos.0,
+                                                y: next_pos.1,
+                                            },
                                         };
 
                                         let map_event = map_events.new(
@@ -966,9 +986,9 @@ pub fn process_order_system(
                                             move_event,
                                         );
 
-                                        commands
-                                            .entity(*actor)
-                                            .insert(EventInProgress { event_id: map_event.event_id });
+                                        commands.entity(*actor).insert(EventInProgress {
+                                            event_id: map_event.event_id,
+                                        });
                                     }
                                 } else {
                                     // Create experiment event
@@ -995,9 +1015,9 @@ pub fn process_order_system(
                                         experiment_event,
                                     );
 
-                                    commands
-                                        .entity(*actor)
-                                        .insert(EventInProgress { event_id: map_event.event_id });
+                                    commands.entity(*actor).insert(EventInProgress {
+                                        event_id: map_event.event_id,
+                                    });
 
                                     // Update experiment state to progressing
                                     let updated_experiment = Experiment::update_state(
@@ -1048,11 +1068,11 @@ pub fn process_order_system(
 
 pub fn flee_system(
     mut commands: Commands,
-    game_tick: Res<GameTick>,    
+    game_tick: Res<GameTick>,
     map: Res<Map>,
     mut ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
-    events_in_progress: Query<&EventInProgress>,    
+    events_in_progress: Query<&EventInProgress>,
     hero_query: Query<BaseQuery, (With<SubclassHero>, Without<SubclassVillager>)>,
     villager_query: Query<BaseQuery, With<SubclassVillager>>,
     blocking_query: Query<BaseQuery>,
@@ -1062,7 +1082,7 @@ pub fn flee_system(
     for (Actor(actor), mut state, _find_drink, span) in &mut action_query {
         match *state {
             ActionState::Requested => {
-                debug!("Flee");                
+                debug!("Flee");
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
@@ -1072,7 +1092,7 @@ pub fn flee_system(
                     let Ok(mut villager) = villager_query.get(*actor) else {
                         error!("Cannot find villager {:?}", *actor);
                         continue;
-                    };                
+                    };
 
                     let Some(hero_id) = ids.get_hero(villager.player_id.0) else {
                         error!("Cannot find hero for player {:?}", villager.player_id);
@@ -1102,13 +1122,12 @@ pub fn flee_system(
                             villager.id,
                             &mut map_events,
                         );
-                    }             
+                    }
 
                     // Set activity to fleeing
-                    villager_attrs.activity = villager::Activity::Fleeing;       
+                    villager_attrs.activity = villager::Activity::Fleeing;
 
                     if hero.pos != villager.pos {
-
                         let mut blocking_list = Vec::new();
 
                         for blocking_obj in blocking_query.iter() {
@@ -1128,7 +1147,7 @@ pub fn flee_system(
                             true,
                             false,
                             false,
-                            false,                            
+                            false,
                         ) {
                             debug!("Path to structure: {:?}", path_result);
 
@@ -1142,16 +1161,15 @@ pub fn flee_system(
                                 new_state: "moving".to_string(),
                             };
 
-                            map_events.new(
-                                villager.id.0,
-                                game_tick.0 + 1,
-                                state_change_event,
-                            );
+                            map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                             // Add Move Event
                             let move_event = VisibleEvent::MoveEvent {
-                                dst_x: next_pos.0,
-                                dst_y: next_pos.1,
+                                src: *villager.pos,
+                                dst: Position {
+                                    x: next_pos.0,
+                                    y: next_pos.1,
+                                },
                             };
 
                             let event_id = ids.new_map_event_id();
@@ -1163,22 +1181,22 @@ pub fn flee_system(
                             );
 
                             debug!("MoveToHero - Adding EventInProgress {:?}", event_id);
-                            commands
-                                .entity(*actor)
-                                .insert(EventInProgress { event_id: map_event.event_id });
+                            commands.entity(*actor).insert(EventInProgress {
+                                event_id: map_event.event_id,
+                            });
 
-                            commands.entity(*actor).insert(MoveToInProgress);                        
+                            commands.entity(*actor).insert(MoveToInProgress);
                         } else {
                             //TODO randomly pick a flee location
                         }
                     } else {
                         debug!("Villager has arrived at hero");
                         commands.entity(*actor).remove::<MoveToInProgress>();
-                        *state = ActionState::Success;                    
+                        *state = ActionState::Success;
                     }
                 }
             }
-            ActionState::Cancelled => { 
+            ActionState::Cancelled => {
                 debug!("Flee cancelled...");
                 *state = ActionState::Failure;
             }
@@ -1212,7 +1230,7 @@ pub fn find_drink_system(
                     continue;
                 };
 
-                let Some((item_location,  item)) = find_item_location_by_class(
+                let Some((item_location, item)) = find_item_location_by_class(
                     &villager,
                     &structure_query,
                     item::WATER.to_string(),
@@ -1310,7 +1328,7 @@ pub fn move_to_water_source_action_system(
                         // Check if villager is on structure
                         if !Map::is_adjacent(*villager.pos, Position { x: 16, y: 37 }) {
                             if let Some(path_result) = Map::find_path(
-                                *villager.pos,                                
+                                *villager.pos,
                                 move_to_drink.dest,
                                 &map,
                                 Vec::new(),
@@ -1333,16 +1351,15 @@ pub fn move_to_water_source_action_system(
 
                                 *villager.state = State::Moving;
 
-                                map_events.new(
-                                    villager.id.0,
-                                    game_tick.0 + 1,
-                                    state_change_event,
-                                );
+                                map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                                 // Add Move Event
                                 let move_event = VisibleEvent::MoveEvent {
-                                    dst_x: next_pos.0,
-                                    dst_y: next_pos.1,
+                                    src: *villager.pos,
+                                    dst: Position {
+                                        x: next_pos.0,
+                                        y: next_pos.1,
+                                    },
                                 };
 
                                 let map_event = map_events.new(
@@ -1351,9 +1368,9 @@ pub fn move_to_water_source_action_system(
                                     move_event,
                                 );
 
-                                commands
-                                    .entity(*actor)
-                                    .insert(EventInProgress { event_id: map_event.event_id });
+                                commands.entity(*actor).insert(EventInProgress {
+                                    event_id: map_event.event_id,
+                                });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
                             } else {
@@ -1441,11 +1458,7 @@ pub fn transfer_drink_system(
                     continue;
                 };
 
-                items.transfer_quantity(
-                    item.id,
-                    villager.id.0,
-                    1,
-                );
+                items.transfer_quantity(item.id, villager.id.0, 1);
 
                 *state = ActionState::Success;
             }
@@ -1491,7 +1504,9 @@ pub fn drink_action_system(
                         continue;
                     };
 
-                    let Some(drink_item) = items.get_by_class(villager.id.0, item::WATER.to_owned()) else {
+                    let Some(drink_item) =
+                        items.get_by_class(villager.id.0, item::WATER.to_owned())
+                    else {
                         debug!("Cannot find drink item on {:?}", villager.id.0);
                         *state = ActionState::Failure;
                         continue;
@@ -1509,11 +1524,7 @@ pub fn drink_action_system(
 
                     *villager.state = State::Drinking;
 
-                    map_events.new(
-                        villager.id.0,
-                        game_tick.0 + 1,
-                        state_change_event,
-                    );
+                    map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                     let map_event = map_events.new(
                         villager.id.0,
@@ -1521,9 +1532,9 @@ pub fn drink_action_system(
                         drink_event,
                     );
 
-                    commands
-                        .entity(*actor)
-                        .insert(EventInProgress { event_id: map_event.event_id });
+                    commands.entity(*actor).insert(EventInProgress {
+                        event_id: map_event.event_id,
+                    });
 
                     *state = ActionState::Executing;
                 }
@@ -1539,15 +1550,20 @@ pub fn drink_action_system(
                         // Remove Drink Event Complete
                         commands.entity(*actor).remove::<DrinkEventCompleted>();
 
-                        let Some(thirst_mod) = drink_event_completed.item.attrs.get(&item::AttrKey::Thirst) else {
-                            debug!("Missing thirst mod on item: {:?}", drink_event_completed.item);
+                        let Some(thirst_mod) =
+                            drink_event_completed.item.attrs.get(&item::AttrKey::Thirst)
+                        else {
+                            debug!(
+                                "Missing thirst mod on item: {:?}",
+                                drink_event_completed.item
+                            );
                             *state = ActionState::Failure;
                             continue;
                         };
 
                         let thirst_mod_val = match thirst_mod {
                             item::AttrVal::Num(val) => val,
-                            _ => panic!("Incorrect attribute value {:?}", thirst_mod)
+                            _ => panic!("Incorrect attribute value {:?}", thirst_mod),
                         };
 
                         // Update thirst
@@ -1571,7 +1587,6 @@ pub fn drink_action_system(
                 }
                 // All Actions should make sure to handle cancellations!
                 ActionState::Cancelled => {
-                    
                     // Reset activity
                     if let Ok(mut villager) = villager_query.get_mut(*actor) {
                         villager.attrs.activity = villager::Activity::None;
@@ -1599,7 +1614,7 @@ pub fn drink_action_system(
                     }
 
                     remove_components(&mut commands, &*actor);
-                    
+
                     *state = ActionState::Failure;
                 }
                 _ => {}
@@ -1634,7 +1649,7 @@ pub fn find_food_system(
                     continue;
                 };
 
-                let Some((item_location,  item)) = find_item_location_by_class(
+                let Some((item_location, item)) = find_item_location_by_class(
                     &villager,
                     &structure_query,
                     item::FOOD.to_string(),
@@ -1751,16 +1766,15 @@ pub fn move_to_food_action_system(
 
                                 *villager.state = State::Moving;
 
-                                map_events.new(
-                                    villager.id.0,
-                                    game_tick.0 + 1,
-                                    state_change_event,
-                                );
+                                map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                                 // Add Move Event
                                 let move_event = VisibleEvent::MoveEvent {
-                                    dst_x: next_pos.0,
-                                    dst_y: next_pos.1,
+                                    src: *villager.pos,
+                                    dst: Position {
+                                        x: next_pos.0,
+                                        y: next_pos.1,
+                                    },
                                 };
 
                                 let event_id = ids.new_map_event_id();
@@ -1771,12 +1785,12 @@ pub fn move_to_food_action_system(
                                     move_event,
                                 );
 
-                                commands
-                                    .entity(*actor)
-                                    .insert(EventInProgress { event_id: map_event.event_id });
+                                commands.entity(*actor).insert(EventInProgress {
+                                    event_id: map_event.event_id,
+                                });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
-                            } else {  
+                            } else {
                                 debug!("Cannot find path to food");
                                 *state = ActionState::Failure
                             }
@@ -1857,16 +1871,12 @@ pub fn transfer_food_system(
                 ) else {
                     error!("Cannot find any food. ");
 
-                    villager.attrs.activity = villager::Activity::None; 
+                    villager.attrs.activity = villager::Activity::None;
                     *state = ActionState::Failure;
                     continue;
                 };
 
-                items.transfer_quantity(
-                    item.id,
-                    villager.id.0,
-                    1,
-                );
+                items.transfer_quantity(item.id, villager.id.0, 1);
 
                 *state = ActionState::Success;
             }
@@ -1912,7 +1922,8 @@ pub fn eat_action_system(
                         continue;
                     };
 
-                    let Some(food_item) = items.get_by_class(villager.id.0, item::FOOD.to_owned()) else {
+                    let Some(food_item) = items.get_by_class(villager.id.0, item::FOOD.to_owned())
+                    else {
                         debug!("Cannot find food item on {:?}", villager.id.0);
                         *state = ActionState::Failure;
                         continue;
@@ -1930,11 +1941,7 @@ pub fn eat_action_system(
 
                     *villager.state = State::Eating;
 
-                    map_events.new(
-                        villager.id.0,
-                        game_tick.0 + 1,
-                        state_change_event,
-                    );
+                    map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                     let map_event = map_events.new(
                         villager.id.0,
@@ -1942,9 +1949,9 @@ pub fn eat_action_system(
                         eat_event,
                     );
 
-                    commands
-                        .entity(*actor)
-                        .insert(EventInProgress { event_id: map_event.event_id });
+                    commands.entity(*actor).insert(EventInProgress {
+                        event_id: map_event.event_id,
+                    });
 
                     *state = ActionState::Executing;
                 }
@@ -1960,7 +1967,9 @@ pub fn eat_action_system(
                         // Remove Eat Event Complete
                         commands.entity(*actor).remove::<EatEventCompleted>();
 
-                        let Some(feed_mod) = eat_event_completed.item.attrs.get(&item::AttrKey::Feed) else {
+                        let Some(feed_mod) =
+                            eat_event_completed.item.attrs.get(&item::AttrKey::Feed)
+                        else {
                             debug!("Missing feed mod on item: {:?}", eat_event_completed.item);
                             *state = ActionState::Failure;
                             continue;
@@ -1968,7 +1977,7 @@ pub fn eat_action_system(
 
                         let feed_mod_val = match feed_mod {
                             item::AttrVal::Num(val) => val,
-                            _ => panic!("Incorrect attribute value {:?}", feed_mod)
+                            _ => panic!("Incorrect attribute value {:?}", feed_mod),
                         };
 
                         // Update hunger
@@ -1992,7 +2001,6 @@ pub fn eat_action_system(
                 }
                 // All Actions should make sure to handle cancellations!
                 ActionState::Cancelled => {
-
                     // Reset activity
                     if let Ok(mut villager) = villager_query.get_mut(*actor) {
                         villager.attrs.activity = villager::Activity::None;
@@ -2067,11 +2075,14 @@ pub fn find_shelter_system(
                             &mut map_events,
                         );
                     }
-                    
+
                     villager.attrs.activity = villager::Activity::Sleeping;
                     *state = ActionState::Success;
                 } else {
-                    debug!("{:?} cannot find shelter, setting current location as shelter", *actor);
+                    debug!(
+                        "{:?} cannot find shelter, setting current location as shelter",
+                        *actor
+                    );
                     commands.entity(*actor).insert(MoveToShelter {
                         dest: *villager.pos,
                     });
@@ -2085,7 +2096,7 @@ pub fn find_shelter_system(
                 // Reset activity
                 if let Ok(mut villager) = villager_query.get_mut(*actor) {
                     villager.attrs.activity = villager::Activity::None;
-                }      
+                }
 
                 *state = ActionState::Failure
             }
@@ -2129,8 +2140,9 @@ pub fn move_to_shelter_system(
                         };
 
                         // Check if villager is on structure
-                        if villager.pos.x != move_to_shelter.dest.x &&
-                           villager.pos.y != move_to_shelter.dest.y  {
+                        if villager.pos.x != move_to_shelter.dest.x
+                            && villager.pos.y != move_to_shelter.dest.y
+                        {
                             if let Some(path_result) = Map::find_path(
                                 *villager.pos,
                                 move_to_shelter.dest,
@@ -2161,18 +2173,16 @@ pub fn move_to_shelter_system(
 
                                 *villager.state = State::Moving;
 
-                                map_events.new(
-                                    villager.id.0,
-                                    game_tick.0 + 1,
-                                    state_change_event,
-                                );
+                                map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                                 // Add Move Event
                                 let move_event = VisibleEvent::MoveEvent {
-                                    dst_x: next_pos.0,
-                                    dst_y: next_pos.1,
+                                    src: *villager.pos,
+                                    dst: Position {
+                                        x: next_pos.0,
+                                        y: next_pos.1,
+                                    },
                                 };
-
 
                                 let map_event = map_events.new(
                                     villager.id.0,
@@ -2180,15 +2190,15 @@ pub fn move_to_shelter_system(
                                     move_event,
                                 );
 
-                                commands
-                                    .entity(*actor)
-                                    .insert(EventInProgress { event_id: map_event.event_id });
+                                commands.entity(*actor).insert(EventInProgress {
+                                    event_id: map_event.event_id,
+                                });
 
                                 commands.entity(*actor).insert(MoveToInProgress);
                             } else {
                                 debug!("Cannot find path to food");
                                 // Reset activity
-                                villager.attrs.activity = villager::Activity::None;                             
+                                villager.attrs.activity = villager::Activity::None;
 
                                 *state = ActionState::Failure
                             }
@@ -2274,11 +2284,7 @@ pub fn sleep_action_system(
 
                     *villager.state = State::Sleeping;
 
-                    map_events.new(
-                        villager.id.0,
-                        game_tick.0 + 1,
-                        state_change_event,
-                    );
+                    map_events.new(villager.id.0, game_tick.0 + 1, state_change_event);
 
                     let map_event = map_events.new(
                         villager.id.0,
@@ -2286,9 +2292,9 @@ pub fn sleep_action_system(
                         sleep_event,
                     );
 
-                    commands
-                        .entity(*actor)
-                        .insert(EventInProgress { event_id: map_event.event_id });
+                    commands.entity(*actor).insert(EventInProgress {
+                        event_id: map_event.event_id,
+                    });
 
                     *state = ActionState::Executing;
                 }
@@ -2382,7 +2388,10 @@ fn find_item_location_by_class(
 
             // Check if the structure has any water items
             let Some(item) = items.get_by_class(structure.id.0, item_class.clone()) else {
-                debug!("Structure does not have any items of class {:?}", item_class);
+                debug!(
+                    "Structure does not have any items of class {:?}",
+                    item_class
+                );
                 continue;
             };
 
@@ -2451,10 +2460,10 @@ fn find_shelter(
             *structure.pos,
             &map,
             Vec::new(),
-                                                        true,
-                                            false,
-                                            false,
-                                            false,
+            true,
+            false,
+            false,
+            false,
         ) else {
             debug!("No path found to structure...");
             continue;
@@ -2474,10 +2483,7 @@ fn find_shelter(
     return (nearest_structure_pos, nearest_path);
 }
 
-fn remove_components(
-    mut commands: &mut Commands,
-    entity: &Entity
-) {
+fn remove_components(mut commands: &mut Commands, entity: &Entity) {
     commands.entity(*entity).remove::<MoveToDrink>();
     commands.entity(*entity).remove::<MoveToFood>();
     commands.entity(*entity).remove::<MoveToShelter>();

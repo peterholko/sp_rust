@@ -22,15 +22,17 @@ pub enum VisibleEvent {
         value: String,
     },
     UpdateObjPosEvent {
-        pos: Position,
+        src: Position,
+        dst: Position,
     },
     StateChangeEvent {
         new_state: String,
     },
     MoveEvent {
-        dst_x: i32,
-        dst_y: i32,
+        src: Position,
+        dst: Position,
     },
+    HideEvent,
     EmbarkEvent {
         transport_id: i32,
     },
@@ -194,6 +196,7 @@ pub enum GameEventType {
     },
     NecroEvent {
         pos: Position,
+        home: Position
     },
     RemoveEntity {
         entity: Entity,

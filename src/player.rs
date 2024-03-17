@@ -1,9 +1,15 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
 use big_brain::prelude::*;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::fs;
 
 use std::collections::HashMap;
 
+use crate::components::npc::{
+    Destination, Idle, MerchantScorer, MoveToPos, SailToPort, SetDestination, Transport,
+};
 use crate::components::villager::{
     Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, Exhausted, FindDrink,
     FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee,
@@ -47,6 +53,8 @@ pub struct PlayerEvents(pub HashMap<i32, PlayerEvent>);
 pub enum PlayerEvent {
     NewPlayer {
         player_id: i32,
+        account_name: String,
+        class_name: String,
     },
     Login {
         player_id: i32,
@@ -329,6 +337,36 @@ struct VillagerQuery {
     misc: &'static Misc,
     attrs: &'static mut VillagerAttrs,
 }
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
+pub struct StartLocation {
+    name: String,
+    hero_pos: Vec<i32>,
+    villager_pos: Vec<i32>,
+    monolith_pos: Vec<i32>,
+    shipwreck_pos: Vec<i32>,
+    corpse1_pos: Vec<i32>,
+    corpse2_pos: Vec<i32>,
+    necromancer_pos: Vec<i32>,
+    mausoleum_pos: Vec<i32>,
+    merchant_pos: Vec<i32>,
+}
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct StartLocations(Vec<StartLocation>);
+
+impl StartLocations {
+    pub fn get_start_location(&mut self) -> StartLocation {
+        // Randomly select a start location
+        let mut rng = rand::thread_rng();
+
+        let start_location_index = rng.gen_range(0..self.0.len());
+
+        // Get the start location and remove it from the list
+        let start_location = self.0.remove(start_location_index);
+
+        start_location
+    }
+}
 
 pub struct PlayerPlugin;
 
@@ -337,6 +375,10 @@ impl Plugin for PlayerPlugin {
         // Initialize events
         let player_events: PlayerEvents = PlayerEvents(HashMap::new());
         let active_infos: ActiveInfos = ActiveInfos(HashMap::new());
+
+        let start_file = fs::File::open("start.yaml").expect("Could not open file.");
+        let start_locations =
+            StartLocations(serde_yaml::from_reader(start_file).expect("Could not read values."));
 
         app.add_systems(
             Update,
@@ -391,7 +433,8 @@ impl Plugin for PlayerPlugin {
             ),
         )
         .insert_resource(player_events)
-        .insert_resource(active_infos);
+        .insert_resource(active_infos)
+        .insert_resource(start_locations);
     }
 }
 
@@ -414,6 +457,7 @@ fn new_player_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
+    mut start_locations: ResMut<StartLocations>,
     mut map_events: ResMut<MapEvents>,
     mut game_events: ResMut<GameEvents>,
     mut items: ResMut<Items>,
@@ -426,12 +470,19 @@ fn new_player_system(
 
     for (event_id, event) in events.iter() {
         match event {
-            PlayerEvent::NewPlayer { player_id } => {
+            PlayerEvent::NewPlayer {
+                player_id,
+                account_name,
+                class_name,
+            } => {
                 events_to_remove.push(*event_id);
 
                 new_player(
                     *player_id,
+                    account_name.to_string(),
+                    class_name.to_string(),
                     &mut commands,
+                    &mut start_locations,
                     &mut ids,
                     &mut map_events,
                     &mut game_events,
@@ -588,8 +639,8 @@ fn move_system(
 
                 // Add Move Event
                 let move_event = VisibleEvent::MoveEvent {
-                    dst_x: *x,
-                    dst_y: *y,
+                    src: hero.pos.clone(),
+                    dst: Position { x: *x, y: *y },
                 };
 
                 map_events.new(
@@ -2326,8 +2377,7 @@ fn item_transfer_system(
 
                 let mut target_filter = Vec::new();
 
-                if *target.subclass.0 == obj::SUBCLASS_MERCHANT.to_string()
-                {
+                if *target.subclass.0 == obj::SUBCLASS_MERCHANT.to_string() {
                     target_filter.push(item::GOLD.to_string());
                 }
 
@@ -2495,7 +2545,7 @@ fn info_hire_system(
     clients: Res<Clients>,
     ids: ResMut<Ids>,
     skills: Res<Skills>,
-    merchant_query: Query<&Merchant>,
+    merchant_query: Query<&Transport, With<Merchant>>,
     query: Query<CoreQuery>,
     attrs_query: Query<&BaseAttrs>,
 ) {
@@ -4148,7 +4198,7 @@ fn hire_system(
     items: Res<Items>,
     mut map_events: ResMut<MapEvents>,
     mut pos_query: Query<&mut Position>,
-    merchant_query: Query<&Merchant>,
+    merchant_query: Query<&Transport, With<Merchant>>,
     mut player_query: Query<&mut PlayerId>,
 ) {
     let mut events_to_remove: Vec<i32> = Vec::new();
@@ -4605,7 +4655,10 @@ pub fn send_info_experiment(
 
 fn new_player(
     player_id: i32,
+    account_name: String,
+    class_name: String,
     commands: &mut Commands,
+    start_locations: &mut ResMut<StartLocations>,
     ids: &mut ResMut<Ids>,
     map_events: &mut ResMut<MapEvents>,
     game_events: &mut ResMut<GameEvents>,
@@ -4616,13 +4669,14 @@ fn new_player(
     templates: &Res<Templates>,
     game_tick: &Res<GameTick>,
 ) {
-    let start_x = 16;
-    let start_y = 36;
+    // Select a start location and remove it from the list
+    let start_location = start_locations.get_start_location();
+
     let range = 4;
 
     // Creating hero
     debug!("Creating hero for player: {:?}", player_id);
-    let hero_template_name = "Novice Warrior".to_string();
+    let hero_template_name = "Novice".to_string() + " " + class_name.as_str();
     let hero_template = ObjTemplate::get_template(hero_template_name.clone(), templates);
 
     let hero_id = ids.new_obj_id();
@@ -4631,10 +4685,10 @@ fn new_player(
         id: Id(hero_id),
         player_id: PlayerId(player_id),
         position: Position {
-            x: start_x,
-            y: start_y,
+            x: start_location.hero_pos[0],
+            y: start_location.hero_pos[1],
         },
-        name: Name("Peter".into()),
+        name: Name(account_name.clone()),
         template: Template(hero_template_name),
         class: Class("unit".into()),
         subclass: Subclass("hero".into()),
@@ -4943,7 +4997,10 @@ fn new_player(
     Obj::create(
         player_id,
         "Monolith".to_string(),
-        Position { x: 16, y: 36 },
+        Position {
+            x: start_location.monolith_pos[0],
+            y: start_location.monolith_pos[1],
+        },
         State::None,
         commands,
         ids,
@@ -4952,7 +5009,7 @@ fn new_player(
         &templates,
     );
 
-    let structure_name = "Burrow".to_string();
+    /*let structure_name = "Burrow".to_string();
     let structure_template = ObjTemplate::get_template(structure_name.clone(), templates);
 
     let structure: Obj = Obj {
@@ -5012,91 +5069,77 @@ fn new_player(
     let mut item_attrs = HashMap::new();
     item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(70.0));
 
-    items.new_with_attrs(structure_id, "Amitanian Grape".to_string(), 50, item_attrs);
+    items.new_with_attrs(structure_id, "Amitanian Grape".to_string(), 50, item_attrs);*/
 
     // Villager obj
-    let merchant_id = ids.new_obj_id();
     let villager_id2 = ids.new_obj_id();
     let merchant_player_id = 2000;
 
-    /* let merchant_template = ObjTemplate::get_template("Meager Merchant".to_string(), templates);
-
-
-
-    items.new(merchant_id, "Gold Coins".to_string(), 500);
-
-    let merchant = Obj {
-        id: Id(merchant_id),
-        player_id: PlayerId(merchant_player_id),
-        position: Position { x: 15, y: 37 },
-        name: Name("Meager Merchant".to_string()),
-        template: Template(merchant_template.template.to_string()),
-        class: Class(merchant_template.class.to_string()),
-        subclass: Subclass(merchant_template.subclass.to_string()),
-        state: State::None,
-        viewshed: Viewshed { range: 2 },
-        misc: Misc {
-            image: "meagermerchant".to_string(),
-            hsl: Vec::new(),
-            groups: Vec::new(),
-        },
-        stats: Stats {
-            hp: merchant_template.base_hp.unwrap(),
-            base_hp: merchant_template.base_hp.unwrap(),
-            base_def: merchant_template.base_def.unwrap(),
-            base_damage: merchant_template.base_dmg,
-            damage_range: merchant_template.dmg_range,
-            base_speed: merchant_template.base_speed,
-            base_vision: merchant_template.base_vision,
-        },
-        effects: Effects(HashMap::new())
+    let empire_pos = Position { x: 1, y: 37 };
+    let landing_pos = Position {
+        x: start_location.merchant_pos[0],
+        y: start_location.merchant_pos[1],
     };
 
+    let merchant = Obj::create_nospawn(
+        ids,
+        merchant_player_id,
+        "Meager Merchant".to_string(),
+        empire_pos,
+        State::None,
+        templates,
+    );
+
+    let merchant_id = merchant.id.0;
+
     // Merchant Items
+    items.new(merchant_id, "Gold Coins".to_string(), 500);
     items.new(merchant_id, "Yurt Deed".to_string(), 1);
 
+    let route = vec![empire_pos, landing_pos];
 
+    let move_to_and_idle = Steps::build()
+        .label("MoveToPos and Idle")
+        // Set destination will set the move to pos
+        .step(SetDestination)
+        .step(MoveToPos)
+        .step(Idle {
+            start_time: 0,
+            duration: 500,
+        });
 
     let merchant_entity_id = commands
         .spawn((
             merchant,
-            Merchant {
-                home_port: Position { x: 1, y: 37 },
-                target_port: Position { x: 15, y: 37 },
-                dest: Position { x: 15, y: 37 },
-                in_port_at: game_tick.0,
+            Merchant,
+            Transport {
+                route: route,
+                next_stop: 0,
                 hauling: vec![villager_id2],
+            },
+            Destination {
+                // Set destination will set the move to pos
+                pos: Position { x: -1, y: -1 },
             },
             Thinker::build()
                 .label("Merchant")
                 .picker(Highest)
-                .when(MerchantScorer, SailToPort),
+                .when(MerchantScorer, move_to_and_idle),
         ))
         .id();
 
-    ids.new_entity_obj_mapping(merchant_id, merchant_entity_id);
+    ids.new_obj(merchant_id, merchant_player_id, merchant_entity_id);
 
-    // Insert new obj event
-    let new_obj_event = VisibleEvent::NewObjEvent { new_player: false };
-    let map_event_id = ids.new_map_event_id();
+    map_events.new(
+        merchant_id,
+        game_tick.0 + 1,
+        VisibleEvent::NewObjEvent { new_player: false },
+    );
 
-    let map_state_event = MapEvent {
-        event_id: map_event_id,
-        entity_id: merchant_entity_id,
-        obj_id: merchant_id,
-        player_id: merchant_player_id,
-        pos_x: 14,
-        pos_y: 37,
-        run_tick: game_tick.0 + 1, // Add one game tick
-        map_event_type: new_obj_event,
-    };
-
-    map_events.insert(map_event_id, map_state_event); */
-
-    /*let villager2 = Obj {
+    let villager2 = Obj {
         id: Id(villager_id2),
         player_id: PlayerId(merchant_player_id),
-        position: Position { x: -50, y: -50 },
+        position: empire_pos,
         name: Name("Villager 2".into()),
         template: Template("Human Villager".into()),
         class: Class("unit".into()),
@@ -5138,13 +5181,16 @@ fn new_player(
         .spawn((villager2, SubclassVillager, base_attrs2, villager_attrs2))
         .id();
 
-    ids.new_entity_obj_mapping(villager_id2, villager_entity_id2);*/
+    ids.new_obj(villager_id2, player_id, villager_entity_id2);
 
     // Create human corpse 1
     Obj::create(
         999,
         "Human Corpse".to_string(),
-        Position { x: 16, y: 34 },
+        Position {
+            x: start_location.corpse1_pos[0],
+            y: start_location.corpse1_pos[1],
+        },
         State::Dead,
         commands,
         ids,
@@ -5157,7 +5203,10 @@ fn new_player(
     Obj::create(
         999,
         "Human Corpse".to_string(),
-        Position { x: 15, y: 34 },
+        Position {
+            x: start_location.corpse2_pos[0],
+            y: start_location.corpse2_pos[1],
+        },
         State::Dead,
         commands,
         ids,
@@ -5166,8 +5215,15 @@ fn new_player(
         &templates,
     );
 
-    /*let event_type = GameEventType::NecroEvent {
-        pos: Position{x: 17, y: 34},
+    let event_type = GameEventType::NecroEvent {
+        pos: Position {
+            x: start_location.necromancer_pos[0],
+            y: start_location.necromancer_pos[1],
+        },
+        home: Position {
+            x: start_location.mausoleum_pos[0],
+            y: start_location.mausoleum_pos[1],
+        }
     };
     let event_id = ids.new_map_event_id();
 
@@ -5177,11 +5233,12 @@ fn new_player(
         game_event_type: event_type,
     };
 
-    game_events.insert(event.event_id, event); */
+    game_events.insert(event.event_id, event);
 
     Encounter::spawn_tax_collector(
-        1000,
-        Position { x: 1, y: 37 },
+        2000,
+        landing_pos,
+        empire_pos,
         player_id,
         commands,
         ids,

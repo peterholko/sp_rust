@@ -38,7 +38,7 @@ impl Plugin for AIPlugin {
                     npc::raise_dead_system.in_set(BigBrainSet::Actions),
                     villager::flee_system.in_set(BigBrainSet::Actions),
                     npc::flee_system.in_set(BigBrainSet::Actions),
-                    npc::merchant_move_system.in_set(BigBrainSet::Actions),
+                    npc::hide_action_system.in_set(BigBrainSet::Actions),
                 ),
             )
             .add_systems(
@@ -49,6 +49,8 @@ impl Plugin for AIPlugin {
                     tax_collector::move_to_pos_action_system.in_set(BigBrainSet::Actions),
                     tax_collector::move_to_empire_action_system.in_set(BigBrainSet::Actions),
                     tax_collector::forfeiture_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::set_destination_action_system.in_set(BigBrainSet::Actions),
+                    tax_collector::talk_action_system.in_set(BigBrainSet::Actions),
                 ),
             )
             .add_systems(
@@ -81,11 +83,7 @@ impl Plugin for AIPlugin {
                 (
                     tax_collector::is_aboard_scorer_system.in_set(BigBrainSet::Scorers),
                     tax_collector::at_landing_scorer_system.in_set(BigBrainSet::Scorers),
-                    tax_collector::is_target_adjacent_scorer_system.in_set(BigBrainSet::Scorers),
                     tax_collector::is_tax_collected_scorer_system.in_set(BigBrainSet::Scorers),
-                    tax_collector::at_destination_scorer_system.in_set(BigBrainSet::Scorers),
-                    tax_collector::is_passenger_aboard_scorer_system.in_set(BigBrainSet::Scorers),
-                    tax_collector::is_waiting_for_passenger_scorer_system.in_set(BigBrainSet::Scorers),
                     tax_collector::no_taxes_to_collect_scorer_system.in_set(BigBrainSet::Scorers),
                     tax_collector::taxes_to_collect_scorer_system.in_set(BigBrainSet::Scorers),
                     tax_collector::overdue_tax_scorer_system.in_set(BigBrainSet::Scorers),

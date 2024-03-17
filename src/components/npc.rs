@@ -22,10 +22,14 @@ impl VisibleTarget {
 
 // Necromancer
 #[derive(Debug, Clone, Component, ActionBuilder)]
-pub struct ChaseAndCast;
+pub struct ChaseAndCast {
+    pub start_time: i32,
+}
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
-pub struct RaiseDead;
+pub struct RaiseDead {
+    pub start_time: i32,
+}
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct FleeToHome;
@@ -49,14 +53,14 @@ impl VisibleCorpse {
     }
 }
 
+#[derive(Debug, Clone, Component, ActionBuilder)]
+pub struct Hide;
+
 #[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct MerchantScorer;
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct SailToPort;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct TaxCollectorShipScorer;
 
 #[derive(Debug, Reflect, Component, Default)]
 #[reflect(Component)]
@@ -65,21 +69,6 @@ pub struct Transport {
     pub next_stop: i32,
     pub hauling: Vec<i32>,
 }
-
-#[derive(Debug, Reflect, Component, Default)]
-#[reflect(Component)]
-pub struct WaitForPassenger {
-    pub id: i32,
-}
-
-#[derive(Debug, Reflect, Component, Default)]
-#[reflect(Component)]
-pub struct PassengerOn {
-    pub id: i32,
-}
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct TaxCollectorScorer;
 
 #[derive(Debug, Reflect, Component, Default)]
 #[reflect(Component)]
@@ -100,25 +89,7 @@ pub struct IsAboard;
 pub struct IsTaxCollected;
 
 #[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct InEmpire;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct AtLanding;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct AtDestinationScorer;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct IsPassengerAboard;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct IsWaitingForPassenger;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct ReadyToSailScorer;
-
-#[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct IsTargetAdjacent;
 
 #[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct OverdueTaxScorer;
@@ -129,11 +100,27 @@ pub struct NoTaxesToCollect;
 #[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct TaxesToCollect;
 
-#[derive(Debug, Clone, Component, ActionBuilder)]
-pub struct Idle;
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct SetDestination;
+
+#[derive(Debug, Clone, Component, ActionBuilder)]
+pub struct Idle {
+    pub start_time: i32,
+    pub duration: i32,
+}
+
+#[derive(Debug, Clone, Component, ActionBuilder)]
+pub struct Talk {
+    pub speech: String,
+}
+
+
+#[derive(Debug, Reflect, Component, Default)]
+#[reflect(Component)]
+pub struct Destination {
+    pub pos: Position
+}
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToTarget {
@@ -141,9 +128,7 @@ pub struct MoveToTarget {
 }
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
-pub struct MoveToPos {
-    pub pos: Position,
-}
+pub struct MoveToPos;
 
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct MoveToEmpire;

@@ -921,8 +921,6 @@ impl Items {
 
     // TODO reconsider returning the cloned item...
     pub fn find_by_id(&self, item_id: i32) -> Option<Item> {
-        info!("Find by id {:?}", item_id);
-        info!("Items: {:#?}", self.items);
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
             return Some(self.items[index].clone());
         }

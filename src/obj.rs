@@ -50,6 +50,7 @@ pub const STATE_EXPLORING: &str = "exploring";
 pub const STATE_DRINKING: &str = "drinking";
 pub const STATE_EATING: &str = "eating";
 pub const STATE_SLEEPING: &str = "sleeping";
+pub const STATE_HIDING: &str = "hiding";
 
 // Attributes
 pub const CREATIVITY: &str = "Creativity";
@@ -232,6 +233,7 @@ impl Obj {
             STATE_EATING => State::Eating,
             STATE_SLEEPING => State::Sleeping,
             STATE_CASTING => State::Casting,
+            STATE_HIDING => State::Hiding,
             _ => State::None,
         }
     }
@@ -254,6 +256,7 @@ impl Obj {
             State::Eating => STATE_EATING,
             State::Sleeping => STATE_SLEEPING,
             State::Casting => STATE_CASTING,
+            State::Hiding => STATE_HIDING,
             _ => STATE_NONE,
         };
 
@@ -355,11 +358,20 @@ impl Obj {
         return attrs;
     }
 
+    pub fn is_visible(state: State) -> bool {
+        match state {
+            //State::Aboard => false,
+            State::Hiding => false,
+            _ => true
+        }
+    }
+
     pub fn is_blocking_state(state: State) -> bool {
         match state {
             State::Dead => false,
             State::Founded => false,
             State::Progressing => false,
+            State::Hiding => false,
             _ => true,
         }
     }
