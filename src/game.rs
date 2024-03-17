@@ -722,7 +722,7 @@ fn move_event_system(
                     if mover.player_id.0 < 1000 {
                         let mut rng = rand::thread_rng();
 
-                        let spawn_chance = 0.001;
+                        let spawn_chance = 0.20;
                         let random_num = rng.gen::<f32>();
                         debug!("random_num: {:?}", random_num);
 
