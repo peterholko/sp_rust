@@ -8,7 +8,9 @@ use big_brain::prelude::{Highest, Thinker};
 use rand::{random, Rng};
 
 use crate::components::npc::{
-    AtLanding, Destination, Forfeiture, Hide, Idle, IsAboard, IsTaxCollected, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, Talk, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport, VisibleTarget
+    AtLanding, Destination, Forfeiture, Hide, Idle, IsAboard, IsTaxCollected, MoveToEmpire,
+    MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, Talk, TaxCollector,
+    TaxCollectorTransport, TaxesToCollect, Transport, VisibleTarget,
 };
 use crate::components::npc::{
     ChaseAndAttack, ChaseAndCast, FleeScorer, FleeToHome, RaiseDead, VisibleCorpse,
@@ -142,10 +144,13 @@ impl Encounter {
         );
 
         let flee_and_hide = Steps::build()
-        .label("Flee and Hide")
-        .step(FleeToHome)
-        .step(Hide)
-        .step(Idle { start_time: 0, duration: MAX });
+            .label("Flee and Hide")
+            .step(FleeToHome)
+            .step(Hide)
+            .step(Idle {
+                start_time: 0,
+                duration: MAX,
+            });
 
         // Spawn Necromancer
         let necro_entity = commands
@@ -153,9 +158,7 @@ impl Encounter {
                 necro_obj.clone(),
                 SubclassNPC,
                 Minions { ids: Vec::new() },
-                Home {
-                    pos: home_pos
-                },
+                Home { pos: home_pos },
                 VisibleTarget::new(NO_TARGET),
                 VisibleCorpse::new(NO_TARGET),
                 Thinker::build()
@@ -270,7 +273,9 @@ impl Encounter {
 
         let move_to_ship_and_idle = Steps::build()
             .label("MoveToTarget and Idle")
-            .step(Talk { speech: "The poor rabble actually paid, shocking!".to_string()})
+            .step(Talk {
+                speech: "The poor rabble actually paid, shocking!".to_string(),
+            })
             .step(MoveToTarget {
                 target: tax_collector_ship_obj.id.0,
             })

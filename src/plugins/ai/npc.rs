@@ -27,6 +27,7 @@ use crate::map::Map;
 use crate::map::MapPos;
 use crate::obj;
 use crate::obj::Obj;
+use crate::obj::ObjStatQuery;
 use crate::templates::Templates;
 
 pub const INIT_TARGET: i32 = -2;
@@ -91,13 +92,13 @@ pub fn attack_target_system(
     mut map_events: ResMut<MapEvents>,
     mut items: ResMut<Items>,
     templates: Res<Templates>,
-    visible_target_query: Query<&VisibleTarget, Without<EventInProgress>>,
+    visible_target_query: Query<(&PlayerId, &VisibleTarget), Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
     mut target_query: Query<CombatQuery, Without<SubclassNPC>>,
     mut query: Query<(&Actor, &mut ActionState, &ChaseAndAttack)>,
 ) {
     for (Actor(actor), mut state, chase_attack) in &mut query {
-        let Ok(visible_target) = visible_target_query.get(*actor) else {
+        let Ok((npc_player_id, visible_target)) = visible_target_query.get(*actor) else {
             continue;
         };
 
@@ -108,6 +109,8 @@ pub fn attack_target_system(
             ActionState::Executing => {
                 debug!("Attacking executing...");
                 let target_id = visible_target.target;
+
+                let blockinglist = Obj::blocking_list_combatquery(npc_player_id.0, &npc_query);
 
                 let Ok(mut npc) = npc_query.get_mut(*actor) else {
                     error!("Query failed to find entity {:?}", *actor);
@@ -141,7 +144,7 @@ pub fn attack_target_system(
                         npc.pos.x,
                         npc.pos.y,
                         &map,
-                        &Vec::new(),
+                        &blockinglist,
                         true,
                         false,
                         false,
@@ -247,13 +250,15 @@ pub fn attack_target_system(
                         commands.entity(*actor).insert(EventInProgress {
                             event_id: cooldown_map_event.event_id,
                         });
+
+                        *state = ActionState::Success;
                     } else {
                         if *npc.state == State::None {
                             if let Some(path_result) = Map::find_path(
                                 *npc.pos,
                                 *target.pos,
                                 &map,
-                                Vec::new(),
+                                blockinglist,
                                 true,
                                 false,
                                 false,
@@ -294,10 +299,11 @@ pub fn attack_target_system(
                                     event_id: move_map_event.event_id,
                                 });
                             }
+                        } else {
+                            error!("Failed to find path to target");
+                            *state = ActionState::Failure;
                         }
                     }
-
-                    *state = ActionState::Success;
                 }
             }
             // All Actions should make sure to handle cancellations!
@@ -397,13 +403,13 @@ pub fn cast_target_system(
     mut map_events: ResMut<MapEvents>,
     mut items: ResMut<Items>,
     templates: Res<Templates>,
-    visible_target_query: Query<&VisibleTarget, Without<EventInProgress>>,
+    visible_target_query: Query<(&PlayerId, &VisibleTarget), Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
     mut target_query: Query<CombatQuery, Without<SubclassNPC>>,
     mut query: Query<(&Actor, &mut ActionState, &mut ChaseAndCast)>,
 ) {
     for (Actor(actor), mut state, mut chase_and_cast) in &mut query {
-        let Ok(visible_target) = visible_target_query.get(*actor) else {
+        let Ok((npc_player_id, visible_target)) = visible_target_query.get(*actor) else {
             continue;
         };
 
@@ -413,6 +419,8 @@ pub fn cast_target_system(
             }
             ActionState::Executing => {
                 let target_id = visible_target.target;
+
+                let blockinglist = Obj::blocking_list_combatquery(npc_player_id.0, &npc_query);
 
                 let Ok(mut npc) = npc_query.get_mut(*actor) else {
                     continue;
@@ -496,7 +504,7 @@ pub fn cast_target_system(
                                 *npc.pos,
                                 *target.pos,
                                 &map,
-                                Vec::new(),
+                                blockinglist,
                                 true,
                                 false,
                                 false,
@@ -543,15 +551,13 @@ pub fn cast_target_system(
                             npc.pos.x,
                             npc.pos.y,
                             &map,
-                            &Vec::new(),
+                            &blockinglist,
                             true,
                             false,
                             false,
                             false,
                             MapPos(npc.pos.x, npc.pos.y),
                         );
-
-                        println!("neighbour tiles: {:?}", neighbour_tiles);
 
                         let mut selected_pos_list = Vec::new();
 
@@ -659,13 +665,13 @@ pub fn raise_dead_system(
     mut ids: ResMut<Ids>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
-    visible_corpse_query: Query<&VisibleCorpse>,
-    obj_query: Query<(&Id, &PlayerId, &Position), Without<EventInProgress>>,
+    visible_corpse_query: Query<(&PlayerId, &VisibleCorpse), Without<EventInProgress>>,
+    obj_query: Query<(&Id, &PlayerId, &Position)>,
     mut state_query: Query<&mut State>,
     mut query: Query<(&Actor, &mut ActionState, &mut RaiseDead)>,
 ) {
     for (Actor(actor), mut state, mut raise_dead) in &mut query {
-        let Ok(visible_corpse) = visible_corpse_query.get(*actor) else {
+        let Ok((npc_player_id, visible_corpse)) = visible_corpse_query.get(*actor) else {
             continue;
         };
 
@@ -675,6 +681,10 @@ pub fn raise_dead_system(
             }
             ActionState::Executing => {
                 let corpse_id = visible_corpse.corpse;
+
+                // Get blocking item list
+                let blockinglist =
+                    Obj::blocking_list(npc_player_id.0, actor, &obj_query, &state_query);
 
                 // Get target entity
                 let Some(corpse_entity) = ids.get_entity(corpse_id) else {
@@ -740,7 +750,7 @@ pub fn raise_dead_system(
                             *npc_pos,
                             *corpse_pos,
                             &map,
-                            Vec::new(),
+                            blockinglist,
                             true,
                             false,
                             false,
@@ -799,14 +809,18 @@ pub fn flee_system(
     game_tick: Res<GameTick>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
-    mut obj_query: Query<ObjQuery, Without<EventInProgress>>,
-    home_query: Query<&Home>,
-    //mut merchant_query: Query<(ObjQuery, &mut Merchant), (With<Merchant>, Without<EventInProgress>)>,
+    flee_query: Query<(&PlayerId, &Home), Without<EventInProgress>>,
+    mut obj_query: Query<ObjStatQuery>,
     mut query: Query<(&Actor, &mut ActionState, &FleeToHome)>,
 ) {
     for (Actor(actor), mut state, _flee_to_home) in &mut query {
         match *state {
             ActionState::Requested => {
+                // This skip the action if the entity has the EventInProgress component
+                let Ok((_player_id, _home)) = flee_query.get(*actor) else {
+                    continue;
+                };
+
                 let Ok(obj) = obj_query.get(*actor) else {
                     continue;
                 };
@@ -821,13 +835,13 @@ pub fn flee_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                let Ok(mut obj) = obj_query.get_mut(*actor) else {
-                    //debug!("Obj query failed to find actor: {:?}", actor);
+                let Ok((player_id, home)) = flee_query.get(*actor) else {
                     continue;
                 };
 
-                let Ok(home) = home_query.get(*actor) else {
-                    //debug!("Merchant query failed to find actor: {:?}", actor);
+                let blocking_list = Obj::blocking_list_objstatquery(player_id.0, &mut obj_query);
+
+                let Ok(mut obj) = obj_query.get_mut(*actor) else {
                     continue;
                 };
 
@@ -841,7 +855,7 @@ pub fn flee_system(
                         *obj.pos,
                         home.pos,
                         &map,
-                        Vec::new(),
+                        blocking_list,
                         true,
                         false,
                         false,
@@ -911,7 +925,6 @@ pub fn hide_action_system(
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-
                 // Get Id from actor
                 let Ok(obj_id) = obj_query.get(*actor) else {
                     continue;
@@ -943,4 +956,3 @@ pub fn merchant_scorer_system(
         score.set(1.0);
     }
 }
-

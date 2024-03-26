@@ -4,7 +4,9 @@ use rand::Rng;
 
 use crate::combat::CombatQuery;
 use crate::components::npc::{
-    AtLanding, Destination, Forfeiture, Idle, IsAboard, IsTaxCollected, MoveToEmpire, MoveToPos, MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, SetDestination, Talk, TaxCollector, TaxCollectorTransport, TaxesToCollect, Transport
+    AtLanding, Destination, Forfeiture, Idle, IsAboard, IsTaxCollected, MoveToEmpire, MoveToPos,
+    MoveToTarget, NoTaxesToCollect, OverdueTaxScorer, SetDestination, Talk, TaxCollector,
+    TaxCollectorTransport, TaxesToCollect, Transport,
 };
 use crate::effect::Effect;
 use crate::event::{MapEvents, VisibleEvent};
@@ -163,7 +165,7 @@ pub fn overdue_tax_scorer_system(
 ) {
     for (Actor(actor), mut score, span) in &mut query {
         if let Ok((id, collector)) = collector_query.get(*actor) {
-            if collector.last_collection_time + 2000 < game_tick.0 {
+            if collector.last_collection_time + 750 < game_tick.0 {
                 if let Some(gold) = items.get_by_class(id.0, item::GOLD.to_string()) {
                     if gold.quantity < collector.collection_amount {
                         score.set(1.0);
@@ -183,13 +185,13 @@ pub fn idle_action_system(
     for (Actor(actor), mut state, mut idle, span) in &mut query {
         match *state {
             ActionState::Requested => {
-                info!("Idle action requested");
+                info!("Idle action requested by {:?}", actor);
                 idle.start_time = game_tick.0;
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
                 if game_tick.0 - idle.start_time > idle.duration {
-                    info!("Idle action completed");
+                    info!("Idle action completed for {:?}", actor);
                     *state = ActionState::Success;
                 }
             }
@@ -215,6 +217,7 @@ pub fn move_to_target_action_system(
     for (Actor(actor), mut state, move_to_target) in &mut query {
         match *state {
             ActionState::Requested => {
+                info!("MoveToTarget action requested");
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
@@ -231,7 +234,8 @@ pub fn move_to_target_action_system(
                 };
 
                 // Have to get the list of collision positions before querying the npc and target
-                let collision_list = Obj::get_collision_list(tax_collector_player_id.0, &obj_query);
+                let collision_list =
+                    Obj::blocking_list_objstatquery(tax_collector_player_id.0, &obj_query);
 
                 let entities = [*actor, target_entity];
 
@@ -282,6 +286,7 @@ pub fn move_to_target_action_system(
                         }
                     }
 
+                    info!("MoveToTarget action success");
                     *state = ActionState::Success;
                 } else {
                     info!("Moving to target... {:?}", collision_list);
@@ -331,6 +336,11 @@ pub fn move_to_target_action_system(
                             info!("No path found");
                             *state = ActionState::Failure;
                         }
+                    } else {
+                        info!(
+                            "Tax collector can only move in None or Aboard stay, {:?}",
+                            *npc.state
+                        );
                     }
                 }
             }
@@ -394,6 +404,7 @@ pub fn move_to_pos_action_system(
     for (Actor(actor), mut state, move_to_pos) in &mut query {
         match *state {
             ActionState::Requested => {
+                info!("MoveToPos action requested");
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
@@ -429,6 +440,7 @@ pub fn move_to_pos_action_system(
 
                 if *npc.pos == dest.pos {
                     // Arrived at position
+                    info!("MoveToPos action success");
                     *state = ActionState::Success;
                 } else {
                     if *npc.state == State::None {
@@ -474,6 +486,7 @@ pub fn move_to_pos_action_system(
                                 event_id: move_map_event.event_id,
                             });
                         } else {
+                            error!("Tax Collector cannot find any available path");
                             *state = ActionState::Failure;
                         }
                     }
@@ -692,7 +705,7 @@ pub fn talk_action_system(
 
                 map_events.new(id.0, game_tick.0 + 4, sound_event);
 
-                *state = ActionState::Success;                
+                *state = ActionState::Success;
             }
             ActionState::Cancelled => {
                 *state = ActionState::Failure;

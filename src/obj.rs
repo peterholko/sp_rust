@@ -5,11 +5,12 @@ use std::collections::HashMap;
 
 use rand::{random, Rng};
 
+use crate::combat::CombatQuery;
 use crate::effect::Effects;
 use crate::event::{MapEvent, MapEvents, VisibleEvent};
 use crate::game::{
-    self, BaseAttrs, Class, GameTick, Id, Misc, Name, ObjQueryMut, PlayerId, Position, State,
-    Stats, Subclass, Template, Viewshed,
+    self, BaseAttrs, Class, EventInProgress, GameTick, Id, Misc, Name, ObjQueryMut, PlayerId,
+    Position, State, Stats, Subclass, SubclassNPC, Template, Viewshed,
 };
 use crate::ids::Ids;
 use crate::item::{Item, Items};
@@ -317,12 +318,47 @@ impl Obj {
         return (is_dst_open, colliding_objs, all_map_objs);
     }
 
-    pub fn get_collision_list(player_id: i32, query: &Query<ObjStatQuery>) -> Vec<MapPos> {
+    // Revisit consolidation of these functions based on different world queries
+    pub fn blocking_list_objstatquery(player_id: i32, query: &Query<ObjStatQuery>) -> Vec<MapPos> {
         let mut collision_list: Vec<MapPos> = Vec::new();
 
         for obj in query.iter() {
             if player_id != obj.player_id.0 && Obj::is_blocking_state(obj.state.clone()) {
                 collision_list.push(MapPos(obj.pos.x, obj.pos.y)); //TODO change to Position one day
+            }
+        }
+
+        return collision_list;
+    }
+
+    pub fn blocking_list_combatquery(
+        player_id: i32,
+        query: &Query<CombatQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
+    ) -> Vec<MapPos> {
+        let mut collision_list: Vec<MapPos> = Vec::new();
+
+        for obj in query.iter() {
+            if player_id != obj.player_id.0 && Obj::is_blocking_state(obj.state.clone()) {
+                collision_list.push(MapPos(obj.pos.x, obj.pos.y)); //TODO change to Position one day
+            }
+        }
+
+        return collision_list;
+    }
+
+    pub fn blocking_list(
+        player_id: i32,
+        entity: &Entity,
+        query: &Query<(&Id, &PlayerId, &Position)>,
+        state_query: &Query<&mut State>,
+    ) -> Vec<MapPos> {
+        let mut collision_list: Vec<MapPos> = Vec::new();
+
+        for (_obj_id, obj_player_id, obj_pos) in query.iter() {
+            if let Ok(state) = state_query.get(*entity) {
+                if player_id != obj_player_id.0 && Obj::is_blocking_state(state.clone()) {
+                    collision_list.push(MapPos(obj_pos.x, obj_pos.y)); //TODO change to Position one day
+                }
             }
         }
 
@@ -362,7 +398,7 @@ impl Obj {
         match state {
             //State::Aboard => false,
             State::Hiding => false,
-            _ => true
+            _ => true,
         }
     }
 

@@ -578,6 +578,7 @@ fn move_event_system(
             match &map_event.event_type {
                 VisibleEvent::MoveEvent { src, dst } => {
                     info!("Processing MoveEvent: {:?}", map_event);
+                    events_to_remove.push(*map_event_id);
 
                     let Some(entity) = ids.get_entity(map_event.obj_id) else {
                         error!(
@@ -764,8 +765,11 @@ fn move_event_system(
                         }
 
                         // Getting new map tiles
+                        info!("Mover Viewshed Range: {:?}", mover.viewshed.range);
+
                         let viewshed_tiles_pos =
                             Map::range((mover.pos.x, mover.pos.y), mover.viewshed.range);
+                        info!("Viewshed Tiles: {:?}", viewshed_tiles_pos);
 
                         // Adding new maps to explored map
                         // Assume player has some explored map tiles
@@ -808,7 +812,6 @@ fn move_event_system(
                         }
                     }
 
-                    events_to_remove.push(*map_event_id);
                 }
                 _ => {}
             }
@@ -825,7 +828,7 @@ fn hide_event_system(
     ids: Res<Ids>,
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
-    mut query: Query<ObjQuery>,
+    mut state_query: Query<&mut State>
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -841,13 +844,14 @@ fn hide_event_system(
                         error!("Cannot find corpse from {:?}", map_event.obj_id);
                         continue;
                     };
+
                     // Set state back to none
-                    let Ok(mut obj) = query.get_mut(entity) else {
+                    let Ok(mut state) = state_query.get_mut(entity) else {
                         error!("Query failed to find entity {:?}", entity);
                         continue;
-                    };
+                    };                    
 
-                    *obj.state = State::Hiding;
+                    *state = State::Hiding;
 
                     visible_events.push(map_event.clone());
                 }

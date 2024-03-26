@@ -1,12 +1,13 @@
 use bevy::{ecs::query, prelude::*};
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fmt, fs::File};
 use tokio::task::spawn_blocking;
 
 use serde::{Deserialize, Serialize};
 
-use tiled::{parse, LayerData};
+use tiled::{Loader};
+//use tiled::{parse, LayerData};
 
 use pathfinding::prelude::astar;
 
@@ -21,8 +22,8 @@ impl Plugin for MapPlugin {
     }
 }
 
-pub const WIDTH: i32 = 60;
-pub const HEIGHT: i32 = 50;
+pub const WIDTH: i32 = 1200;
+pub const HEIGHT: i32 = 1000;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum TileType {
@@ -143,45 +144,119 @@ impl Map {
             base: Vec::with_capacity(3000),
         };
 
-        let file = File::open(&Path::new("map/test3-old.tmx")).unwrap();
-        println!("Opened file");
-        let reader = BufReader::new(file);
-        let raw_map = parse(reader).unwrap();
+        let mut loader = Loader::new();
 
-        for layer in raw_map.layers.iter() {
-            println!("layer name: {}", layer.name);
+        let map_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("map/test5.tmx");
+        let test_map = loader.load_tmx_map(map_path).unwrap();
 
+
+        /*if let Some(tileset) = test_map.tilesets().get(2) {
+            println!("Getting tileset tile");
+            let tileset_tile = tileset.get_tile(7);
+            println!("{:#?}", &tileset_tile);
+        }*/
+
+        /*for layer in test_map.layers() {
+            print!("Layer \"{}\":\n\t", layer.name);
+    
             if layer.name == "base1" {
-                if let LayerData::Finite(layer_tiles) = &layer.tiles {
-                    for row in layer_tiles.iter() {
-                        for col in row.iter() {
-                            let tile = TileInfo {
-                                tile_type: Map::gid_to_tiletype(col.gid),
-                                layers: vec![col.gid],
-                            };
-
-                            map.base.push(tile);
+                match layer.layer_type() {
+                    tiled::LayerType::Tiles(layer) => match layer {
+                        tiled::TileLayer::Finite(data) => {
+                            println!("{:#?}", data.get_tile(14, 37));
                         }
+                        _ => {}
                     }
+                    _ => {}
                 }
+            }
+        }*/
+
+        /*for tileset in test_map.tilesets() {
+            println!("{:#?}", &tileset);
+        }*/
+
+        for layer in test_map.layers() {
+    
+            if layer.name == "base1" {
+                match layer.layer_type() {
+                    tiled::LayerType::Tiles(layer) => match layer {
+                        tiled::TileLayer::Finite(data) => {
+
+                                for y in 0..HEIGHT {
+                                    for x in 0..WIDTH {
+
+                                    if let Some(tile) = data.get_tile(x, y) {
+                                        let tileset = tile.get_tileset();
+
+                                        if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
+
+                                            if let Some(user_type) = &tileset_tile.user_type {
+                                                let tile_type = Map::to_tiletype(user_type.to_string());
+
+                                                if let Some(tile_data) = data.get_tile_data(x, y) {
+                                                    let tile_index = tile_data.tileset_index();
+                                                    let tile_id = tile_data.id();
+
+                                                    let tile = TileInfo {
+                                                        tile_type: tile_type,
+                                                        layers: vec![Map::tile_to_gid(tile_index, tile_id)],
+                                                    };
+
+                                                    map.base.push(tile);
+                                                }
+                                            }
+                                        }
+
+                                    }
+                                }
+                            }
+                        },
+                        tiled::TileLayer::Infinite(_data) => {}
+                    },
+                    _ => {}     
+                }           
             } else if layer.name == "base2" {
                 let mut index = 0;
 
-                if let LayerData::Finite(layer_tiles) = &layer.tiles {
-                    for row in layer_tiles.iter() {
-                        for col in row.iter() {
-                            //Do not store if tile is 0
-                            if col.gid != 0 {
-                                map.base[index].tile_type = Map::gid_to_tiletype(col.gid);
-                                map.base[index].layers.push(col.gid);
-                            }
+                match layer.layer_type() {
+                    tiled::LayerType::Tiles(layer) => match layer {
+                        tiled::TileLayer::Finite(data) => {
 
-                            index += 1;
-                        }
-                    }
-                }
+                            for y in 0..HEIGHT {
+                                for x in 0..WIDTH {
+                                    if let Some(tile) = data.get_tile(x, y) {
+                                        let tileset = tile.get_tileset();
+
+                                        if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
+
+                                            if let Some(user_type) = &tileset_tile.user_type {
+
+                                                let tile_type = Map::to_tiletype(user_type.to_string());
+
+                                                if let Some(tile_data) = data.get_tile_data(x, y) {
+                                                    let tile_index = tile_data.tileset_index();
+                                                    let tile_id = tile_data.id();
+
+                                                    map.base[index].tile_type = tile_type;
+                                                    map.base[index].layers.push(Map::tile_to_gid(tile_index, tile_id));  
+                                                }
+                                            }
+                                        }                                     
+                                    }
+
+                                    index += 1;
+                                }
+                            }
+                        },
+                        tiled::TileLayer::Infinite(_data) => {}
+                    },
+                    _ => {}     
+                }           
             }
         }
+
         map
     }
 
@@ -372,6 +447,33 @@ impl Map {
         return def_bonus;
     }
 
+    fn to_tiletype(tile_name: String) -> TileType {
+        match tile_name.as_str() {
+            "Grasslands" => TileType::Grasslands,
+            "Snow" => TileType::Snow,
+            "River" => TileType::River,
+            "Ocean" => TileType::Ocean,
+            "Plains" => TileType::Plains,
+            "HillsPlains" => TileType::HillsPlains,
+            "Desert" => TileType::Desert,
+            "Oasis" => TileType::Oasis,
+            "HillsDesert" => TileType::HillsDesert,
+            "HillsGrasslands" => TileType::HillsGrasslands,
+            "Swamp" => TileType::Swamp,
+            "HillsSnow" => TileType::HillsSnow,
+            "DeciduousForest" => TileType::DeciduousForest,
+            "Rainforest" => TileType::Rainforest,
+            "Jungle" => TileType::Jungle,
+            "Savanna" => TileType::Savanna,
+            "FrozenForest" => TileType::FrozenForest,
+            "PineForest" => TileType::PineForest,
+            "PalmForest" => TileType::PalmForest,
+            "Mountain" => TileType::Mountain,
+            "Volcano" => TileType::Volcano,
+            _ => TileType::Unknown
+        }
+    }
+
     fn gid_to_tiletype(gid: u32) -> TileType {
         match gid {
             1 => TileType::Grasslands,
@@ -414,6 +516,51 @@ impl Map {
             38 => TileType::Mountain,
             39 => TileType::Volcano,
             _ => TileType::Unknown,
+        }
+    }
+
+    fn tile_to_gid(tile_index: usize, tile_id: u32) -> u32 {
+        match (tile_index, tile_id) {
+            (0, 0) => 1,
+            (0, 1) => 2,
+            (0, 2) => 3,
+            (0, 3) => 4,
+            (0, 4) => 5,
+            (0, 5) => 6,
+            (0, 6) => 7,
+            (0, 7) => 8,
+            (0, 8) => 9,
+            (0, 9) => 10,
+            (0, 10) => 11,
+            (0, 11) => 12,
+            (0, 12) => 13,
+            (0, 13) => 14,
+            (0, 14) => 15,
+            (0, 15) => 16,
+            (0, 16) => 17,
+            (1, 0) => 18,
+            (2, 0) => 19,
+            (2, 1) => 20,
+            (2, 2) => 21,
+            (2, 3) => 22,
+            (2, 4) => 23,
+            (2, 5) => 24,
+            (2, 6) => 25,
+            (2, 7) => 26,
+            (2, 8) => 27,
+            (2, 9) => 28,
+            (2, 10) => 29,
+            (2, 11) => 30,
+            (2, 12) => 31,
+            (3, 0) => 32,
+            (3, 1) => 33,
+            (3, 2) => 34,
+            (3, 3) => 35,
+            (3, 4) => 36,
+            (3, 5) => 37,
+            (3, 6) => 38,
+            (3, 7) => 39,
+            _ => 0
         }
     }
 
@@ -670,13 +817,16 @@ mod tests {
     fn test_get_tiles_by_range() {
         let map: Map = Map::load_map();
 
-        let mut tiles = Map::get_tiles_by_range(16, 36, 2, map);
+        let tiles = Map::get_tiles_by_range(16, 36, 2, map);
+
+        println!("{:#?}", tiles);
+
 
         let test_tiles = r#"[{"t":[13],"x":17,"y":34},{"t":[1],"x":16,"y":37},{"t":[1],"x":16,"y":35},{"t":[13],"x":18,"y":36},{"t":[5],"x":15,"y":36},{"t":[1],"x":17,"y":37},{"t":[1],"x":15,"y":34},{"t":[5],"x":14,"y":37},{"t":[13],"x":17,"y":35},{"t":[1],"x":16,"y":38},{"t":[1],"x":14,"y":35},{"t":[1],"x":16,"y":36},{"t":[1],"x":18,"y":37},{"t":[13],"x":16,"y":34},{"t":[5],"x":15,"y":37},{"t":[1],"x":18,"y":35},{"t":[13],"x":15,"y":35},{"t":[1],"x":17,"y":36},{"t":[13],"x":14,"y":36}]"#;
 
         let deserialized_test_tiles: Vec<MapTile> = serde_json::from_str(&test_tiles).unwrap();
 
-        println!("{:?}", deserialized_test_tiles);
+        println!("{:#?}", deserialized_test_tiles);
 
         for tile in tiles {
             assert_eq!(deserialized_test_tiles.contains(&tile), true);

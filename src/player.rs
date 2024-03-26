@@ -4672,8 +4672,6 @@ fn new_player(
     // Select a start location and remove it from the list
     let start_location = start_locations.get_start_location();
 
-    let range = 4;
-
     // Creating hero
     debug!("Creating hero for player: {:?}", player_id);
     let hero_template_name = "Novice".to_string() + " " + class_name.as_str();
@@ -4693,7 +4691,7 @@ fn new_player(
         class: Class("unit".into()),
         subclass: Subclass("hero".into()),
         state: State::None,
-        viewshed: Viewshed { range: range },
+        viewshed: Viewshed { range: 4 },
         misc: Misc {
             image: str::replace(hero_template.template.as_str(), " ", "").to_lowercase(),
             hsl: Vec::new(),
@@ -5232,7 +5230,7 @@ fn new_player(
         &templates,
     );
 
-    let event_type = GameEventType::NecroEvent {
+    /*let event_type = GameEventType::NecroEvent {
         pos: Position {
             x: start_location.necromancer_pos[0],
             y: start_location.necromancer_pos[1],
@@ -5250,7 +5248,7 @@ fn new_player(
         game_event_type: event_type,
     };
 
-    game_events.insert(event.event_id, event);
+    game_events.insert(event.event_id, event);*/
 
     Encounter::spawn_tax_collector(
         2000,
