@@ -529,7 +529,7 @@ fn remove_obj_event_system(
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.event_type {
-                VisibleEvent::RemoveObjEvent { pos } => {
+                VisibleEvent::RemoveObjEvent { pos: _ } => {
                     debug!("RemoveObjEvent: {:?}", map_event);
 
                     let Some(entity) = ids.get_entity(map_event.obj_id) else {
@@ -576,7 +576,7 @@ fn move_event_system(
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.event_type {
-                VisibleEvent::MoveEvent { src, dst } => {
+                VisibleEvent::MoveEvent { src: _, dst } => {
                     info!("Processing MoveEvent: {:?}", map_event);
                     events_to_remove.push(*map_event_id);
 
@@ -697,7 +697,7 @@ fn move_event_system(
                     visible_events.push(map_event.clone());
 
                     // Check if moving object is a transport
-                    if let Ok(mut transport) = transport_query.get_mut(entity) {
+                    if let Ok(transport) = transport_query.get_mut(entity) {
                         debug!("Transport is moving: {:?}", transport.hauling);
                         // Loop through transport hauling and update their positions
                         for obj_id in transport.hauling.iter() {
@@ -723,7 +723,7 @@ fn move_event_system(
                     if mover.player_id.0 < 1000 {
                         let mut rng = rand::thread_rng();
 
-                        let spawn_chance = 0.20;
+                        let spawn_chance = 0.001;
                         let random_num = rng.gen::<f32>();
                         debug!("random_num: {:?}", random_num);
 
@@ -958,7 +958,7 @@ fn build_event_system(
     game_tick: Res<GameTick>,
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     templates: Res<Templates>,
     mut query: Query<ObjWithStatsQuery>,
 ) {
@@ -1136,7 +1136,7 @@ fn gather_event_system(
     clients: Res<Clients>,
     game_tick: Res<GameTick>,
     mut ids: ResMut<Ids>,
-    mut resources: ResMut<Resources>,
+    resources: ResMut<Resources>,
     mut items: ResMut<Items>,
     skills: ResMut<Skills>,
     templates: Res<Templates>,
@@ -1326,7 +1326,7 @@ fn operate_refine_event_system(
                                 continue;
                             }
 
-                            let (new_item, merged) = items.new_with_attrs(
+                            let (new_item, _merged) = items.new_with_attrs(
                                 *structure_id,
                                 produce_item.to_string(),
                                 1,
@@ -1391,7 +1391,7 @@ fn operate_refine_event_system(
                         continue;
                     };
 
-                    let Ok(mut structure) = query.get(structure_entity) else {
+                    let Ok(structure) = query.get(structure_entity) else {
                         error!("Query failed to find entity {:?}", entity);
                         continue;
                     };
@@ -1448,8 +1448,8 @@ fn craft_event_system(
     mut commands: Commands,
     clients: Res<Clients>,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
-    mut resources: ResMut<Resources>,
+    ids: ResMut<Ids>,
+    _resources: ResMut<Resources>,
     mut items: ResMut<Items>,
     mut skills: ResMut<Skills>,
     templates: Res<Templates>,
@@ -1561,10 +1561,10 @@ fn experiment_event_system(
     mut commands: Commands,
     clients: Res<Clients>,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
-    mut resources: ResMut<Resources>,
+    ids: ResMut<Ids>,
+    _resources: ResMut<Resources>,
     mut items: ResMut<Items>,
-    skills: ResMut<Skills>,
+    _skills: ResMut<Skills>,
     templates: Res<Templates>,
     mut recipes: ResMut<Recipes>,
     mut experiments: ResMut<Experiments>,
@@ -1600,7 +1600,7 @@ fn experiment_event_system(
                         continue;
                     };
 
-                    let Ok(mut villager) = query.get_mut(villager_entity) else {
+                    let Ok(_villager) = query.get_mut(villager_entity) else {
                         error!("Query failed to find entity {:?}", villager_entity);
                         continue;
                     };
@@ -1687,7 +1687,7 @@ fn experiment_event_system(
 fn explore_event_system(
     clients: Res<Clients>,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     mut resources: ResMut<Resources>,
     templates: Res<Templates>,
     mut query: Query<(&PlayerId, &Position, &mut State)>,
@@ -1876,10 +1876,10 @@ fn spell_raise_dead_event_system(
 fn spell_damage_event_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     mut query: Query<CombatSpellQuery>,
     mut map_events: ResMut<MapEvents>,
-    mut game_events: ResMut<GameEvents>,
+    _game_events: ResMut<GameEvents>,
     mut visible_events: ResMut<VisibleEvents>,
 ) {
     let mut events_to_remove = Vec::new();
@@ -1888,7 +1888,7 @@ fn spell_damage_event_system(
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.event_type {
-                VisibleEvent::SpellDamageEvent { spell, target_id } => {
+                VisibleEvent::SpellDamageEvent { spell: _, target_id } => {
                     debug!("Processing CastSpellEvent");
                     events_to_remove.push(*map_event_id);
 
@@ -2076,11 +2076,11 @@ fn cooldown_event_system(
 fn use_item_system(
     game_tick: Res<GameTick>,
     clients: Res<Clients>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     templates: Res<Templates>,
     mut items: ResMut<Items>,
     mut plans: ResMut<Plans>,
-    mut visible_events: ResMut<VisibleEvents>,
+    _visible_events: ResMut<VisibleEvents>,
     mut map_events: ResMut<MapEvents>,
     mut query: Query<ObjWithStatsQuery>,
 ) {
@@ -2102,7 +2102,7 @@ fn use_item_system(
                         continue;
                     };
 
-                    let Some(mut item) = items.find_by_id(*item_id) else {
+                    let Some(item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -2192,14 +2192,14 @@ fn use_item_system(
 fn drink_eat_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     mut items: ResMut<Items>,
     mut visible_events: ResMut<VisibleEvents>,
     mut map_events: ResMut<MapEvents>,
     mut thirsts: Query<&mut Thirst>,
     mut hungers: Query<&mut Hunger>,
     mut query: Query<ObjQuery>,
-    mut villager_attrs: Query<&mut VillagerAttrs>,
+    _villager_attrs: Query<&mut VillagerAttrs>,
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -2216,7 +2216,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    let Some(mut item) = items.find_by_id(*item_id) else {
+                    let Some(item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -2282,7 +2282,7 @@ fn drink_eat_system(
                         continue;
                     };
 
-                    let Some(mut item) = items.find_by_id(*item_id) else {
+                    let Some(item) = items.find_by_id(*item_id) else {
                         debug!("Failed to find item: {:?}", item_id);
                         continue;
                     };
@@ -2409,7 +2409,7 @@ fn visible_event_system(
 
             for observer in map_obj_query.iter() {
                 match &map_event.event_type {
-                    VisibleEvent::NewObjEvent { new_player } => {
+                    VisibleEvent::NewObjEvent { new_player: _ } => {
                         let distance = Map::distance(
                             (event_obj.pos.x, event_obj.pos.y),
                             (observer.pos.x, observer.pos.y),
@@ -2963,7 +2963,7 @@ fn game_event_system(
                         );
                     }
 
-                    let (entity, npc_id, player_id, pos) = result;
+                    let (_entity, npc_id, _player_id, _pos) = result;
 
                     map_events.new(
                         npc_id.0,
@@ -3005,7 +3005,7 @@ fn game_event_system(
                     debug!("Processing NecroEvent");
                     events_to_remove.push(*event_id);
 
-                    let (entity, npc_id, player_id, pos) = Encounter::spawn_necromancer(
+                    let (_entity, npc_id, _player_id, _pos) = Encounter::spawn_necromancer(
                         1000,
                         *pos,
                         *home, 
@@ -3037,7 +3037,7 @@ fn game_event_system(
                     for map_event in events_to_cancel.iter() {
                         match map_event.event_type {
                             VisibleEvent::BuildEvent {
-                                builder_id,
+                                builder_id: _,
                                 structure_id,
                             } => {
                                 //TODO: should be able to change state without the need for entity, playerid and position
@@ -3183,7 +3183,7 @@ fn resurrect_system(
             debug!("Resurrecting hero {:?}", hero.id);
 
             // Create human corpse
-            let (corpse_id, entity) = Obj::create(
+            let (corpse_id, _entity) = Obj::create(
                 hero.player_id.0,
                 "Human Corpse".to_string(),
                 *hero.pos,
@@ -3315,7 +3315,7 @@ fn snapshot_system(world: &mut World) {
 
         let registry = world.resource::<AppTypeRegistry>();
 
-        let output = serialize(&snapshot, registry);
+        let _output = serialize(&snapshot, registry);
 
         //debug!("snapshot: {:?}", output);
     }

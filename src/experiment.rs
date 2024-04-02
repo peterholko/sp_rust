@@ -4,11 +4,9 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use crate::{
-    item::{ExperimentItemType, Item, Items},
-    network::{self, ResponsePacket},
-    player::ActiveInfos,
-    recipe::{Recipe, Recipes},
-    structure,
+    item::{Item, Items},
+    network::{self},
+    recipe::{Recipes},
     templates::{RecipeTemplate, RecipeTemplates, ResReq, Templates},
 };
 
@@ -128,7 +126,7 @@ impl Experiment {
         structure_id: i32,
         experiment: &mut Experiment,
         items: &mut ResMut<Items>,
-        recipe_templates: &RecipeTemplates,
+        _recipe_templates: &RecipeTemplates,
         recipes: &mut ResMut<Recipes>,
     ) -> ExperimentState {
         let Some(source_item) = &experiment.source_item else {

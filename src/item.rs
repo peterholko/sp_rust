@@ -401,7 +401,7 @@ impl Items {
                     .iter()
                     .position(|item| item.owner == target_id && item.name == item_to_transfer.name)
                 {
-                    let mut merged_item = &mut self.items[merged_index];
+                    let merged_item = &mut self.items[merged_index];
                     merged_item.quantity += item_to_transfer.quantity;
 
                     self.items.swap_remove(transfer_index);
@@ -739,7 +739,7 @@ impl Items {
             .iter()
             .position(|item| item.id == item_id)
             .unwrap(); // Should panic if item is not found
-        let mut item = &mut self.items[index];
+        let item = &mut self.items[index];
         if item.quantity >= quantity {
             item.quantity -= quantity;
 
@@ -767,7 +767,7 @@ impl Items {
         mod_quantity: i32,
     ) -> Option<Item> {
         if let Some(index) = self.find_by_class(owner, class) {
-            let mut item = &mut self.items[index];
+            let item = &mut self.items[index];
             debug!(
                 "item quantity: {:?} mod_quantity: {:?}",
                 item.quantity, mod_quantity
@@ -790,7 +790,7 @@ impl Items {
 
     pub fn set_experiment_source(&mut self, item_id: i32) -> Item {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
-            let mut item = &mut self.items[index];
+            let item = &mut self.items[index];
 
             item.experiment = Some(ExperimentItemType::Source);
             return item.clone();
@@ -801,7 +801,7 @@ impl Items {
 
     pub fn remove_experiment_source(&mut self, item_id: i32) -> Item {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
-            let mut item = &mut self.items[index];
+            let item = &mut self.items[index];
 
             item.experiment = None;
             return item.clone();
@@ -812,7 +812,7 @@ impl Items {
 
     pub fn set_experiment_reagent(&mut self, item_id: i32) {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
-            let mut item = &mut self.items[index];
+            let item = &mut self.items[index];
 
             item.experiment = Some(ExperimentItemType::Reagent);
         } else {
@@ -822,7 +822,7 @@ impl Items {
 
     pub fn remove_experiment_reagent(&mut self, item_id: i32) {
         if let Some(index) = self.items.iter().position(|item| item.id == item_id) {
-            let mut item = &mut self.items[index];
+            let item = &mut self.items[index];
 
             item.experiment = None;
         } else {
@@ -971,7 +971,7 @@ impl Item {
         return false;
     }
 
-    pub fn use_item(item_id: i32, status: bool, items: &mut ResMut<Items>) {}
+    pub fn use_item(_item_id: i32, _status: bool, _items: &mut ResMut<Items>) {}
 
     pub fn get_items_value_by_attr(attr: &AttrKey, items: Vec<Item>) -> f32 {
         let mut item_values = 0.0;

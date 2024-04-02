@@ -1,10 +1,9 @@
-use bevy::prelude::{Res, Resource};
+use bevy::prelude::{Res};
 use crossbeam_channel::Sender as CBSender;
 use serde_with::skip_serializing_none;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
 };
 
 use lazy_static::lazy_static;
@@ -25,7 +24,7 @@ use crate::{
     obj::HeroClassList,
     player::PlayerEvent,
 };
-use crate::{map::MapTile, recipe, templates::RecipeTemplate};
+use crate::{map::MapTile};
 
 use std::path::Path;
 
@@ -1261,7 +1260,7 @@ fn handle_selected_class(
     println!("handle_selected_class: {:?}", player_id);
     let mut accounts = accounts.lock().unwrap();
     println!("{:?}", accounts);
-    let mut account = accounts.get_mut(&player_id).unwrap();
+    let account = accounts.get_mut(&player_id).unwrap();
 
     if account.class == HeroClassList::None {
         println!("classname: {:?}", class_name.as_str());

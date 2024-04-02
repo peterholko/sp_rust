@@ -1,21 +1,21 @@
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
-use big_brain::thinker::{Actor, ThinkerBuilder};
+use big_brain::thinker::{ThinkerBuilder};
 
 use rand::Rng;
 
 use crate::ids::Ids;
-use crate::event::{GameEvent, GameEvents, GameEventType, MapEvent, MapEvents, VisibleEvent};
-use crate::effect::{self, Effect, Effects};
+use crate::event::{MapEvents, VisibleEvent};
+use crate::effect::{Effect, Effects};
 use crate::game::{
-    BaseAttrs, Class, GameTick, Id, Misc, PlayerId, Position, State, StateDead, Stats, Subclass, Template, 
+    Class, GameTick, Id, Misc, PlayerId, Position, State, StateDead, Stats, Subclass, Template, 
 };
-use crate::item::{self, AttrKey, Item, Items, DAMAGE};
+use crate::item::{self, AttrKey, Item, Items};
 use crate::map::Map;
 use crate::obj::Obj;
-use crate::skill::{Skill, SkillUpdated, Skills};
+use crate::skill::{SkillUpdated};
 use crate::templates::{
-    ComboTemplate, EffectTemplate, ObjTemplate, SkillTemplate, SkillTemplates, Templates,
+    ComboTemplate, ObjTemplate, Templates,
 };
 
 pub const QUICK: &str = "quick";
@@ -117,9 +117,9 @@ impl Combat {
         items: &mut ResMut<Items>,
         templates: &Res<Templates>,
         map: &Res<Map>,
-        mut ids: &mut ResMut<Ids>,
+        _ids: &mut ResMut<Ids>,
         game_tick: &Res<GameTick>,
-        mut map_events: &mut ResMut<MapEvents>,
+        _map_events: &mut ResMut<MapEvents>,
     ) -> (i32, Option<String>, Option<SkillUpdated>) {
         let mut rng = rand::thread_rng();
 
@@ -267,9 +267,9 @@ impl Combat {
         items: &mut ResMut<Items>,
         templates: &Res<Templates>,
         map: &Res<Map>,
-        mut ids: &mut ResMut<Ids>,
+        ids: &mut ResMut<Ids>,
         game_tick: &Res<GameTick>,
-        mut map_events: &mut ResMut<MapEvents>,
+        map_events: &mut ResMut<MapEvents>,
     ) -> (i32, Option<String>, Option<SkillUpdated>) {
         let mut rng = rand::thread_rng();
 
@@ -470,7 +470,7 @@ impl Combat {
 
     fn add_attack_to_combo_tracker(
         commands: &mut Commands,
-        templates: &Res<Templates>,
+        _templates: &Res<Templates>,
         attack_type: AttackType,
         attacker: &mut CombatQueryItem,
         target: &mut CombatQueryItem,
@@ -502,10 +502,10 @@ impl Combat {
     }
 
     fn find_combo(
-        commands: &mut Commands,
+        _commands: &mut Commands,
         templates: &Res<Templates>,
         attacker: &mut CombatQueryItem,
-        target: &mut CombatQueryItem,
+        _target: &mut CombatQueryItem,
     ) -> Option<ComboTemplate> {
         let mut combo = None;
         // Only allow combos for players
@@ -539,11 +539,11 @@ impl Combat {
     fn apply_combo_effects(
         combo: Option<ComboTemplate>,
         templates: &Res<Templates>,
-        attacker: &mut CombatQueryItem,
+        _attacker: &mut CombatQueryItem,
         target: &mut CombatQueryItem,
-        mut ids: &mut ResMut<Ids>,
+        _ids: &mut ResMut<Ids>,
         game_tick: &Res<GameTick>,
-        mut map_events: &mut ResMut<MapEvents>,
+        map_events: &mut ResMut<MapEvents>,
     ) {
         if let Some(combo_template) = combo {
             for effect_name in combo_template.effects.iter() {

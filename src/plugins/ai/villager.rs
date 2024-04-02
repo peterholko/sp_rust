@@ -1,8 +1,8 @@
-use bevy::ecs::entity;
+
 use bevy::ecs::query::WorldQuery;
 use bevy::prelude::*;
-use big_brain::evaluators::Evaluator;
-use big_brain::evaluators::PowerEvaluator;
+
+
 use big_brain::prelude::*;
 
 use crate::components::villager::Dehydrated;
@@ -21,6 +21,7 @@ use crate::components::villager::FoodDistanceScorer;
 use crate::components::villager::GoodMorale;
 use crate::components::villager::HasDrinkScorer;
 use crate::components::villager::HasFoodScorer;
+use crate::components::villager::IdleScorer;
 use crate::components::villager::MoveToDrink;
 use crate::components::villager::MoveToFood;
 use crate::components::villager::MoveToInProgress;
@@ -28,9 +29,9 @@ use crate::components::villager::MoveToShelter;
 use crate::components::villager::NearShelterScorer;
 use crate::components::villager::NoDrinks;
 use crate::components::villager::ProcessOrder;
-use crate::components::villager::ShelterAvailable;
+
 use crate::components::villager::ShelterDistanceScorer;
-use crate::components::villager::ShelterUnavailable;
+
 use crate::components::villager::Starving;
 use crate::components::villager::TransferDrink;
 use crate::components::villager::TransferDrinkScorer;
@@ -112,7 +113,7 @@ pub fn enemy_distance_scorer_system(
     obj_query: Query<MapObjQuery, Without<SubclassHero>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<EnemyDistanceScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = obj_query.get(*actor) {
             let Some(hero_id) = ids.get_hero(villager.player_id.0) else {
                 error!("Cannot find hero for player {:?}", villager.player_id);
@@ -124,7 +125,7 @@ pub fn enemy_distance_scorer_system(
                 continue;
             };
 
-            let Ok(hero) = hero_query.get(hero_entity) else {
+            let Ok(_hero) = hero_query.get(hero_entity) else {
                 error!("Cannot find hero for {:?}", hero_entity);
                 continue;
             };
@@ -155,6 +156,14 @@ pub fn enemy_distance_scorer_system(
     }
 }
 
+pub fn idle_scorer_system(
+    mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<IdleScorer>>,
+) {
+    for (Actor(actor), mut score, _span) in &mut query {
+        score.set(0.5);
+    }
+}
+
 pub fn thirsty_scorer_system(
     thirsts: Query<&Thirst>,
     dehydrated: Query<&Dehydrated>,
@@ -162,7 +171,7 @@ pub fn thirsty_scorer_system(
     villager_attrs: Query<&VillagerAttrs>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<ThirstyScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(thirst) = thirsts.get(*actor) {
             // For now just set score to 1.0 if dehydrated
             if let Ok(_dehydrated) = dehydrated.get(*actor) {
@@ -206,7 +215,7 @@ pub fn find_drink_scorer_system(
     move_to_drink: Query<&MoveToDrink>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<FindDrinkScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(_move_to_drink) = move_to_drink.get(*actor) {
             score.set(0.0);
         } else {
@@ -220,7 +229,7 @@ pub fn drink_distance_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<DrinkDistanceScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
                 score.set(1.0);
@@ -242,7 +251,7 @@ pub fn transfer_drink_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<TransferDrinkScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Some(_drink) = items.get_by_class(villager.id.0, item::WATER.to_string()) {
                 score.set(0.0);
@@ -261,7 +270,7 @@ pub fn has_drink_scorer_system(
     villager_query: Query<VillagerQuery, (With<SubclassVillager>, Without<EventInProgress>)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<HasDrinkScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Some(_item) = items.get_by_class(villager.id.0, item::WATER.to_string()) {
                 score.set(1.0);
@@ -280,7 +289,7 @@ pub fn hungry_scorer_system(
     villager_attrs: Query<&VillagerAttrs>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<HungryScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(hunger) = hungers.get(*actor) {
             // For now just set score to 1.0 if starving
             if let Ok(_starving) = starving.get(*actor) {
@@ -318,7 +327,7 @@ pub fn find_food_scorer_system(
     move_to_food: Query<&MoveToFood>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<FindFoodScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(_move_to_food) = move_to_food.get(*actor) {
             score.set(0.0);
         } else {
@@ -334,7 +343,7 @@ pub fn food_distance_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<FoodDistanceScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
                 score.set(1.0);
@@ -355,7 +364,7 @@ pub fn transfer_food_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<TransferFoodScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Some(_drink) = items.get_by_class(villager.id.0, item::FOOD.to_string()) {
                 score.set(0.0);
@@ -374,7 +383,7 @@ pub fn has_food_scorer_system(
     villager_query: Query<VillagerQuery, (With<SubclassVillager>, Without<EventInProgress>)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<HasFoodScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Some(_item) = items.get_by_class(villager.id.0, item::FOOD.to_string()) {
                 score.set(1.0);
@@ -393,7 +402,7 @@ pub fn drowsy_scorer_system(
     villager_attrs: Query<&VillagerAttrs>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<DrowsyScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(tired) = tired_query.get(*actor) {
             // For now just set score to 1.0 if exhausted
             if let Ok(_exhausted) = exhausted.get(*actor) {
@@ -431,7 +440,7 @@ pub fn find_shelter_scorer_system(
     move_to_shelter: Query<&MoveToShelter>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<FindShelterScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(_move_to_shelter) = move_to_shelter.get(*actor) {
             score.set(0.0);
         } else {
@@ -448,7 +457,7 @@ pub fn shelter_distance_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<ShelterDistanceScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             if let Ok(_move_in_progress) = move_in_progress.get(*actor) {
                 score.set(1.0);
@@ -480,7 +489,7 @@ pub fn near_shelter_scorer_system(
     villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<NearShelterScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(villager) = villager_query.get(*actor) {
             let Ok(move_to_shelter) = move_to_shelter.get(*actor) else {
                 debug!("No move_to_shelter found");
@@ -501,8 +510,8 @@ pub fn morale_scorer_system(
     morale_query: Query<&Morale>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<GoodMorale>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
-        if let Ok(morale) = morale_query.get(*actor) {
+    for (Actor(actor), mut score, _span) in &mut query {
+        if let Ok(_morale) = morale_query.get(*actor) {
             score.set(0.5);
             /*if tired.tired >= 80.0 {
                 span.span()
@@ -521,15 +530,15 @@ pub fn process_order_system(
     mut map_events: ResMut<MapEvents>,
     mut experiments: ResMut<Experiments>,
     items: ResMut<Items>,
-    templates: Res<Templates>,
+    _templates: Res<Templates>,
     active_infos: Res<ActiveInfos>,
     morales: Query<&Morale>,
     all_pos: Query<&Position>,
     mut villager_query: Query<VillagerWithOrderQuery, (With<Order>, Without<EventInProgress>)>,
     mut query: Query<(&Actor, &mut ActionState, &ProcessOrder, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, _process_order, span) in &mut query {
-        if let Ok(morale) = morales.get(*actor) {
+    for (Actor(actor), mut state, _process_order, _span) in &mut query {
+        if let Ok(_morale) = morales.get(*actor) {
             match *state {
                 ActionState::Requested => {
                     debug!("Process Order Requested");
@@ -563,7 +572,7 @@ pub fn process_order_system(
                                 trace!("Invalid target to follow.");
                             }
                         }
-                        Order::Gather { res_type } => {
+                        Order::Gather { res_type: _ } => {
                             debug!("Process Gather Order");
                             if *villager.state == State::None {
                                 debug!("Executing Gathering");
@@ -636,7 +645,7 @@ pub fn process_order_system(
                                         ) {
                                             debug!("Follower path: {:?}", path_result);
 
-                                            let (path, c) = path_result;
+                                            let (path, _c) = path_result;
                                             let next_pos = &path[1];
 
                                             debug!("Next pos: {:?}", next_pos);
@@ -731,7 +740,7 @@ pub fn process_order_system(
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
-                                        let (path, c) = path_result;
+                                        let (path, _c) = path_result;
                                         let next_pos = &path[1];
 
                                         debug!("Next pos: {:?}", next_pos);
@@ -769,7 +778,7 @@ pub fn process_order_system(
                                         });
                                     }
                                 } else {
-                                    let mut map_event;
+                                    let map_event;
 
                                     match villager.order {
                                         Order::Refine => {
@@ -845,7 +854,7 @@ pub fn process_order_system(
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
-                                        let (path, c) = path_result;
+                                        let (path, _c) = path_result;
                                         let next_pos = &path[1];
 
                                         debug!("Next pos: {:?}", next_pos);
@@ -872,7 +881,7 @@ pub fn process_order_system(
                                             },
                                         };
 
-                                        let event_id = ids.new_map_event_id();
+                                        let _event_id = ids.new_map_event_id();
 
                                         let map_event = map_events.new(
                                             villager.id.0,
@@ -904,7 +913,7 @@ pub fn process_order_system(
                                         state_change_event,
                                     );
 
-                                    let event_id = ids.new_map_event_id();
+                                    let _event_id = ids.new_map_event_id();
 
                                     let map_event = map_events.new(
                                         villager.id.0,
@@ -953,7 +962,7 @@ pub fn process_order_system(
                                     ) {
                                         debug!("Path to structure: {:?}", path_result);
 
-                                        let (path, c) = path_result;
+                                        let (path, _c) = path_result;
                                         let next_pos = &path[1];
 
                                         debug!("Next pos: {:?}", next_pos);
@@ -1079,17 +1088,17 @@ pub fn flee_system(
     mut villager_attrs_query: Query<&mut VillagerAttrs>,
     mut action_query: Query<(&Actor, &mut ActionState, &Flee, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, _find_drink, span) in &mut action_query {
+    for (Actor(actor), mut state, _find_drink, _span) in &mut action_query {
         match *state {
             ActionState::Requested => {
                 debug!("Flee");
                 *state = ActionState::Executing;
             }
             ActionState::Executing => {
-                if let Ok(event) = events_in_progress.get(*actor) {
+                if let Ok(_event) = events_in_progress.get(*actor) {
                     debug!("Flee Event In Progress...");
                 } else {
-                    let Ok(mut villager) = villager_query.get(*actor) else {
+                    let Ok(villager) = villager_query.get(*actor) else {
                         error!("Cannot find villager {:?}", *actor);
                         continue;
                     };
@@ -1151,7 +1160,7 @@ pub fn flee_system(
                         ) {
                             debug!("Path to structure: {:?}", path_result);
 
-                            let (path, c) = path_result;
+                            let (path, _c) = path_result;
                             let next_pos = &path[1];
 
                             debug!("Next pos: {:?}", next_pos);
@@ -1210,7 +1219,7 @@ pub fn find_drink_system(
     game_tick: Res<GameTick>,
     mut map_events: ResMut<MapEvents>,
     map: Res<Map>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     items: ResMut<Items>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
@@ -1240,7 +1249,7 @@ pub fn find_drink_system(
                     debug!("Cannot find any drinks. ");
                     commands.entity(*actor).insert(NoDrinks);
 
-                    *state = ActionState::Success;
+                    *state = ActionState::Failure;
                     continue;
                 };
 
@@ -1257,6 +1266,10 @@ pub fn find_drink_system(
 
                     commands.entity(*actor).insert(MoveToDrink {
                         dest: *structure.pos,
+                    });
+                } else if item_location == ItemLocation::Own {
+                    commands.entity(*actor).insert(MoveToDrink {
+                        dest: *villager.pos,
                     });
                 }
 
@@ -1304,7 +1317,7 @@ pub fn move_to_water_source_action_system(
     mut action_query: Query<(&Actor, &mut ActionState, &MoveToWaterSource, &ActionSpan)>,
 ) {
     // Loop through all actions, just like you'd loop over all entities in any other query.
-    for (Actor(actor), mut state, move_to, span) in &mut action_query {
+    for (Actor(actor), mut state, _move_to, span) in &mut action_query {
         let _guard = span.span().enter();
 
         // Different behavior depending on action state.
@@ -1322,6 +1335,7 @@ pub fn move_to_water_source_action_system(
                     } else {
                         let Ok(move_to_drink) = move_to_drink.get(*actor) else {
                             error!("Entity {:?} does not have MoveToDrink", *actor);
+                            *state = ActionState::Failure;
                             continue;
                         };
 
@@ -1339,7 +1353,7 @@ pub fn move_to_water_source_action_system(
                             ) {
                                 debug!("Path to structure: {:?}", path_result);
 
-                                let (path, c) = path_result;
+                                let (path, _c) = path_result;
                                 let next_pos = &path[1];
 
                                 debug!("Next pos: {:?}", next_pos);
@@ -1424,9 +1438,9 @@ pub fn move_to_water_source_action_system(
 
 pub fn transfer_drink_system(
     map: Res<Map>,
-    mut ids: ResMut<Ids>,
+    _ids: ResMut<Ids>,
     mut items: ResMut<Items>,
-    templates: Res<Templates>,
+    _templates: Res<Templates>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut action_query: Query<(&Actor, &mut ActionState, &TransferDrink, &ActionSpan)>,
@@ -1628,7 +1642,7 @@ pub fn find_food_system(
     game_tick: Res<GameTick>,
     mut map_events: ResMut<MapEvents>,
     map: Res<Map>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     items: ResMut<Items>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
@@ -1723,7 +1737,7 @@ pub fn move_to_food_action_system(
     mut action_query: Query<(&Actor, &mut ActionState, &MoveToFoodSource, &ActionSpan)>,
 ) {
     // Loop through all actions, just like you'd loop over all entities in any other query.
-    for (Actor(actor), mut state, move_to, span) in &mut action_query {
+    for (Actor(actor), mut state, _move_to, span) in &mut action_query {
         let _guard = span.span().enter();
 
         // Different behavior depending on action state.
@@ -1756,7 +1770,7 @@ pub fn move_to_food_action_system(
                                 false,
                                 false,
                             ) {
-                                let (path, c) = path_result;
+                                let (path, _c) = path_result;
                                 let next_pos = &path[1];
 
                                 // Add State Change Event to Moving
@@ -1777,7 +1791,7 @@ pub fn move_to_food_action_system(
                                     },
                                 };
 
-                                let event_id = ids.new_map_event_id();
+                                let _event_id = ids.new_map_event_id();
 
                                 let map_event = map_events.new(
                                     villager.id.0,
@@ -1840,9 +1854,9 @@ pub fn move_to_food_action_system(
 
 pub fn transfer_food_system(
     map: Res<Map>,
-    mut ids: ResMut<Ids>,
+    _ids: ResMut<Ids>,
     mut items: ResMut<Items>,
-    templates: Res<Templates>,
+    _templates: Res<Templates>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     mut action_query: Query<(&Actor, &mut ActionState, &TransferFood, &ActionSpan)>,
@@ -2038,7 +2052,7 @@ pub fn find_shelter_system(
     mut commands: Commands,
     map: Res<Map>,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    _ids: ResMut<Ids>,
     mut map_events: ResMut<MapEvents>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<ObjQuery, (With<ClassStructure>, Without<SubclassVillager>)>,
@@ -2153,7 +2167,7 @@ pub fn move_to_shelter_system(
                                 false,
                                 false,
                             ) {
-                                let (path, c) = path_result;
+                                let (path, _c) = path_result;
                                 let next_pos = &path[1];
 
                                 // Add before changing state otherwise there will be multiple speeches
@@ -2483,7 +2497,7 @@ fn find_shelter(
     return (nearest_structure_pos, nearest_path);
 }
 
-fn remove_components(mut commands: &mut Commands, entity: &Entity) {
+fn remove_components(commands: &mut Commands, entity: &Entity) {
     commands.entity(*entity).remove::<MoveToDrink>();
     commands.entity(*entity).remove::<MoveToFood>();
     commands.entity(*entity).remove::<MoveToShelter>();

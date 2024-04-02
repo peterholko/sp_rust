@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-use std::collections::HashMap;
 
-use crate::game::StructureAttrs;
+
+
 use crate::item::{Item, Items};
 use crate::network;
 use crate::resource::{ORE, STONE, WOOD};

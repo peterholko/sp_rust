@@ -8,6 +8,9 @@ use crate::game::Position;
 pub struct EnemyDistanceScorer;
 
 #[derive(Debug, Clone, Component, ScorerBuilder)]
+pub struct IdleScorer;
+
+#[derive(Debug, Clone, Component, ScorerBuilder)]
 pub struct ThirstyScorer;
 
 #[derive(Debug, Clone, Component, ScorerBuilder)]

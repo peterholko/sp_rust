@@ -98,7 +98,7 @@ pub struct TerrainFeaturePlugin;
 
 impl Plugin for TerrainFeaturePlugin {
     fn build(&self, app: &mut App) {
-        let mut terrain_features = TerrainFeatures(HashMap::new());
+        let terrain_features = TerrainFeatures(HashMap::new());
 
         app.insert_resource(terrain_features);
     }

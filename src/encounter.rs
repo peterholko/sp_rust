@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::i32::MAX;
 
 use bevy::prelude::*;
-use big_brain::actions::{Steps, StepsBuilder};
+use big_brain::actions::{Steps};
 use big_brain::prelude::{Highest, Thinker};
 
-use rand::{random, Rng};
+use rand::{Rng};
 
 use crate::components::npc::{
     AtLanding, Destination, Forfeiture, Hide, Idle, IsAboard, IsTaxCollected, MoveToEmpire,
@@ -23,12 +23,12 @@ use crate::game::{
     Subclass, SubclassNPC, Template, Viewshed,
 };
 use crate::ids::Ids;
-use crate::item::{Item, Items};
+use crate::item::{Items};
 use crate::map::TileType;
 use crate::obj::Obj;
 use crate::plugins::ai::npc::NO_TARGET;
-use crate::skill::{Skill, Skills};
-use crate::templates::{ObjTemplate, SkillTemplate, SkillTemplates, Templates};
+
+use crate::templates::{ObjTemplate, Templates};
 
 #[derive(Debug, Clone)]
 pub struct Encounter;
@@ -48,7 +48,7 @@ impl Encounter {
         template: String,
         commands: &mut Commands,
         ids: &mut ResMut<Ids>,
-        mut items: &mut ResMut<Items>,
+        items: &mut ResMut<Items>,
         templates: &Res<Templates>,
     ) -> (Entity, Id, PlayerId, Position) {
         let npc_id = ids.new_obj_id();
@@ -64,7 +64,7 @@ impl Encounter {
         template: String,
         commands: &mut Commands,
         ids: &mut ResMut<Ids>,
-        mut items: &mut ResMut<Items>,
+        items: &mut ResMut<Items>,
         templates: &Res<Templates>,
     ) -> (Entity, Id, PlayerId, Position) {
         let npc_template = ObjTemplate::get_template(template, templates);
@@ -130,7 +130,7 @@ impl Encounter {
         home_pos: Position,
         commands: &mut Commands,
         ids: &mut ResMut<Ids>,
-        mut items: &mut ResMut<Items>,
+        items: &mut ResMut<Items>,
         templates: &Res<Templates>,
     ) -> (Entity, Id, PlayerId, Position) {
         let necro_obj = Obj::create_nospawn(
@@ -337,9 +337,9 @@ impl Encounter {
 
     pub fn generate_loot(
         npc_id: i32,
-        mut ids: &mut ResMut<Ids>,
-        mut items: &mut ResMut<Items>,
-        templates: &Res<Templates>,
+        _ids: &mut ResMut<Ids>,
+        items: &mut ResMut<Items>,
+        _templates: &Res<Templates>,
     ) {
         let mut rng = rand::thread_rng();
 

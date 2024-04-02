@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
-use std::collections::HashMap;
+
 
 use rand::Rng;
 
-use crate::game::{BaseAttrs, Order, Position};
-use crate::network;
+use crate::game::{BaseAttrs, Order};
+
 use crate::skill::{self, Skill, Skills};
-use crate::templates::{SkillTemplate, SkillTemplates};
+use crate::templates::{SkillTemplates};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Activity {

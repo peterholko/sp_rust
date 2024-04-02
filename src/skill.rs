@@ -1,9 +1,9 @@
 use bevy::prelude::*;
-use bevy::utils::tracing::field::debug;
+
 
 use std::collections::HashMap;
 
-use crate::game::Position;
+
 use crate::templates::{SkillTemplate, SkillTemplates};
 use crate::{item, network};
 
@@ -287,7 +287,7 @@ pub struct SkillPlugin;
 
 impl Plugin for SkillPlugin {
     fn build(&self, app: &mut App) {
-        let mut skills = Skills(HashMap::new());
+        let skills = Skills(HashMap::new());
 
         app.insert_resource(skills);
     }

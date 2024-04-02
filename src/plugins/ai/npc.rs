@@ -11,14 +11,14 @@ use crate::components::npc::FleeToHome;
 use crate::components::npc::Hide;
 use crate::components::npc::MerchantScorer;
 use crate::components::npc::RaiseDead;
-use crate::components::npc::SailToPort;
+
 use crate::components::npc::VisibleCorpse;
 use crate::components::npc::VisibleCorpseScorer;
 use crate::components::npc::{ChaseAndAttack, VisibleTarget, VisibleTargetScorer};
 use crate::components::villager::MoveToInProgress;
 use crate::effect::Effect;
 use crate::event::Spell;
-use crate::event::{GameEvents, MapEvents, VisibleEvent};
+use crate::event::{MapEvents, VisibleEvent};
 use crate::game::State;
 use crate::game::*;
 use crate::ids::Ids;
@@ -41,7 +41,7 @@ pub fn target_scorer_system(
     target_query: Query<&VisibleTarget>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleTargetScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(target) = target_query.get(*actor) {
             if target.target != NO_TARGET {
                 score.set(0.9);
@@ -97,7 +97,7 @@ pub fn attack_target_system(
     mut target_query: Query<CombatQuery, Without<SubclassNPC>>,
     mut query: Query<(&Actor, &mut ActionState, &ChaseAndAttack)>,
 ) {
-    for (Actor(actor), mut state, chase_attack) in &mut query {
+    for (Actor(actor), mut state, _chase_attack) in &mut query {
         let Ok((npc_player_id, visible_target)) = visible_target_query.get(*actor) else {
             continue;
         };
@@ -266,7 +266,7 @@ pub fn attack_target_system(
                             ) {
                                 debug!("Follower path: {:?}", path_result);
 
-                                let (path, c) = path_result;
+                                let (path, _c) = path_result;
                                 let next_pos = &path[1];
 
                                 debug!("Next pos: {:?}", next_pos);
@@ -321,7 +321,7 @@ pub fn corpses_scorer_system(
     corpse_query: Query<&VisibleCorpse>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<VisibleCorpseScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok(corpse) = corpse_query.get(*actor) {
             if corpse.corpse != NO_TARGET {
                 score.set(1.0);
@@ -369,7 +369,7 @@ pub fn flee_scorer_system(
 ) {
     // To prevent flee before raise dead
     if game_tick.0 % 30 == 0 {
-        for (Actor(actor), mut score, span) in &mut query {
+        for (Actor(actor), mut score, _span) in &mut query {
             if let Ok(minions) = minions_query.get(*actor) {
                 let mut minions_dead = true;
 
@@ -398,10 +398,10 @@ pub fn flee_scorer_system(
 pub fn cast_target_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
-    mut items: ResMut<Items>,
+    _items: ResMut<Items>,
     templates: Res<Templates>,
     visible_target_query: Query<(&PlayerId, &VisibleTarget), Without<EventInProgress>>,
     mut npc_query: Query<CombatQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
@@ -457,7 +457,7 @@ pub fn cast_target_system(
                         continue;
                     };
 
-                    let Ok(mut target) = target_query.get_mut(target_entity) else {
+                    let Ok(target) = target_query.get_mut(target_entity) else {
                         continue;
                     };
 
@@ -512,7 +512,7 @@ pub fn cast_target_system(
                             ) {
                                 debug!("Follower path: {:?}", path_result);
 
-                                let (path, c) = path_result;
+                                let (path, _c) = path_result;
                                 let next_pos = &path[1];
 
                                 debug!("Next pos: {:?}", next_pos);
@@ -561,7 +561,7 @@ pub fn cast_target_system(
 
                         let mut selected_pos_list = Vec::new();
 
-                        for (map_pos, movement_cost) in neighbour_tiles.iter() {
+                        for (map_pos, _movement_cost) in neighbour_tiles.iter() {
                             let dist = Map::dist(
                                 Position {
                                     x: map_pos.0,
@@ -662,7 +662,7 @@ pub fn cast_target_system(
 pub fn raise_dead_system(
     mut commands: Commands,
     game_tick: Res<GameTick>,
-    mut ids: ResMut<Ids>,
+    ids: ResMut<Ids>,
     map: Res<Map>,
     mut map_events: ResMut<MapEvents>,
     visible_corpse_query: Query<(&PlayerId, &VisibleCorpse), Without<EventInProgress>>,
@@ -758,7 +758,7 @@ pub fn raise_dead_system(
                         ) {
                             debug!("Follower path: {:?}", path_result);
 
-                            let (path, c) = path_result;
+                            let (path, _c) = path_result;
                             let next_pos = &path[1];
 
                             debug!("Next pos: {:?}", next_pos);
@@ -863,7 +863,7 @@ pub fn flee_system(
                     ) {
                         println!("Follower path: {:?}", path_result);
 
-                        let (path, c) = path_result;
+                        let (path, _c) = path_result;
                         let next_pos = &path[1];
 
                         debug!("Next pos: {:?}", next_pos);
@@ -919,7 +919,7 @@ pub fn hide_action_system(
     obj_query: Query<&Id>,
     mut query: Query<(&Actor, &mut ActionState, &mut Hide, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, mut hide, span) in &mut query {
+    for (Actor(actor), mut state, _hide, _span) in &mut query {
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
@@ -947,12 +947,12 @@ pub fn hide_action_system(
 }
 
 pub fn merchant_scorer_system(
-    game_tick: Res<GameTick>,
-    move_in_progress: Query<&MoveToInProgress>,
-    mut pos_query: Query<(&Position, &mut Merchant)>,
+    _game_tick: Res<GameTick>,
+    _move_in_progress: Query<&MoveToInProgress>,
+    _pos_query: Query<(&Position, &mut Merchant)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<MerchantScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(_actor), mut score, _span) in &mut query {
         score.set(1.0);
     }
 }

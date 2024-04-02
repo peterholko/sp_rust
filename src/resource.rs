@@ -13,10 +13,10 @@ use crate::game::{Position};
 use crate::item::{Item, Items, self, AttrKey};
 use crate::map::Map;
 use crate::network;
-use crate::obj::Obj;
+
 use crate::skill::{self, Skill, Skills};
 use crate::templates::{
-    ResPropertyTemplates, ItemTemplate, ResReq, ResTemplate, ResTemplates, Templates,
+    ItemTemplate, ResTemplate, ResTemplates, Templates,
 };
 
 pub const ORE: &str = "Ore";
@@ -280,7 +280,7 @@ impl Resource {
     pub fn resource_color(yield_level: i32, quantity_level: i32) -> String {
         let total_level = (yield_level + quantity_level) / 2;
 
-        match (total_level) {
+        match total_level {
             1 => "None".to_string(),
             2 => "None".to_string(),
             3 => "Green".to_string(),
@@ -293,7 +293,7 @@ impl Resource {
     }
 
     pub fn yield_level_to_label(level: i32) -> String {
-        match (level) {
+        match level {
             1 => "Worthless".to_string(),
             2 => "Meager".to_string(),
             3 => "Fair".to_string(),
@@ -305,7 +305,7 @@ impl Resource {
     }
 
     pub fn quantity_level_to_label(level: i32) -> String {
-        match (level) {
+        match level {
             1 => "Inadequate".to_string(),
             2 => "Sparse".to_string(),
             3 => "Moderate".to_string(),
@@ -360,11 +360,11 @@ impl Resource {
         res_type: String,
         skills: &Skills,
         capacity: i32,
-        mut items: &mut ResMut<Items>,
+        items: &mut ResMut<Items>,
         item_templates: &Vec<ItemTemplate>,
         resources: &Resources,
         res_templates: &ResTemplates,
-        ids: &mut Ids,
+        _ids: &mut Ids,
     ) -> Vec<network::Item> {
         let mut rng = rand::thread_rng();
 
@@ -552,7 +552,7 @@ pub struct ResourcePlugin;
 
 impl Plugin for ResourcePlugin {
     fn build(&self, app: &mut App) {
-        let mut resources = Resources(HashMap::new());
+        let resources = Resources(HashMap::new());
 
         app.insert_resource(resources);
     }

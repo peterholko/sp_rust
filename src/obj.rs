@@ -3,21 +3,21 @@ use bevy::prelude::*;
 
 use std::collections::HashMap;
 
-use rand::{random, Rng};
+
 
 use crate::combat::CombatQuery;
 use crate::effect::Effects;
-use crate::event::{MapEvent, MapEvents, VisibleEvent};
+use crate::event::{MapEvents, VisibleEvent};
 use crate::game::{
-    self, BaseAttrs, Class, EventInProgress, GameTick, Id, Misc, Name, ObjQueryMut, PlayerId,
+    BaseAttrs, Class, EventInProgress, GameTick, Id, Misc, Name, ObjQueryMut, PlayerId,
     Position, State, Stats, Subclass, SubclassNPC, Template, Viewshed,
 };
 use crate::ids::Ids;
-use crate::item::{Item, Items};
-use crate::map::{MapPos, TileType};
+
+use crate::map::{MapPos};
 use crate::network;
-use crate::skill::{Skill, Skills};
-use crate::templates::{ObjTemplate, ObjTemplates, SkillTemplate, SkillTemplates, Templates};
+
+use crate::templates::{ObjTemplate, ObjTemplates, Templates};
 
 pub const TEMPLATE: &str = "template";
 pub const POSITION: &str = "position";

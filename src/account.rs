@@ -55,7 +55,7 @@ impl Account {
 
         match result {
             Ok(_) => Ok(()),
-            Err(e) => Err(AccountError::IncorrectPassword),
+            Err(_e) => Err(AccountError::IncorrectPassword),
         }
     }
 }

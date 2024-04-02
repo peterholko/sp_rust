@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
-use std::collections::HashMap;
 
-use crate::{item, network, recipe};
-use crate::templates::{RecipeTemplate, RecipeTemplates, ResReq, Templates};
+
+use crate::{item, network};
+use crate::templates::{RecipeTemplate, ResReq, Templates};
 
 #[derive(Debug, Clone)]
 pub struct Recipe {

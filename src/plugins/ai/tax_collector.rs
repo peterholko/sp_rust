@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use big_brain::prelude::*;
-use rand::Rng;
+
 
 use crate::combat::CombatQuery;
 use crate::components::npc::{
@@ -10,13 +10,13 @@ use crate::components::npc::{
 };
 use crate::effect::Effect;
 use crate::event::{MapEvents, VisibleEvent};
-use crate::game::{self, State};
+use crate::game::{State};
 use crate::ids::Ids;
 use crate::item::*;
 use crate::map::Map;
 use crate::obj::Obj;
-use crate::obj::{self, ObjStatQuery};
-use crate::plugins::ai::npc::{BASE_MOVE_TICKS, BASE_SPEED, NO_TARGET};
+use crate::obj::{ObjStatQuery};
+use crate::plugins::ai::npc::{BASE_MOVE_TICKS, BASE_SPEED};
 use crate::templates::Templates;
 use crate::{game::*, item};
 
@@ -74,7 +74,7 @@ pub fn at_landing_scorer_system(
     collector_query: Query<(&Position, &TaxCollector)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<AtLanding>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok((pos, tax_collector)) = collector_query.get(*actor) {
             if Map::is_adjacent(*pos, tax_collector.landing_pos) {
                 score.set(0.9);
@@ -92,7 +92,7 @@ pub fn no_taxes_to_collect_scorer_system(
     collector_query: Query<&TaxCollector>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<NoTaxesToCollect>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         let Ok((transport, tc_transport)) = transport_query.get(*actor) else {
             continue;
         };
@@ -128,7 +128,7 @@ pub fn taxes_to_collect_scorer_system(
     collector_query: Query<&TaxCollector>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<TaxesToCollect>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         let Ok(tc_transport) = transport_query.get(*actor) else {
             continue;
         };
@@ -163,7 +163,7 @@ pub fn overdue_tax_scorer_system(
     collector_query: Query<(&Id, &TaxCollector)>,
     mut query: Query<(&Actor, &mut Score, &ScorerSpan), With<OverdueTaxScorer>>,
 ) {
-    for (Actor(actor), mut score, span) in &mut query {
+    for (Actor(actor), mut score, _span) in &mut query {
         if let Ok((id, collector)) = collector_query.get(*actor) {
             if collector.last_collection_time + 750 < game_tick.0 {
                 if let Some(gold) = items.get_by_class(id.0, item::GOLD.to_string()) {
@@ -182,7 +182,7 @@ pub fn idle_action_system(
     game_tick: Res<GameTick>,
     mut query: Query<(&Actor, &mut ActionState, &mut Idle, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, mut idle, span) in &mut query {
+    for (Actor(actor), mut state, mut idle, _span) in &mut query {
         match *state {
             ActionState::Requested => {
                 info!("Idle action requested by {:?}", actor);
@@ -303,7 +303,7 @@ pub fn move_to_target_action_system(
                         ) {
                             info!("Follower path: {:?}", path_result);
 
-                            let (path, c) = path_result;
+                            let (path, _c) = path_result;
                             let next_pos = &path[1];
 
                             info!("Next pos: {:?}", next_pos);
@@ -359,7 +359,7 @@ pub fn set_destination_action_system(
     mut transport: Query<&mut Transport>,
     mut query: Query<(&Actor, &mut ActionState, &mut SetDestination, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, mut _set_destination, span) in &mut query {
+    for (Actor(actor), mut state, mut _set_destination, _span) in &mut query {
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
@@ -401,7 +401,7 @@ pub fn move_to_pos_action_system(
     dest_query: Query<&Destination>,
     mut query: Query<(&Actor, &mut ActionState, &MoveToPos)>,
 ) {
-    for (Actor(actor), mut state, move_to_pos) in &mut query {
+    for (Actor(actor), mut state, _move_to_pos) in &mut query {
         match *state {
             ActionState::Requested => {
                 info!("MoveToPos action requested");
@@ -456,7 +456,7 @@ pub fn move_to_pos_action_system(
                         ) {
                             info!("Follower path: {:?}", path_result);
 
-                            let (path, c) = path_result;
+                            let (path, _c) = path_result;
                             let next_pos = &path[1];
 
                             info!("Next pos: {:?}", next_pos);
@@ -560,7 +560,7 @@ pub fn move_to_empire_action_system(
                         ) {
                             info!("Follower path: {:?}", path_result);
 
-                            let (path, c) = path_result;
+                            let (path, _c) = path_result;
                             let next_pos = &path[1];
 
                             info!("Next pos: {:?}", next_pos);
@@ -614,7 +614,7 @@ pub fn forfeiture_action_system(
     mut collector_query: Query<(&Id, &mut TaxCollector)>,
     mut query: Query<(&Actor, &mut ActionState, &Forfeiture, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, _forfeiture, span) in &mut query {
+    for (Actor(actor), mut state, _forfeiture, _span) in &mut query {
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;
@@ -686,7 +686,7 @@ pub fn talk_action_system(
     mut map_events: ResMut<MapEvents>,
     mut query: Query<(&Actor, &mut ActionState, &mut Talk, &ActionSpan)>,
 ) {
-    for (Actor(actor), mut state, mut talk, span) in &mut query {
+    for (Actor(actor), mut state, talk, _span) in &mut query {
         match *state {
             ActionState::Requested => {
                 *state = ActionState::Executing;

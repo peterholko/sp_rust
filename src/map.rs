@@ -1,8 +1,8 @@
-use bevy::{ecs::query, prelude::*};
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::{fmt, fs::File};
-use tokio::task::spawn_blocking;
+use bevy::{prelude::*};
+
+use std::path::{PathBuf};
+use std::{fmt};
+
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use tiled::{Loader};
 
 use pathfinding::prelude::astar;
 
-use crate::game::{PlayerId, Position};
+use crate::game::{Position};
 
 pub struct MapPlugin;
 
@@ -22,8 +22,8 @@ impl Plugin for MapPlugin {
     }
 }
 
-pub const WIDTH: i32 = 1200;
-pub const HEIGHT: i32 = 1000;
+pub const WIDTH: i32 = 60;
+pub const HEIGHT: i32 = 50;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum TileType {
@@ -147,35 +147,8 @@ impl Map {
         let mut loader = Loader::new();
 
         let map_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("map/test5.tmx");
+        .join("map/test3.tmx");
         let test_map = loader.load_tmx_map(map_path).unwrap();
-
-
-        /*if let Some(tileset) = test_map.tilesets().get(2) {
-            println!("Getting tileset tile");
-            let tileset_tile = tileset.get_tile(7);
-            println!("{:#?}", &tileset_tile);
-        }*/
-
-        /*for layer in test_map.layers() {
-            print!("Layer \"{}\":\n\t", layer.name);
-    
-            if layer.name == "base1" {
-                match layer.layer_type() {
-                    tiled::LayerType::Tiles(layer) => match layer {
-                        tiled::TileLayer::Finite(data) => {
-                            println!("{:#?}", data.get_tile(14, 37));
-                        }
-                        _ => {}
-                    }
-                    _ => {}
-                }
-            }
-        }*/
-
-        /*for tileset in test_map.tilesets() {
-            println!("{:#?}", &tileset);
-        }*/
 
         for layer in test_map.layers() {
     
@@ -571,7 +544,7 @@ impl Map {
         (x, y, z)
     }
 
-    fn cube_to_odd_q((x, y, z): (i32, i32, i32)) -> (i32, i32) {
+    fn cube_to_odd_q((x, _y, z): (i32, i32, i32)) -> (i32, i32) {
         let q = x;
         let r = z + (x - (x & 1)) / 2;
         (q, r)

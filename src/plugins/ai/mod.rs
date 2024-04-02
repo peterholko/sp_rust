@@ -57,11 +57,8 @@ impl Plugin for AIPlugin {
                 PreUpdate,
                 (
                     villager::enemy_distance_scorer_system.in_set(BigBrainSet::Scorers),
+                    villager::idle_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::thirsty_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::find_drink_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::drink_distance_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::transfer_drink_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::has_drink_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::hungry_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::find_food_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::food_distance_scorer_system.in_set(BigBrainSet::Scorers),
