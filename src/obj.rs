@@ -21,6 +21,7 @@ use crate::templates::{ObjTemplate, ObjTemplates, Templates};
 
 pub const TEMPLATE: &str = "template";
 pub const POSITION: &str = "position";
+pub const VISION: &str = "vision";
 
 pub const CLASS_STRUCTURE: &str = "structure";
 pub const CLASS_UNIT: &str = "unit";
@@ -46,6 +47,9 @@ pub const STATE_UPGRADING: &str = "upgrading";
 pub const STATE_STALLED: &str = "stalled";
 pub const STATE_GATHERING: &str = "gathering";
 pub const STATE_REFINING: &str = "refining";
+pub const STATE_OPERATING: &str = "operating";
+pub const STATE_LUMBERJACKING: &str = "lumberjackin";
+pub const STATE_MINING: &str = "mining";
 pub const STATE_CRAFTING: &str = "crafting";
 pub const STATE_EXPLORING: &str = "exploring";
 pub const STATE_DRINKING: &str = "drinking";
@@ -228,6 +232,9 @@ impl Obj {
             STATE_STALLED => State::Stalled,
             STATE_GATHERING => State::Gathering,
             STATE_REFINING => State::Refining,
+            STATE_OPERATING => State::Operating,
+            STATE_MINING => State::Mining,
+            STATE_LUMBERJACKING => State::Lumberjacking,
             STATE_CRAFTING => State::Crafting,
             STATE_EXPLORING => State::Exploring,
             STATE_DRINKING => State::Drinking,
@@ -251,6 +258,9 @@ impl Obj {
             State::Stalled => STATE_STALLED,
             State::Gathering => STATE_GATHERING,
             State::Refining => STATE_REFINING,
+            State::Operating => STATE_OPERATING,
+            State::Mining => STATE_MINING,
+            State::Lumberjacking => STATE_LUMBERJACKING,
             State::Crafting => STATE_CRAFTING,
             State::Exploring => STATE_EXPLORING,
             State::Drinking => STATE_DRINKING,

@@ -112,6 +112,7 @@ pub const THIRST: &str = "Thirst";
 pub const FOOD: &str = "Food";
 pub const FEED: &str = "Feed";
 pub const GOLD: &str = "Gold Coins";
+pub const SEEDS: &str = "Seeds";
 
 pub const WEAPON: &str = "Weapon";
 pub const ARMOR: &str = "Armor";

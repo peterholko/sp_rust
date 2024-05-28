@@ -1,17 +1,20 @@
-use bevy::{prelude::*};
+use bevy::{math, prelude::*};
+use rand::Rng;
 
-use std::path::{PathBuf};
-use std::{fmt};
-
+use std::collections::{HashMap, HashSet};
+use std::f32::consts::PI;
+use std::fmt;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use tiled::{Loader};
+use tiled::Loader;
 //use tiled::{parse, LayerData};
 
 use pathfinding::prelude::astar;
 
-use crate::game::{Position};
+use crate::game::Position;
+use crate::world::Weather;
 
 pub struct MapPlugin;
 
@@ -81,6 +84,38 @@ impl fmt::Display for TileType {
 }
 
 #[derive(Debug, Clone)]
+pub enum Season {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+
+#[derive(Debug, Clone)]
+pub enum TemperatureType {
+    Tropical,
+    Subtropical,
+    WarmTemperate,
+    CoolTemperate,
+    Boreal,
+    Subpolar,
+    Polar,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub enum MoistureType {
+    SuperHumid,
+    Humid,
+    SemiHumid,
+    Arid,
+    SuperArid,
+    Unknown,
+}
+
+
+#[derive(Debug, Clone)]
 pub struct TileInfo {
     pub tile_type: TileType,
     pub layers: Vec<u32>,
@@ -91,6 +126,8 @@ pub struct Map {
     pub width: i32,
     pub height: i32,
     pub base: Vec<TileInfo>,
+    pub temperature: Vec<TemperatureType>,
+    pub moisture: Vec<MoistureType>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -138,35 +175,46 @@ impl MapPos {
 
 impl Map {
     pub fn load_map() -> Map {
+        let temp = Map::get_temperature(
+            Season::Spring,
+            16,
+            TemperatureType::Tropical,
+            MoistureType::SuperHumid,
+            Weather::HeavyRain,
+        );
+        debug!("temp: {:?}", temp);
+
         let mut map = Map {
             width: WIDTH,
             height: HEIGHT,
             base: Vec::with_capacity(3000),
+            temperature: Vec::with_capacity(3000),
+            moisture: Vec::with_capacity(3000),
         };
 
+        debug!("Loading map...");
         let mut loader = Loader::new();
 
-        let map_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("map/test3.tmx");
+        let map_path =
+            PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("map/test3.tmx");
         let test_map = loader.load_tmx_map(map_path).unwrap();
 
         for layer in test_map.layers() {
-    
+            debug!("layer: {:?}", layer.name);
             if layer.name == "base1" {
                 match layer.layer_type() {
                     tiled::LayerType::Tiles(layer) => match layer {
                         tiled::TileLayer::Finite(data) => {
-
-                                for y in 0..HEIGHT {
-                                    for x in 0..WIDTH {
-
+                            for y in 0..HEIGHT {
+                                for x in 0..WIDTH {
                                     if let Some(tile) = data.get_tile(x, y) {
                                         let tileset = tile.get_tileset();
 
                                         if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
-
                                             if let Some(user_type) = &tileset_tile.user_type {
-                                                let tile_type = Map::to_tiletype(user_type.to_string());
+                                                //debug!("user_type: {:?}", user_type);
+                                                let tile_type =
+                                                    Map::to_tiletype(user_type.to_string());
 
                                                 if let Some(tile_data) = data.get_tile_data(x, y) {
                                                     let tile_index = tile_data.tileset_index();
@@ -174,59 +222,110 @@ impl Map {
 
                                                     let tile = TileInfo {
                                                         tile_type: tile_type,
-                                                        layers: vec![Map::tile_to_gid(tile_index, tile_id)],
+                                                        layers: vec![Map::tile_to_gid(
+                                                            tile_index, tile_id,
+                                                        )],
                                                     };
 
                                                     map.base.push(tile);
                                                 }
                                             }
                                         }
-
                                     }
                                 }
                             }
-                        },
+                        }
                         tiled::TileLayer::Infinite(_data) => {}
                     },
-                    _ => {}     
-                }           
+                    _ => {}
+                }
             } else if layer.name == "base2" {
                 let mut index = 0;
 
                 match layer.layer_type() {
                     tiled::LayerType::Tiles(layer) => match layer {
                         tiled::TileLayer::Finite(data) => {
-
                             for y in 0..HEIGHT {
                                 for x in 0..WIDTH {
                                     if let Some(tile) = data.get_tile(x, y) {
                                         let tileset = tile.get_tileset();
 
                                         if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
-
                                             if let Some(user_type) = &tileset_tile.user_type {
-
-                                                let tile_type = Map::to_tiletype(user_type.to_string());
+                                                let tile_type =
+                                                    Map::to_tiletype(user_type.to_string());
 
                                                 if let Some(tile_data) = data.get_tile_data(x, y) {
                                                     let tile_index = tile_data.tileset_index();
                                                     let tile_id = tile_data.id();
 
                                                     map.base[index].tile_type = tile_type;
-                                                    map.base[index].layers.push(Map::tile_to_gid(tile_index, tile_id));  
+                                                    map.base[index].layers.push(Map::tile_to_gid(
+                                                        tile_index, tile_id,
+                                                    ));
                                                 }
                                             }
-                                        }                                     
+                                        }
                                     }
 
                                     index += 1;
                                 }
                             }
-                        },
+                        }
                         tiled::TileLayer::Infinite(_data) => {}
                     },
-                    _ => {}     
-                }           
+                    _ => {}
+                }
+            } else if layer.name == "temperature" {
+                match layer.layer_type() {
+                    tiled::LayerType::Tiles(layer) => match layer {
+                        tiled::TileLayer::Finite(data) => {
+                            for y in 0..HEIGHT {
+                                for x in 0..WIDTH {
+                                    if let Some(tile) = data.get_tile(x, y) {
+                                        let tileset = tile.get_tileset();
+                                        if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
+                                            if let Some(user_type) = &tileset_tile.user_type {
+                                                let temperature_type =
+                                                    Map::to_temperature_type(user_type.to_string());
+                                                map.temperature.push(temperature_type);
+                                            }
+                                        }
+                                    } else {
+                                        map.temperature.push(TemperatureType::Unknown);
+                                    }
+                                }
+                            }
+                        }
+                        tiled::TileLayer::Infinite(_data) => {}
+                    },
+                    _ => {}
+                }
+            } else if layer.name == "moisture" {
+                match layer.layer_type() {
+                    tiled::LayerType::Tiles(layer) => match layer {
+                        tiled::TileLayer::Finite(data) => {
+                            for y in 0..HEIGHT {
+                                for x in 0..WIDTH {
+                                    if let Some(tile) = data.get_tile(x, y) {
+                                        let tileset = tile.get_tileset();
+                                        if let Some(tileset_tile) = tileset.get_tile(tile.id()) {
+                                            if let Some(user_type) = &tileset_tile.user_type {
+                                                let moisture_type =
+                                                    Map::to_moisture_type(user_type.to_string());
+                                                map.moisture.push(moisture_type);
+                                            }
+                                        }
+                                    } else {
+                                        map.moisture.push(MoistureType::Unknown);
+                                    }
+                                }
+                            }
+                        }
+                        tiled::TileLayer::Infinite(_data) => {}
+                    },
+                    _ => {}
+                }
             }
         }
 
@@ -420,6 +519,22 @@ impl Map {
         return def_bonus;
     }
 
+    pub fn tile_temperature(&self, x: i32, y: i32) -> TemperatureType {
+        let tile_index = y * WIDTH + x;
+        let tile_index_usize = tile_index as usize;
+        let temperature_type = self.temperature[tile_index_usize].clone();
+
+        return temperature_type;
+    }
+
+    pub fn tile_moisture(&self, x: i32, y: i32) -> MoistureType {
+        let tile_index = y * WIDTH + x;
+        let tile_index_usize = tile_index as usize;
+        let moisture_type = self.moisture[tile_index_usize].clone();
+
+        return moisture_type;
+    }
+
     fn to_tiletype(tile_name: String) -> TileType {
         match tile_name.as_str() {
             "Grasslands" => TileType::Grasslands,
@@ -443,7 +558,32 @@ impl Map {
             "PalmForest" => TileType::PalmForest,
             "Mountain" => TileType::Mountain,
             "Volcano" => TileType::Volcano,
-            _ => TileType::Unknown
+            _ => TileType::Unknown,
+        }
+    }
+
+    fn to_temperature_type(temperature_name: String) -> TemperatureType {
+        match temperature_name.as_str() {
+            "Tropical" => TemperatureType::Tropical,
+            "Subtropical" => TemperatureType::Subtropical,
+            "WarmTemperate" => TemperatureType::WarmTemperate,
+            "CoolTemperate" => TemperatureType::CoolTemperate,
+            "Boreal" => TemperatureType::Boreal,
+            "Subpolar" => TemperatureType::Subpolar,
+            "Polar" => TemperatureType::Polar,
+            _ => TemperatureType::Unknown,
+        }
+    }
+
+    fn to_moisture_type(temperature_name: String) -> MoistureType {
+        match temperature_name.as_str() {
+            "Super Humid" => MoistureType::SuperHumid,
+            "Humid" => MoistureType::Humid,
+            "Semi Humid" => MoistureType::SemiHumid,
+            "Arid" => MoistureType::Arid,
+            "Super Arid" => MoistureType::SuperArid,
+            "Unknown" => MoistureType::Unknown,
+            _ => MoistureType::Unknown,
         }
     }
 
@@ -533,7 +673,7 @@ impl Map {
             (3, 5) => 37,
             (3, 6) => 38,
             (3, 7) => 39,
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -687,7 +827,7 @@ impl Map {
                 waterwalk,
                 mountainwalk,
                 map,
-            );            
+            );
             let is_not_blocked = Map::is_not_blocked(neighbour, blocking_list);
 
             let mut allow_move_to_goal = false;
@@ -770,6 +910,160 @@ impl Map {
             _ => false,
         }
     }
+
+    // Climate functions
+
+    pub fn get_temperature(
+        season: Season,
+        hour: i32,
+        temperature_type: TemperatureType,
+        moisture_type: MoistureType,
+        weather: Weather,
+    ) -> f32 {
+        let (day_temperature, night_temperature) =
+            Map::season_temperatures(season, temperature_type, moisture_type);
+
+        let average_temperature = (day_temperature + night_temperature) / 2.0;
+        let temperature_amplitude = (day_temperature - night_temperature) / 2.0;
+
+        // Define sunrise and sunset times
+        let sunrise = 4; // Sunrise at 4 AM
+        let sunset = 22; // Sunset at 10 PM
+
+        // Calculate the number of daylight hours and nighttime hours
+        let daylight_hours = sunset - sunrise;
+        let nighttime_hours = 24 - daylight_hours;
+
+        // Adjust the phase of the cosine wave to match sunrise and sunset times
+        // Assuming temperature peaks at midday and is lowest just before sunrise
+        let midday = sunrise + daylight_hours / 2;
+        let base_temperature = average_temperature
+            + temperature_amplitude * ((hour - midday) as f32 / 24.0 * 2.0 * PI).cos();
+
+        // Final temperature calculation
+        let temperature = base_temperature + Map::get_weather_temp_modifier(weather);
+
+        temperature
+    }
+
+    pub fn season_temperatures(
+        season: Season,
+        temperature_type: TemperatureType,
+        moisture_type: MoistureType,
+    ) -> (f32, f32) {
+        match temperature_type {
+            TemperatureType::Tropical => match moisture_type {
+                MoistureType::SuperHumid => match season {
+                    Season::Spring => (32.0, 24.0),
+                    Season::Summer => (34.0, 25.0),
+                    Season::Autumn => (32.0, 24.0),
+                    Season::Winter => (31.0, 23.0),
+                },
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => match season {
+                    Season::Spring => (30.0, 15.0),
+                    Season::Summer => (40.0, 25.0),
+                    Season::Autumn => (35.0, 20.0),
+                    Season::Winter => (25.0, 10.0),
+                },
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::Subtropical => match moisture_type {
+                MoistureType::SuperHumid => (30.5, 25.5),
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::WarmTemperate => match moisture_type {
+                MoistureType::SuperHumid => (30.5, 25.5),
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::CoolTemperate => match moisture_type {
+                MoistureType::SuperHumid => (30.5, 25.5),
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::Boreal => match moisture_type {
+                MoistureType::SuperHumid => (30.5, 25.5),
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::Subpolar => match moisture_type {
+                MoistureType::SuperHumid => (30.5, 25.5),
+                MoistureType::Humid => (30.5, 25.5),
+                MoistureType::SemiHumid => (30.5, 25.5),
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                MoistureType::Unknown => (30.5, 25.5),
+            },
+            TemperatureType::Polar => match moisture_type {
+                MoistureType::Arid => (30.5, 25.5),
+                MoistureType::SuperArid => (30.5, 25.5),
+                _ => (30.5, 25.5),
+            },
+            TemperatureType::Unknown => (30.5, 25.5),
+        }
+    }
+
+    pub fn get_weather_temp_modifier(weather: Weather) -> f32 {
+        match weather {
+            Weather::ClearSunny => 0.0,
+            Weather::HeavyRain => -2.0,
+            Weather::Snow => -3.0,
+            Weather::Fog => -1.0,
+            Weather::Hail => -3.0,
+            Weather::Thunderstorm => -3.0,
+            Weather::Tornado => -5.0,
+            Weather::Hurricane => -5.0,
+            Weather::Blizzard => -5.0,
+            _ => 0.0,
+        }
+    }
+
+    /*pub fn initialize_weather_areas(num_areas: i32) -> HashMap<(i32, i32), Vec<(i32, i32)>> {
+        let mut weather_areas: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
+        let mut area_centers: Vec<(i32, i32)> = Vec::new();
+
+        // Randomly select area centers
+        for _ in 0..num_areas {
+            let x = rand::thread_rng().gen_range(0..WIDTH);
+            let y = rand::thread_rng().gen_range(0..HEIGHT);
+            area_centers.push((x, y));
+            weather_areas.insert((x, y), Vec::new());
+        }
+
+        // Hardcoded for testing
+        area_centers.push((16, 36));
+        weather_areas.insert((16, 36), Vec::new());
+
+        // Iterate through the area centers and randomly pick a radius of tiles to assign to each area
+        for center in area_centers {
+            let radius = rand::thread_rng().gen_range(3..6);
+            let tiles = Map::range(center, radius as u32);
+
+            for tile in tiles {
+                weather_areas.get_mut(&center).unwrap().push(tile);
+            }
+        }
+
+        return weather_areas;
+    }*/
+
+
 }
 
 #[cfg(test)]
@@ -793,7 +1087,6 @@ mod tests {
         let tiles = Map::get_tiles_by_range(16, 36, 2, map);
 
         println!("{:#?}", tiles);
-
 
         let test_tiles = r#"[{"t":[13],"x":17,"y":34},{"t":[1],"x":16,"y":37},{"t":[1],"x":16,"y":35},{"t":[13],"x":18,"y":36},{"t":[5],"x":15,"y":36},{"t":[1],"x":17,"y":37},{"t":[1],"x":15,"y":34},{"t":[5],"x":14,"y":37},{"t":[13],"x":17,"y":35},{"t":[1],"x":16,"y":38},{"t":[1],"x":14,"y":35},{"t":[1],"x":16,"y":36},{"t":[1],"x":18,"y":37},{"t":[13],"x":16,"y":34},{"t":[5],"x":15,"y":37},{"t":[1],"x":18,"y":35},{"t":[13],"x":15,"y":35},{"t":[1],"x":17,"y":36},{"t":[13],"x":14,"y":36}]"#;
 

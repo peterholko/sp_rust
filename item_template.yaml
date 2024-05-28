@@ -478,6 +478,18 @@
   image: potion
   weight: 1
 
+- name: Seeds
+  class: Seeds
+  subclass: Seeds
+  image: seeds
+  weight: 1
+
+- name: Wheat
+  class: Food
+  subclass: Grain
+  image: wheat
+  weight: 1  
+
 ##################
 ##### DEEDS #####
 ##################

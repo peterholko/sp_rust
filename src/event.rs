@@ -83,6 +83,15 @@ pub enum VisibleEvent {
         structure_id: i32,
     },
     ExploreEvent,
+    PlantEvent {
+        structure_id: i32,
+    },
+    TendEvent {
+        structure_id: i32,
+    },
+    HarvestEvent {
+        structure_id: i32,
+    }, 
     UseItemEvent {
         item_id: i32,
         item_owner_id: i32,

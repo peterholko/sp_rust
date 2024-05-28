@@ -217,11 +217,32 @@ impl Tired {
     }
 }
 
+#[derive(Component, Debug)]
+pub struct Heat {
+    pub heat: f32,
+}
+
+impl Heat {
+    pub fn new(heat: f32) -> Self {
+        Self { heat }
+    }
+
+    pub fn update(&mut self, value: f32) {
+        if self.heat + value > 100.0 {
+            self.heat = 100.0;
+        } else if self.heat + value < 0.0 {
+            self.heat = 0.0;
+        } else {
+            self.heat += value;
+        }
+    }    
+}
+
 #[derive(Debug, Clone, Component, ActionBuilder)]
 pub struct ProcessOrder;
 
 #[derive(Debug, Clone, Component, ScorerBuilder)]
-pub struct GoodMorale;
+pub struct   GoodMorale;
 
 #[derive(Component, Debug)]
 pub struct Morale {

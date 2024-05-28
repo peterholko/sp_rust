@@ -60,14 +60,7 @@ impl Plugin for AIPlugin {
                     villager::idle_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::thirsty_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::hungry_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::find_food_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::food_distance_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::transfer_food_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::has_food_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::drowsy_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::find_shelter_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::shelter_distance_scorer_system.in_set(BigBrainSet::Scorers),
-                    villager::near_shelter_scorer_system.in_set(BigBrainSet::Scorers),
                     villager::morale_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::target_scorer_system.in_set(BigBrainSet::Scorers),
                     npc::corpses_scorer_system.in_set(BigBrainSet::Scorers),
@@ -113,4 +106,5 @@ impl Plugin for AIPlugin {
         debug!("evaluator: {:?}", evaluator.evaluate(1.0));
         debug!("evaluator: {:?}", evaluator.evaluate(2.0));
     }
+    
 }

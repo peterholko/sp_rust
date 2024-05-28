@@ -4,21 +4,53 @@ use bevy::prelude::*;
 
 use rand::Rng;
 
-use crate::game::{BaseAttrs, Order};
+use crate::game::{BaseAttrs, EventInProgress, Order, SubclassNPC, VillagerQuery, State};
 
+use crate::map::MapPos;
+use crate::obj::Obj;
 use crate::skill::{self, Skill, Skills};
 use crate::templates::{SkillTemplates};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Activity {
-    None,
-    Following,
-    Drinking,
+    None, // None is absolutely nothing vs Idle is an action
+    Idle,
+    GettingDrink,
+    GettingFood,
+    FindingShelter,
     Eating,
-    Sleeping,
     Fleeing,
+    Following,
+    Gathering,
+    Operating,
+    Refining,
     Crafting,
     Experimenting,
+    Exploring,
+    Planting,
+    Tending,
+    Harvesting,
+}
+
+impl Activity {
+    pub fn to_string(&self) -> String {
+        let str = match self {
+            Activity::None => "None",
+            Activity::Following => "Following",
+            Activity::GettingDrink => "Getting a drink",
+            Activity::GettingFood => "Getting some food",
+            Activity::FindingShelter => "Finding shelter",
+            Activity::Fleeing => "Fleeing",
+            Activity::Gathering => "Gathering",
+            Activity::Operating => "Operating",
+            Activity::Refining => "Refining",
+            Activity::Crafting => "Crafting",
+            Activity::Experimenting => "Experimenting",
+            _ => "Unknown",
+        };
+
+        return str.to_string();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,17 +123,43 @@ impl Villager {
         }
     }
 
+    pub fn get_state_from_structure(template: String) -> State {
+        match template.as_str() {
+            "Mine" => State::Mining,
+            "Lumbercamp" => State::Lumberjacking,
+            _ => State::Operating
+        }
+    }
+
     pub fn order_to_speech(order: &Order) -> String {
         match order {
             Order::Follow { .. } => "Yes sir, following!".to_string(),
             Order::Explore { .. } => "Yes sir, exploring this area!".to_string(),
             Order::Gather { .. } => "Yes sir, gathering resources!".to_string(),
             Order::Refine { .. } => "Yes sir, refining resources!".to_string(),
+            Order::Operate { .. } => "Yes sir, operating this structure!".to_string(),
             Order::Craft { .. } => "Yes sir, crafting a quality item for you!".to_string(),
             Order::Experiment { .. } => {
                 "Yes sir, my experiments will led to discoveries!".to_string()
             }
+            Order::Plant { .. } => "Yes sir, off to plant the crops".to_string(),
+            Order::Plant { .. } => "Yes sir, time to harvest".to_string(),
             _ => "I'm speechless for this type of order".to_string(),
         }
+    }
+
+    pub fn blocking_list(
+        player_id: i32,
+        query: &Query<VillagerQuery, (With<SubclassNPC>, Without<EventInProgress>)>,
+    ) -> Vec<MapPos> {
+        let mut collision_list: Vec<MapPos> = Vec::new();
+
+        for obj in query.iter() {
+            if player_id != obj.player_id.0 && Obj::is_blocking_state(obj.state.clone()) {
+                collision_list.push(MapPos(obj.pos.x, obj.pos.y)); //TODO change to Position one day
+            }
+        }
+
+        return collision_list;
     }
 }

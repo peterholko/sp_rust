@@ -49,6 +49,16 @@ impl Ids {
         return None;
     }
 
+    pub fn get_player_by_entity(&self, entity: Entity) -> Option<i32> {
+        for (obj_id, e) in &self.obj_entity_map {
+            if *e == entity {
+                return self.get_player(*obj_id);
+            }
+        }
+
+        return None;
+    }
+
     pub fn new_obj(&mut self, obj_id: i32, player_id: i32, entity: Entity) {
         self.obj_player_map.insert(obj_id, player_id);
         self.obj_entity_map.insert(obj_id, entity);

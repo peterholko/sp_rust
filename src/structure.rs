@@ -10,6 +10,7 @@ use crate::templates::{ObjTemplate, ObjTemplates, ResReq};
 
 pub const RESOURCE: &str = "resource";
 pub const CRAFT: &str = "craft";
+pub const FARM: &str = "farm";
 pub const SHELTER: &str = "shelter";
 
 pub const MINE: &str = "Mine";

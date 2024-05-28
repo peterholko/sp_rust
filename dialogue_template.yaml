@@ -1,0 +1,13 @@
+# dialog.yaml
+
+- name: GettingDrink
+  text: "Time to grab a cold ale"
+
+- name: GettingFood
+  text: "I'm starving"
+
+- name: FindingShelter
+  text: "I need to find a place to rest"
+
+- name: Operate
+  text: "Hard work, but it pays. Can't grumble"

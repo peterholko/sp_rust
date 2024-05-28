@@ -19,7 +19,19 @@ pub struct Templates {
     pub effect_templates: EffectTemplates,
     pub combo_templates: ComboTemplates,
     pub res_property_templates: ResPropertyTemplates,
-    pub terrain_feature_templates: TerrainFeatureTemplates
+    pub terrain_feature_templates: TerrainFeatureTemplates,
+    pub dialogue_templates: DialogueTemplates,
+}
+
+impl Templates {
+    pub fn get_dialogue(&self, name: &str) -> String {
+         if let Some(dialogue) = self.dialogue_templates.get(name) {
+            return dialogue.text.clone();
+         } else {
+            return format!("No dialogue found for {:?}", name);
+         }
+    }
+
 }
 
 #[derive(Debug, Resource, Deref, DerefMut)]
@@ -312,6 +324,23 @@ impl TerrainFeatureTemplates {
     }
 }
 
+#[derive(Debug, Clone, Resource, PartialEq, Serialize, Deserialize)]
+pub struct DialogueTemplate {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+pub struct DialogueTemplates(HashMap<String, DialogueTemplate>);
+
+impl DialogueTemplates {
+    pub fn load(&mut self, dialogue_templates: Vec<DialogueTemplate>) {                 
+
+        for dialogue_template in dialogue_templates.iter() {
+            self.insert(dialogue_template.name.clone(), dialogue_template.clone() );
+        }
+    }
+}
 
 /// The systems that make structures tick.
 pub struct TemplatesPlugin;
@@ -396,6 +425,14 @@ impl Plugin for TemplatesPlugin {
         let mut terrain_feature_templates = TerrainFeatureTemplates(HashMap::new());
         terrain_feature_templates.load(terrain_feature_template_list);
 
+        let dialogue_template_file =
+            fs::File::open("dialogue_template.yaml").expect("Could not open file.");
+        let dialogue_template_list: Vec<DialogueTemplate> =
+            serde_yaml::from_reader(dialogue_template_file).expect("Could not read values.");
+        let mut dialogue_templates = DialogueTemplates(HashMap::new());
+        dialogue_templates.load(dialogue_template_list);
+    
+
         let templates = Templates {
             item_templates: item_templates,
             res_templates: ResTemplates(res_templates),
@@ -405,7 +442,8 @@ impl Plugin for TemplatesPlugin {
             effect_templates: effect_templates,
             combo_templates: comobo_templates,
             res_property_templates: res_property_templates,
-            terrain_feature_templates: terrain_feature_templates
+            terrain_feature_templates: terrain_feature_templates,
+            dialogue_templates: dialogue_templates,
         };
 
         app.insert_resource(templates);

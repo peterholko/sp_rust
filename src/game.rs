@@ -27,16 +27,18 @@ use async_compat::Compat;
 use crate::account::Accounts;
 use crate::combat::{Combat, CombatSpellQuery};
 use crate::components::npc::Transport;
-use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired};
+use crate::components::villager::{Dehydrated, Exhausted, Hunger, Starving, Thirst, Tired, Heat};
+use crate::constants::{COMFORT_TEMPERATURE, DAWN, DUSK, EVENING, GAME_HOUR, GAME_TICKS_PER_DAY, MORNING, NIGHT};
 use crate::effect::Effects;
 use crate::encounter::Encounter;
 use crate::event::{
     GameEvent, GameEventType, GameEvents, MapEvent, MapEvents, VisibleEvent, VisibleEvents,
 };
 use crate::experiment::{Experiment, ExperimentPlugin, ExperimentState, Experiments};
+use crate::farm::{Crops, FarmPlugin};
 use crate::ids::Ids;
 use crate::item::{self, Item, ItemPlugin, Items};
-use crate::map::{Map, MapPlugin};
+use crate::map::{Map, MapPlugin, Season};
 use crate::network::{self, network_obj, send_to_client, BroadcastEvents};
 use crate::network::{ResponsePacket, StatsData};
 use crate::obj::{self, Obj};
@@ -49,6 +51,7 @@ use crate::structure::{Plans, Structure, StructurePlugin};
 use crate::templates::{ObjTemplate, Templates, TemplatesPlugin};
 use crate::terrain_feature::{TerrainFeature, TerrainFeaturePlugin, TerrainFeatures};
 use crate::villager;
+use crate::world::{Weather, WeatherAreas, WorldPlugin};
 
 pub struct GamePlugin;
 
@@ -60,6 +63,16 @@ pub struct NetworkReceiver(CBReceiver<PlayerEvent>);
 
 #[derive(Resource, Deref, DerefMut, Debug, Default)]
 pub struct GameTick(pub i32);
+
+impl GameTick {
+    pub fn to_hour(&self) -> i32 {
+        
+        let ticks_in_day = self.0 % GAME_TICKS_PER_DAY;
+        let hour = (ticks_in_day / 100) + 1;
+
+        return hour;
+    }
+}
 
 #[derive(Resource, Deref, DerefMut)]
 pub struct ExploredMap(pub HashMap<i32, Vec<(i32, i32)>>);
@@ -112,9 +125,13 @@ pub enum State {
     Gathering,
     Refining,
     Operating,
+    Mining,
+    Lumberjacking,
     Crafting,
     Exploring,
     Experimenting,
+    Planting,
+    Harvesting,
     Drinking,
     Eating,
     Sleeping,
@@ -208,6 +225,7 @@ pub struct Misc {
 pub struct VillagerAttrs {
     pub shelter: String,
     pub structure: i32,
+    pub structure_template: String, // Quick hack to determine the type of structure
     pub activity: villager::Activity, //Todo turn into solo component
 }
 
@@ -215,10 +233,8 @@ pub struct VillagerAttrs {
 pub struct StructureAttrs {
     pub start_time: i32,
     pub end_time: i32,
-    //pub build_time: i32,
     pub builder: i32,
     pub progress: i32,
-    //pub req: Vec<ResReq>,
 }
 
 #[derive(Debug, Component, Clone)]
@@ -235,6 +251,9 @@ pub enum Order {
     Craft { recipe_name: String },
     Experiment,
     Explore,
+    Plant,
+    Tend,
+    Harvest
 }
 
 #[derive(Debug, Component)]
@@ -337,12 +356,12 @@ pub struct ObjQueryMut {
 #[derive(WorldQuery)]
 #[world_query(mutable, derive(Debug))]
 pub struct VillagerQuery {
-    id: &'static Id,
-    player_id: &'static PlayerId,
-    pos: &'static Position,
-    state: &'static mut State,
-    attrs: &'static mut VillagerAttrs,
-    order: &'static Order,
+    pub id: &'static Id,
+    pub player_id: &'static PlayerId,
+    pub pos: &'static Position,
+    pub state: &'static mut State,
+    pub attrs: &'static mut VillagerAttrs,
+    pub order: &'static Order,
 }
 
 impl Plugin for GamePlugin {
@@ -358,6 +377,8 @@ impl Plugin for GamePlugin {
             .add_plugins(RecipePlugin)
             .add_plugins(ExperimentPlugin)
             .add_plugins(StructurePlugin)
+            .add_plugins(FarmPlugin)
+            .add_plugins(WorldPlugin)
             .init_resource::<GameTick>()
             .add_systems(Startup, Game::setup)
             .add_systems(PreUpdate, update_game_tick)
@@ -374,6 +395,7 @@ impl Plugin for GamePlugin {
             .add_systems(Update, craft_event_system)
             .add_systems(Update, experiment_event_system)
             .add_systems(Update, explore_event_system)
+            .add_systems(Update, farm_event_system)
             .add_systems(Update, spell_raise_dead_event_system)
             .add_systems(Update, spell_damage_event_system)
             .add_systems(Update, broadcast_event_system)
@@ -566,6 +588,7 @@ fn move_event_system(
     mut map_events: ResMut<MapEvents>,
     mut game_events: ResMut<GameEvents>,
     mut visible_events: ResMut<VisibleEvents>,
+    active_infos: Res<ActiveInfos>,
     mut query: Query<ObjQueryMut>,
     mut transport_query: Query<&mut Transport>,
     aboard_query: Query<&StateAboard>,
@@ -723,7 +746,7 @@ fn move_event_system(
                     if mover.player_id.0 < 1000 {
                         let mut rng = rand::thread_rng();
 
-                        let spawn_chance = 0.001;
+                        let spawn_chance = 0.0001;
                         let random_num = rng.gen::<f32>();
                         debug!("random_num: {:?}", random_num);
 
@@ -790,7 +813,7 @@ fn move_event_system(
                             if mover.id.0 != map_obj.id {
                                 let distance = Map::distance(
                                     (mover.pos.x, mover.pos.y),
-                                    (map_obj.x, map_obj.y)
+                                    (map_obj.x, map_obj.y),
                                 );
 
                                 if mover.viewshed.range >= distance
@@ -810,8 +833,19 @@ fn move_event_system(
                             };
                             send_to_client(mover.player_id.0, map_packet, &clients);
                         }
-                    }
 
+                        // Check if player has an active info for this mover
+                        let active_info_key = (mover.player_id.0, mover.id.0, "obj".to_string());
+
+                        if let Some(_active_info) = active_infos.get(&active_info_key) {
+                            let response_packet = ResponsePacket::InfoStateUpdate {
+                                id: mover.id.0,
+                                state: Obj::state_to_str(mover.state.clone()),
+                            };
+
+                            send_to_client(mover.player_id.0, response_packet, &clients);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -828,7 +862,7 @@ fn hide_event_system(
     ids: Res<Ids>,
     mut map_events: ResMut<MapEvents>,
     mut visible_events: ResMut<VisibleEvents>,
-    mut state_query: Query<&mut State>
+    mut state_query: Query<&mut State>,
 ) {
     let mut events_to_remove = Vec::new();
 
@@ -849,7 +883,7 @@ fn hide_event_system(
                     let Ok(mut state) = state_query.get_mut(entity) else {
                         error!("Query failed to find entity {:?}", entity);
                         continue;
-                    };                    
+                    };
 
                     *state = State::Hiding;
 
@@ -937,6 +971,9 @@ fn update_obj_event_system(
                     match attr.as_str() {
                         obj::TEMPLATE => {
                             obj.template.0 = value.to_string();
+                            visible_events.push(map_event.clone());
+                        }
+                        obj::VISION => {
                             visible_events.push(map_event.clone());
                         }
                         _ => {}
@@ -1765,6 +1802,194 @@ fn explore_event_system(
     }
 }
 
+fn farm_event_system(
+    mut commands: Commands,
+    clients: Res<Clients>,
+    game_tick: Res<GameTick>,
+    mut ids: ResMut<Ids>,
+    mut crops: ResMut<Crops>,
+    resources: ResMut<Resources>,
+    mut items: ResMut<Items>,
+    skills: ResMut<Skills>,
+    templates: Res<Templates>,
+    //mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+    //mut state_query: Query<&mut State>,
+    mut query: Query<ObjQuery>,
+    mut map_events: ResMut<MapEvents>,
+    active_infos: Res<ActiveInfos>,
+) {
+    let mut events_to_remove = Vec::new();
+
+    for (map_event_id, map_event) in map_events.iter_mut() {
+        if map_event.run_tick < game_tick.0 {
+            // Execute event
+            match &map_event.event_type {
+                VisibleEvent::PlantEvent { structure_id } => {
+                    info!("Processing PlantEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                        error!("Cannot find entity from structure_id: {:?}", structure_id);
+                        continue;
+                    };
+
+                    let entities = [entity, structure_entity];
+
+                    let Ok([mut villager, structure]) = query.get_many_mut(entities) else {
+                        error!(
+                            "Cannot find villager or structure from entities {:?}",
+                            entities
+                        );
+                        continue;
+                    };
+
+                    // Remove Event In Progress
+                    commands.entity(entity).remove::<EventInProgress>();
+
+                    // Reset villager state to None
+                    *villager.state = State::None;
+
+                    // Get seeds
+                    let seeds = items.get_by_class(*structure_id, item::SEEDS.to_string());
+
+                    // Determine how many seeds the villager can plant TODO
+                    let mut seeds_to_plant = 2;
+
+                    let Some(seeds) = seeds else {
+                        debug!("No seeds found to plant");
+                        continue;
+                    };
+
+                    if seeds.quantity < seeds_to_plant {
+                        seeds_to_plant = seeds.quantity;                                                
+                    }
+
+                    info!("Planting Wheat crops: {:?}", seeds_to_plant);
+                    crops.plant(game_tick.0, *structure_id, "Wheat".to_string(), seeds_to_plant);
+
+                    // Consume item to refine
+                    let new_seeds = items.remove_quantity(seeds.id, seeds_to_plant);
+
+                    let mut items_to_update: Vec<network::Item> = Vec::new();
+                    let mut items_to_remove = Vec::new();
+
+                    // Add item with zero quantity to remove list
+                    if let Some(new_seeds) = new_seeds {
+                        let new_seeds_packet = Item::to_packet(new_seeds);
+                        items_to_update.push(new_seeds_packet);
+                    } else {
+                        // Item was removed, add to remove list
+                        items_to_remove.push(seeds.id);
+                    }
+
+                    let active_info_key = (
+                        structure.player_id.0,
+                        structure.id.0,
+                        "inventory".to_string(),
+                    );
+
+                    if let Some(_active_info) = active_infos.get(&active_info_key) {
+                        let item_update_packet: ResponsePacket =
+                            ResponsePacket::InfoItemsUpdate {
+                                id: *structure_id,
+                                items_updated: items_to_update,
+                                items_removed: items_to_remove,
+                            };
+
+                        send_to_client(villager.player_id.0, item_update_packet, &clients);
+                    }
+
+                }
+                VisibleEvent::HarvestEvent { structure_id } => {
+                    info!("Processing HarvestEvent");
+                    events_to_remove.push(*map_event_id);
+
+                    let Some(entity) = ids.get_entity(map_event.obj_id) else {
+                        error!("Cannot find entity from id: {:?}", map_event.obj_id);
+                        continue;
+                    };
+
+                    let Some(structure_entity) = ids.get_entity(*structure_id) else {
+                        error!("Cannot find entity from structure_id: {:?}", structure_id);
+                        continue;
+                    };
+
+                    let entities = [entity, structure_entity];
+
+                    let Ok([mut villager, structure]) = query.get_many_mut(entities) else {
+                        error!(
+                            "Cannot find villager or structure from entities {:?}",
+                            entities
+                        );
+                        continue;
+                    };
+
+                    // Remove Event In Progress
+                    commands.entity(entity).remove::<EventInProgress>();
+
+                    // Reset villager state to None
+                    *villager.state = State::None;   
+
+                    if let Some(crop) = crops.harvest(*structure_id, 1) {
+                        info!("Harvesting crop: {:?}", crop);
+                        let item_template = Item::get_template(crop.crop_type.clone(), &templates.item_templates);
+
+                        let capacity = Obj::get_capacity(&structure.template.0, &templates.obj_templates);
+
+                        let current_total_weight = items.get_total_weight(*structure_id);
+                        let item_weight = Item::get_weight_from_template(crop.crop_type.clone(), 1, &templates.item_templates);
+
+                        if current_total_weight + item_weight > capacity {
+                            info!("Harvest structure is full {:?}", structure);
+                            continue;
+                        }
+
+                        let (new_item, _merged) = items.new_with_attrs(
+                            *structure_id,
+                            crop.crop_type.clone(),
+                            1,
+                            HashMap::new(),
+                        );
+
+                        // Convert items to be updated to packets
+                        let new_item_packet = Item::to_packet(new_item.clone());
+
+                        let active_info_key = (
+                            structure.player_id.0,
+                            structure.id.0,
+                            "inventory".to_string(),
+                        );
+
+                        if let Some(_active_info) = active_infos.get(&active_info_key) {
+                            let item_update_packet: ResponsePacket = ResponsePacket::InfoItemsUpdate {
+                                id: *structure_id,
+                                items_updated: vec![new_item_packet],
+                                items_removed: Vec::new(),
+                            };
+
+                            send_to_client(villager.player_id.0, item_update_packet, &clients);
+                        }
+                    } else {
+                        info!("No crops to harvest");
+                    }
+
+
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        map_events.remove(event_id);
+    }
+}                
+
 // Each spell requires a separate system
 fn spell_raise_dead_event_system(
     mut commands: Commands,
@@ -1888,7 +2113,10 @@ fn spell_damage_event_system(
         if map_event.run_tick < game_tick.0 {
             // Execute event
             match &map_event.event_type {
-                VisibleEvent::SpellDamageEvent { spell: _, target_id } => {
+                VisibleEvent::SpellDamageEvent {
+                    spell: _,
+                    target_id,
+                } => {
                     debug!("Processing CastSpellEvent");
                     events_to_remove.push(*map_event_id);
 
@@ -2700,6 +2928,7 @@ fn visible_event_system(
 fn perception_system(
     map: Res<Map>,
     mut explored_map: ResMut<ExploredMap>,
+    weather_areas: Res<WeatherAreas>,
     clients: Res<Clients>,
     mut perception_updates: ResMut<PerceptionUpdates>,
     query: Query<(
@@ -2882,9 +3111,12 @@ fn perception_system(
 
             let tiles = Map::pos_to_tiles(&visible_tiles.clone(), &map); // Used for network obj
 
+            let weather_tiles = weather_areas.get_visible_weather_tiles(&visible_tiles.clone());
+
             let perception_data = network::PerceptionData {
                 map: tiles,
                 objs: perception.clone().into_iter().collect(),
+                weather: weather_tiles,
             };
 
             let perception_packet = ResponsePacket::Perception {
@@ -3008,7 +3240,7 @@ fn game_event_system(
                     let (_entity, npc_id, _player_id, _pos) = Encounter::spawn_necromancer(
                         1000,
                         *pos,
-                        *home, 
+                        *home,
                         &mut commands,
                         &mut ids,
                         &mut items,
@@ -3324,7 +3556,9 @@ fn snapshot_system(world: &mut World) {
 fn update_game_tick(
     mut commands: Commands,
     mut game_tick: ResMut<GameTick>,
-    mut attrs: Query<(Entity, &mut Thirst, &mut Hunger, &mut Tired)>,
+    map: Res<Map>,
+    mut attrs: Query<(Entity, &mut Thirst, &mut Hunger, &mut Tired, &mut Heat)>,
+    pos: Query<&Position>,
     dehydrated: Query<&Dehydrated>,
     starving: Query<&Starving>,
     exhausted: Query<&Exhausted>,
@@ -3332,8 +3566,10 @@ fn update_game_tick(
 ) {
     game_tick.0 = game_tick.0 + 1;
 
+
+
     // Update thirst
-    for (entity, mut thirst, mut hunger, mut tired) in &mut attrs {
+    for (entity, mut thirst, mut hunger, mut tired, mut heat) in &mut attrs {
         if let Ok(state) = state_query.get(entity) {
             if *state != State::Drinking {
                 thirst.update_by_tick_amount(2.0);
@@ -3351,6 +3587,32 @@ fn update_game_tick(
                 tired.update_by_tick_amount(2.0);
             }
         }
+
+        // Update heat attribute every hour
+        if game_tick.0 % GAME_HOUR == 0 {
+
+            let Ok(pos) = pos.get(entity) else {
+                error!("No position found for entity: {:?}", entity);
+                continue;
+            };
+
+            let tile_temperature= map.tile_temperature(pos.x, pos.y);
+            let tile_moisture = map.tile_moisture(pos.x, pos.y);
+
+            debug!("tile_temperature: {:?} tile_moisture: {:?}", tile_temperature, tile_moisture);
+            let current_temperature = Map::get_temperature(Season::Winter, 1, tile_temperature, tile_moisture, Weather::ClearSunny);
+            info!("Current temperature: {:?}", current_temperature);
+
+            let clothing_mod = 1.0;
+
+            let heat_level_change = (current_temperature - COMFORT_TEMPERATURE) * clothing_mod;
+            info!("Heat level change: {:?}", heat_level_change);
+
+            heat.update(heat_level_change);
+
+            info!("Heat level: {:?}", heat.heat);
+        }
+
 
         if thirst.thirst > 80.0 {
             if let Ok(_dehydrated) = dehydrated.get(entity) {
@@ -3398,6 +3660,8 @@ fn update_game_tick(
         //debug!("thirst: {:?} morale: {:?}", thirst.thirst, morale.morale);
     }
 }
+
+
 
 fn dedup<T: Eq + Hash + Copy>(v: &mut Vec<T>) {
     // note the Copy constraint
@@ -3508,7 +3772,7 @@ fn is_valid_pos(
 }
 
 fn is_not_blocked(
-    _player_id: i32,
+    _player_id: i32, 
     x: i32,
     y: i32,
     all_obj_pos: &Vec<(PlayerId, Id, Position)>,
@@ -3523,3 +3787,4 @@ fn is_not_blocked(
 
     return true;
 }
+

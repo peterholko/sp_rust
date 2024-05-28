@@ -401,9 +401,9 @@
   profession: the Miner
   req: 
     - type: Timber
-      quantity: 25
+      quantity: 5
     - type: Ingot
-      quantity: 20
+      quantity: 5
 
 - name: Small Tent
   class: structure
@@ -481,16 +481,17 @@
 
 - name: Farm
   class: structure
-  subclass: resource
+  subclass: farm
   template: Farm
   base_hp: 250
   base_def: 0
-  build_time: 240
+  build_time: 24
+  capacity: 500
   level: 0
   profession: the Farmer
   req: 
     - type: Wood
-      quantity: 40
+      quantity: 5
 
 - name: Trapper
   class: structure

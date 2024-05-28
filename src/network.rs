@@ -101,6 +101,12 @@ enum NetworkPacket {
     OrderExplore { sourceid: i32 },
     #[serde(rename = "order_experiment")]
     OrderExperiment { structureid: i32 },
+    #[serde(rename = "order_plant")]
+    OrderPlant { structureid: i32 },   
+    #[serde(rename = "order_tend")]
+    OrderTend { structureid: i32 },   
+    #[serde(rename = "order_harvest")]
+    OrderHarvest { structureid: i32 },            
     #[serde(rename = "structure_list")]
     StructureList {},
     #[serde(rename = "create_foundation")]
@@ -255,7 +261,7 @@ pub enum ResponsePacket {
         base_dmg: Option<i32>,
         dmg_range: Option<i32>,
         structure: Option<String>,
-        action: Option<String>,
+        activity: Option<String>,
         shelter: Option<String>,
         morale: Option<String>,
         order: Option<String>,
@@ -375,6 +381,16 @@ pub enum ResponsePacket {
         id: i32,
         items_updated: Vec<Item>,
         items_removed: Vec<i32>,
+    },
+    #[serde(rename = "info_state_update")]
+    InfoStateUpdate {
+        id: i32,
+        state: String,
+    },
+    #[serde(rename = "info_activity_update")]
+    InfoActivityUpdate {
+        id: i32,
+        activity: String,
     },
     #[serde(rename = "info_hire")]
     InfoHire {
@@ -513,6 +529,7 @@ pub enum ResponsePacket {
 pub struct PerceptionData {
     pub map: Vec<MapTile>,
     pub objs: Vec<MapObj>,
+    pub weather: Vec<MapWeather>
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
@@ -583,6 +600,13 @@ pub struct MapObj {
     pub vision: u32,
     pub hsl: Vec<i32>,
     pub groups: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MapWeather {
+    pub x: i32,
+    pub y: i32,
+    pub weather: String
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -1085,6 +1109,15 @@ async fn handle_connection(
                                             NetworkPacket::OrderExperiment{structureid} => {
                                                 handle_order_experiment(player_id, structureid, client_to_game_sender.clone())
                                             }
+                                            NetworkPacket::OrderPlant{structureid} => {
+                                                handle_order_plant(player_id, structureid, client_to_game_sender.clone())
+                                            }     
+                                            NetworkPacket::OrderTend{structureid} => {
+                                                handle_order_tend(player_id, structureid, client_to_game_sender.clone())
+                                            }           
+                                            NetworkPacket::OrderHarvest{structureid} => {
+                                                handle_order_harvest(player_id, structureid, client_to_game_sender.clone())
+                                            }                                                                                                                                      
                                             NetworkPacket::Use{item} => {
                                                 handle_use(player_id, item, client_to_game_sender.clone())
                                             }
@@ -1932,6 +1965,54 @@ fn handle_order_experiment(
 ) -> ResponsePacket {
     client_to_game_sender
         .send(PlayerEvent::OrderExperiment {
+            player_id: player_id,
+            structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_plant(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderPlant {
+            player_id: player_id,
+            structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_tend(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderTend {
+            player_id: player_id,
+            structure_id: structureid,
+        })
+        .expect("Could not send message");
+
+    // Response will come from game.rs
+    ResponsePacket::Ok
+}
+
+fn handle_order_harvest(
+    player_id: i32,
+    structureid: i32,
+    client_to_game_sender: CBSender<PlayerEvent>,
+) -> ResponsePacket {
+    client_to_game_sender
+        .send(PlayerEvent::OrderHarvest {
             player_id: player_id,
             structure_id: structureid,
         })

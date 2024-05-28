@@ -11,9 +11,8 @@ use crate::components::npc::{
     Destination, Idle, MerchantScorer, MoveToPos, SetDestination, Transport,
 };
 use crate::components::villager::{
-    Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, FindDrink, FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee, FoodDistanceScorer, GoodMorale, HasDrinkScorer, HasFoodScorer, Hunger, HungryScorer, IdleScorer, Morale, MoveToFoodSource, MoveToSleepPos, MoveToWaterSource, NearShelterScorer, ProcessOrder, ShelterDistanceScorer, Sleep, Thirst, ThirstyScorer, Tired, TransferDrink, TransferDrinkScorer, TransferFood, TransferFoodScorer
+    Drink, DrinkDistanceScorer, DrowsyScorer, Eat, EnemyDistanceScorer, FindDrink, FindDrinkScorer, FindFood, FindFoodScorer, FindShelter, FindShelterScorer, Flee, FoodDistanceScorer, GoodMorale, HasDrinkScorer, HasFoodScorer, Heat, Hunger, HungryScorer, IdleScorer, Morale, MoveToFoodSource, MoveToSleepPos, MoveToWaterSource, NearShelterScorer, ProcessOrder, ShelterDistanceScorer, Sleep, Thirst, ThirstyScorer, Tired, TransferDrink, TransferDrinkScorer, TransferFood, TransferFoodScorer
 };
-use crate::encounter::Encounter;
 use crate::event::{GameEvent, GameEventType, GameEvents, MapEvents, VisibleEvent};
 use crate::ids::Ids;
 
@@ -21,9 +20,7 @@ use crate::combat::{Combat, CombatQuery};
 use crate::effect::Effects;
 use crate::experiment::{self, Experiment, ExperimentState, Experiments};
 use crate::game::{
-    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, GameTick, Id, MapObjQuery, Merchant,
-    Misc, Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass,
-    SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs,
+    is_pos_empty, BaseAttrs, Class, ClassStructure, Clients, GameTick, Id, MapObjQuery, Merchant, Misc, Name, NetworkReceiver, Order, PlayerId, Position, State, Stats, StructureAttrs, Subclass, SubclassHero, SubclassVillager, Template, Viewshed, VillagerAttrs
 };
 use crate::item::{self, Item, Items};
 use crate::map::Map;
@@ -180,6 +177,18 @@ pub enum PlayerEvent {
         player_id: i32,
         structure_id: i32,
     },
+    OrderPlant {
+        player_id: i32,
+        structure_id: i32,
+    },   
+    OrderTend {
+        player_id: i32,
+        structure_id: i32,
+    },     
+    OrderHarvest {
+        player_id: i32,
+        structure_id: i32,
+    },    
     StructureList {
         player_id: i32,
     },
@@ -269,7 +278,7 @@ pub enum PlayerEvent {
     },
 }
 
-#[derive(Resource, Deref, DerefMut)]
+#[derive(Debug, Resource, Deref, DerefMut)]
 pub struct ActiveInfos(pub HashMap<(i32, i32, String), bool>);
 
 #[derive(WorldQuery)]
@@ -404,6 +413,7 @@ impl Plugin for PlayerPlugin {
                 order_gather_system,
                 order_refine_system,
                 order_craft_system,
+                order_farm_system
             ),
         )
         .add_systems(
@@ -1221,12 +1231,17 @@ fn info_obj_system(
     clients: Res<Clients>,
     items: ResMut<Items>,
     skills: Res<Skills>,
+    templates: Res<Templates>,
+    mut active_infos: ResMut<ActiveInfos>,
     query: Query<CoreQuery>,
     attrs_query: Query<&BaseAttrs>,
     stats_query: Query<&Stats>,
     structure_query: Query<&StructureAttrs>,
-    templates: Res<Templates>,
+    villager_query: Query<&VillagerAttrs>,
 ) {
+
+
+    
     let mut events_to_remove: Vec<i32> = Vec::new();
 
     for (event_id, event) in events.iter() {
@@ -1301,9 +1316,9 @@ fn info_obj_system(
                         let stamina = None;
                         let base_stamina = None;
 
-                        let structure = None;
-                        let action = None;
-                        let shelter = None;
+                        let mut structure = None;
+                        let mut activity = None;
+                        let mut shelter = None;
 
                         let morale = None;
                         let order = None;
@@ -1361,6 +1376,13 @@ fn info_obj_system(
                                 base_dmg: base_damage,
                             };
                         } else if obj.subclass.0 == obj::SUBCLASS_VILLAGER {
+
+                            if let Ok(villager_attrs) = villager_query.get(obj.entity) {
+                                activity = Some(villager_attrs.activity.to_string());
+                                shelter = Some(villager_attrs.shelter.clone());
+                                structure = Some(villager_attrs.structure);
+                            }
+
                             response_packet = ResponsePacket::InfoVillager {
                                 id: obj.id.0,
                                 name: obj.name.0.to_string(),
@@ -1383,14 +1405,17 @@ fn info_obj_system(
                                 base_speed: base_speed,
                                 dmg_range: damage_range,
                                 base_dmg: base_damage,
-                                structure: structure,
-                                action: action,
+                                structure: None,
+                                activity,
                                 shelter: shelter,
                                 morale: morale,
                                 order: order,
                                 capacity: capacity,
                                 total_weight: total_weight,
                             };
+
+                            let active_info_key = (*player_id, obj.id.0, "obj".to_string());
+                            active_infos.insert(active_info_key, true);
                         }
                     } else if obj.class.0 == obj::CLASS_STRUCTURE {
                         let items_packet = Some(items.get_by_owner_packet(*id));
@@ -3347,8 +3372,10 @@ fn assign_list_system(
 
 fn assign_system(
     mut commands: Commands,
+    game_tick: Res<GameTick>,
     mut events: ResMut<PlayerEvents>,
     ids: ResMut<Ids>,
+    mut map_events: ResMut<MapEvents>,
     clients: Res<Clients>,
     mut villager_query: Query<VillagerQuery, With<SubclassVillager>>,
     structure_query: Query<StructureQuery, With<ClassStructure>>,
@@ -3410,11 +3437,30 @@ fn assign_system(
 
                 // Set villager structure
                 villager.attrs.structure = structure.id.0;
+                villager.attrs.structure_template = structure.template.0.clone();
 
                 if structure.subclass.0 == structure::RESOURCE {
+
+                    Obj::add_sound_obj_event(
+                        game_tick.0,
+                        Villager::order_to_speech(&Order::Operate),
+                        villager.id,
+                        &mut map_events,
+                    );
+
                     commands.entity(villager_entity).insert(Order::Operate);
                 } else if structure.subclass.0 == structure::CRAFT {
+
+                    Obj::add_sound_obj_event(
+                        game_tick.0,
+                        Villager::order_to_speech(&Order::Refine),
+                        villager.id,
+                        &mut map_events,
+                    );
+
                     commands.entity(villager_entity).insert(Order::Refine);
+                } else if structure.subclass.0 == structure::FARM {
+                    // Do nothing because Plant, Tend and Harvest will start the action
                 } else {
                     error!("Can only assign to crafting or harvesting buildings");
                     continue;
@@ -3895,6 +3941,77 @@ fn order_experiment_system(
         events.remove(event_id);
     }
 }
+
+fn order_farm_system(
+    mut commands: Commands,
+    game_tick: Res<GameTick>,
+    _ids: ResMut<Ids>,
+    mut events: ResMut<PlayerEvents>,
+    mut map_events: ResMut<MapEvents>,
+    items: ResMut<Items>,
+    mut experiments: ResMut<Experiments>,
+    _templates: Res<Templates>,
+    active_infos: Res<ActiveInfos>,
+    clients: Res<Clients>,
+    villager_query: Query<VillagerQuery, With<SubclassVillager>>,
+) {
+    let mut events_to_remove: Vec<i32> = Vec::new();
+
+    for (event_id, event) in events.iter() {
+        match event {
+            PlayerEvent::OrderPlant {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                // Find all villagers assigned to farm and order them to plant
+                for villager_item in villager_query.iter() {
+                    if villager_item.attrs.structure == *structure_id
+                        && villager_item.player_id.0 == *player_id
+                    {
+                        commands.entity(villager_item.entity).insert(Order::Plant);
+
+                        Obj::add_sound_obj_event(
+                            game_tick.0,
+                            Villager::order_to_speech(&Order::Plant),
+                            villager_item.id,
+                            &mut map_events,
+                        );
+                    }
+                }                
+            }
+            PlayerEvent::OrderHarvest {
+                player_id,
+                structure_id,
+            } => {
+                events_to_remove.push(*event_id);
+
+                // Find all villagers assigned to farm and order them to plant
+                for villager_item in villager_query.iter() {
+                    if villager_item.attrs.structure == *structure_id
+                        && villager_item.player_id.0 == *player_id
+                    {
+                        commands.entity(villager_item.entity).insert(Order::Harvest);
+
+                        Obj::add_sound_obj_event(
+                            game_tick.0,
+                            Villager::order_to_speech(&Order::Harvest),
+                            villager_item.id,
+                            &mut map_events,
+                        );
+                    }
+                }                
+            }            
+            _ => {}
+        }
+    }
+
+    for event_id in events_to_remove.iter() {
+        events.remove(event_id);
+    }
+}
+
 
 fn use_item_system(
     mut events: ResMut<PlayerEvents>,
@@ -4715,6 +4832,7 @@ fn new_player(
     items.new(hero_id, "Cragroot Maple Timber".to_string(), 5);
     items.new(hero_id, "Gold Coins".to_string(), 100);
     items.new(hero_id, "Copper Helm".to_string(), 1);
+    items.new(hero_id, "Seeds".to_string(), 50);
     /*items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
     items.new(hero_id, "Windstride Raw Hide".to_string(), 1);
@@ -4833,6 +4951,7 @@ fn new_player(
     let villager_attrs = VillagerAttrs {
         shelter: "None".to_string(),
         structure: -1,
+        structure_template: "None".to_string(),
         activity: villager::Activity::None,
     };
 
@@ -4862,9 +4981,10 @@ fn new_player(
             SubclassVillager,
             base_attrs,
             villager_attrs,
-            Thirst::new(0.0, 0.10), //0.1 before
-            Hunger::new(0.0, 0.10),
-            Tired::new(0.0, 0.10),
+            Thirst::new(0.0, 0.025), //0.1 before
+            Hunger::new(0.0, 0.025),
+            Tired::new(0.0, 0.025),
+            Heat::new(50.0),
             Morale::new(50.0),
             Thinker::build()
                 .label("Villager")
@@ -4891,6 +5011,131 @@ fn new_player(
                         start_time: 0,
                         duration: 100,
                     },
+                ).when(
+                    GoodMorale,
+                    ProcessOrder,
+                )
+        ))
+        .id();
+
+    ids.new_obj(villager_id, player_id, villager_entity_id);
+
+    map_events.new(
+        villager_id,
+        game_tick.0 + 1,
+        VisibleEvent::NewObjEvent { new_player: false },
+    );
+
+    // Villager obj
+    let villager_id = ids.new_obj_id();
+
+    let villager_template_name = "Human Villager".to_string();
+    let villager_template = ObjTemplate::get_template(villager_template_name.clone(), templates);
+
+    let villager = Obj {
+        id: Id(villager_id),
+        player_id: PlayerId(player_id),
+        position: Position {
+            x: start_location.villager_pos[0] + 1,
+            y: start_location.villager_pos[1] + 1,
+        },
+        name: Name("Villager 2".into()),
+        template: Template("Human Villager".into()),
+        class: Class("unit".into()),
+        subclass: Subclass("villager".into()),
+        state: State::None,
+        viewshed: Viewshed { range: 2 },
+        misc: Misc {
+            image: "humanvillager2".into(),
+            hsl: Vec::new(),
+            groups: Vec::new(),
+        },
+        stats: Stats {
+            hp: villager_template.base_hp.unwrap(),
+            base_hp: villager_template.base_hp.unwrap(),
+            stamina: villager_template.base_stamina,
+            base_stamina: villager_template.base_stamina,
+            base_def: villager_template.base_def.unwrap(),
+            base_damage: villager_template.base_dmg,
+            damage_range: villager_template.dmg_range,
+            base_speed: villager_template.base_speed,
+            base_vision: villager_template.base_vision,
+        },
+        effects: Effects(HashMap::new()),
+    };
+
+    // Villager generate skills
+    Villager::generate_skills(villager_id, skills, &templates.skill_templates);
+
+    // Villager create attributes components ```
+    let base_attrs = Villager::generate_attributes(1);
+
+    let villager_attrs = VillagerAttrs {
+        shelter: "None".to_string(),
+        structure: -1,
+        structure_template: "None".to_string(),
+        activity: villager::Activity::None,
+    };
+
+    let find_move_to_and_drink = Steps::build()
+        .label("FindMoveToAndDrink")
+        .step(FindDrink)
+        .step(MoveToWaterSource)
+        .step(TransferDrink)
+        .step(Drink { until: 70.0 });
+
+    let find_move_to_and_eat = Steps::build()
+        .label("FindMoveToAndEat")
+        .step(FindFood)
+        .step(MoveToFoodSource)
+        .step(TransferFood)
+        .step(Eat);
+
+    let find_move_to_and_sleep = Steps::build()
+        .label("FindMoveToAndSleep")
+        .step(FindShelter)
+        .step(MoveToSleepPos)
+        .step(Sleep);
+
+    let villager_entity_id = commands
+        .spawn((
+            villager,
+            SubclassVillager,
+            base_attrs,
+            villager_attrs,
+            Thirst::new(0.0, 0.025), //0.1 before
+            Hunger::new(0.0, 0.025),
+            Tired::new(0.0, 0.025),
+            Heat::new(50.0),
+            Morale::new(50.0),
+            Thinker::build()
+                .label("Villager")
+                .picker(Highest)
+                .when(
+                    EnemyDistanceScorer,
+                    Flee,
+                )
+                .when(
+                    ThirstyScorer,
+                    find_move_to_and_drink,
+                )
+                .when(
+                    HungryScorer,
+                    find_move_to_and_eat,
+                )
+                .when(
+                    DrowsyScorer,
+                    find_move_to_and_sleep,
+                )
+                .when(
+                    IdleScorer,
+                    Idle {
+                        start_time: 0,
+                        duration: 100,
+                    },
+                ).when(
+                    GoodMorale,
+                    ProcessOrder,
                 )
         ))
         .id();
@@ -4908,6 +5153,7 @@ fn new_player(
     recipes.create(player_id, "Copper Training Axe".to_string());
 
     //Starting plans
+    plans.add(player_id, "Farm".to_string(), 0, 0);
     plans.add(player_id, "Crafting Tent".to_string(), 0, 0);
     plans.add(player_id, "Blacksmith".to_string(), 0, 0);
     plans.add(player_id, "Small Tent".to_string(), 0, 0);
@@ -4990,14 +5236,17 @@ fn new_player(
         VisibleEvent::NewObjEvent { new_player: false },
     );
 
+    
     let mut thirst_attr = HashMap::new();
-    item_attrs.insert(item::AttrKey::Thirst, item::AttrVal::Num(90.0));
+    thirst_attr.insert(item::AttrKey::Thirst, item::AttrVal::Num(90.0));
 
     let mut feed_attr = HashMap::new();
-    item_attrs.insert(item::AttrKey::Feed, item::AttrVal::Num(90.0));
+    feed_attr.insert(item::AttrKey::Feed, item::AttrVal::Num(90.0));
 
     items.new_with_attrs(structure_id, "Amitanian Grape".to_string(), 50, feed_attr);
     items.new_with_attrs(structure_id, "Spring Water".to_string(), 50, thirst_attr);
+
+    info!("Items: {:?}", items);
 
     // Villager obj
     let villager_id2 = ids.new_obj_id();
@@ -5128,7 +5377,7 @@ fn new_player(
     );
 
     // Create human corpse 1
-    Obj::create(
+    /*Obj::create(
         999,
         "Human Corpse".to_string(),
         Position {
@@ -5157,7 +5406,7 @@ fn new_player(
         map_events,
         &game_tick,
         &templates,
-    );
+    );*/
 
     /*let event_type = GameEventType::NecroEvent {
         pos: Position {
@@ -5290,4 +5539,27 @@ fn process_item_transfer_structure(
     }
 
     return Vec::new();
+}
+
+#[derive(Debug, Clone)]
+pub enum TimeOfDay {
+    Dawn,
+    Morning,
+    Afternoon,
+    Evening,
+    Dusk,
+    Night,   
+}
+
+pub fn get_time_of_day(hour: i32)  -> TimeOfDay {
+    match hour {
+        1..=4 => TimeOfDay::Night,
+        5..=5 => TimeOfDay::Dawn,
+        6..=11 => TimeOfDay::Morning,
+        12..=16 => TimeOfDay::Afternoon,
+        17..=22 => TimeOfDay::Evening,
+        23..=23 => TimeOfDay::Dusk,
+        18..=24 => TimeOfDay::Night,
+        _ => TimeOfDay::Night,
+    }
 }

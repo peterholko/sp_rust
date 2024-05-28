@@ -41,6 +41,9 @@ mod structure;
 mod templates;
 mod villager;
 mod terrain_feature;
+mod constants;
+mod world;
+mod farm;
 
 const TIMESTEP_10_PER_SECOND: f64 = 1.0 / 10.0;
 
@@ -54,7 +57,7 @@ pub fn setup() {
         )))
         .add_plugins(LogPlugin {
             level: bevy::log::Level::INFO,
-            filter: "big_brain=debug,siege_perilous::ai=debug,siege_perilous::plugins::ai=debug,siege_perilious::game=debug".into(),
+            filter: "big_brain=debug,siege_perilous::ai=debug,siege_perilous::plugins::ai=debug,siege_perilious::game=debug,siege_perilous::map=debug".into(),
         })
         .add_plugins(GamePlugin)
         .add_plugins(SavePlugins)
